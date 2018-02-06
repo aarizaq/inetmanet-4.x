@@ -47,11 +47,11 @@ simple EtherEncap like IEtherEncap
         string fcsMode @enum("declared", "computed");
         bool registerProtocol = default(false);     //FIXME //KLUDGE should redesign place of EtherEncap and LLC modules
         @display("i=block/square");
-        @signal[encapPk](type=cPacket);
-        @signal[decapPk](type=cPacket);
+        @signal[packetSentToLower](type=Packet);
+        @signal[packetSentToUpper](type=Packet);
         @signal[pauseSent](type=long); // pause units
-        @statistic[encapPk](title="packets encapsulated";source=encapPk; record=count,"sum(packetBytes)","vector(packetBytes)"; interpolationmode=none);
-        @statistic[decapPk](title="packets decapsulated";source=decapPk; record=count,"sum(packetBytes)","vector(packetBytes)"; interpolationmode=none);
+        @statistic[packetSentToLower](title="packets encapsulated";source=packetSentToLower; record=count,"sum(packetBytes)","vector(packetBytes)"; interpolationmode=none);
+        @statistic[packetSentToUpper](title="packets decapsulated";source=packetSentToUpper; record=count,"sum(packetBytes)","vector(packetBytes)"; interpolationmode=none);
         @statistic[pauseSent](title="pause sent";record=count,sum,vector);
     gates:
         input upperLayerIn @labels(Ieee802Ctrl/down); // higher layer
