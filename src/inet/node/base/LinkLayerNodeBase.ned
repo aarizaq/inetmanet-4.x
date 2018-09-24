@@ -26,6 +26,9 @@ import inet.linklayer.contract.ITunnelInterface;
 import inet.linklayer.contract.IWirelessInterface;
 import inet.networklayer.common.InterfaceTable;
 
+//
+// TODO
+//
 module LinkLayerNodeBase extends NodeBase
 {
     parameters:

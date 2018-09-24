@@ -20,6 +20,9 @@ package inet.physicallayer.ieee802154.packetlevel;
 
 import inet.physicallayer.common.packetlevel.RadioMedium;
 
+//
+// TODO
+//
 module Ieee802154NarrowbandScalarRadioMedium extends RadioMedium
 {
     parameters:

@@ -17,6 +17,9 @@
 
 package inet.linklayer.ieee80211.mib;
 
+//
+// TODO
+//
 simple Ieee80211Mib
 {
     parameters:

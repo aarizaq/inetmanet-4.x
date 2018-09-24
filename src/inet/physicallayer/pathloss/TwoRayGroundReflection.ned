@@ -17,6 +17,9 @@
 
 package inet.physicallayer.pathloss;
 
+//
+// TODO
+//
 module TwoRayGroundReflection extends FreeSpacePathLoss
 {
     parameters:

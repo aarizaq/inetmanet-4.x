@@ -17,6 +17,9 @@
 
 package inet.physicallayer.pathloss;
 
+//
+// TODO
+//
 module RicianFading extends FreeSpacePathLoss
 {
     parameters:

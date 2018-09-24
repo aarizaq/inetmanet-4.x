@@ -19,6 +19,9 @@ package inet.linklayer.ieee80211.mac.contention;
 
 import inet.linklayer.ieee80211.mac.contract.ICollisionController;
 
+//
+// TODO
+//
 simple EdcaCollisionController like ICollisionController
 {
     parameters:

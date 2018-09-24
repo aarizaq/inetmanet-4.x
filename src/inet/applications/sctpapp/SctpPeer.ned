@@ -19,6 +19,9 @@ package inet.applications.sctpapp;
 
 import inet.applications.contract.IApp;
 
+//
+// TODO
+//
 simple SctpPeer like IApp
 {
     parameters:

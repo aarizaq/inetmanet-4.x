@@ -19,6 +19,9 @@ package inet.linklayer.ieee80211.mac.fragmentation;
 
 import inet.linklayer.ieee80211.mac.contract.IFragmentationPolicy;
 
+//
+// TODO
+//
 simple BasicFragmentationPolicy like IFragmentationPolicy
 {
     parameters:

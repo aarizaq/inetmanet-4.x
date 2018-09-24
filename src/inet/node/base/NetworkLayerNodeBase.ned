@@ -20,6 +20,9 @@ package inet.node.base;
 import inet.common.MessageDispatcher;
 import inet.networklayer.contract.INetworkLayer;
 
+//
+// TODO
+//
 module NetworkLayerNodeBase extends LinkLayerNodeBase
 {
     parameters:

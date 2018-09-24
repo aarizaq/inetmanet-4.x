@@ -19,6 +19,9 @@ package inet.physicallayer.ieee80211.bitlevel;
 
 import inet.physicallayer.base.packetlevel.FlatRadioBase;
 
+//
+// TODO
+//
 module Ieee80211OfdmRadio extends FlatRadioBase
 {
     parameters:

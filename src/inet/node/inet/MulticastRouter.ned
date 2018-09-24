@@ -17,6 +17,9 @@
 
 package inet.node.inet;
 
+//
+// TODO
+//
 module MulticastRouter extends Router
 {
     parameters:

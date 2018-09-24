@@ -19,6 +19,9 @@ package inet.linklayer.ieee80211.mac.aggregation;
 
 import inet.linklayer.ieee80211.mac.contract.IMpduAggregationPolicy;
 
+//
+// TODO
+//
 simple BasicMpduAggregationPolicy like IMpduAggregationPolicy
 {
     @display("i=block/control");

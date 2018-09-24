@@ -19,6 +19,9 @@ package inet.physicallayer.pathloss;
 
 import inet.physicallayer.contract.packetlevel.IPathLoss;
 
+//
+// TODO
+//
 module UwbIrStochasticPathLoss like IPathLoss
 {
     parameters:

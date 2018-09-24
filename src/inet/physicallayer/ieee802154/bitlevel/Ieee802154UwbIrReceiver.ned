@@ -19,6 +19,9 @@ package inet.physicallayer.ieee802154.bitlevel;
 
 import inet.physicallayer.contract.packetlevel.IReceiver;
 
+//
+// TODO
+//
 module Ieee802154UwbIrReceiver like IReceiver
 {
     parameters:

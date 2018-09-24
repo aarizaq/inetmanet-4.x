@@ -19,6 +19,9 @@ package inet.physicallayer.base.bitlevel;
 
 import inet.physicallayer.contract.bitlevel.ILayeredErrorModel;
 
+//
+// TODO
+//
 module LayeredErrorModelBase like ILayeredErrorModel
 {
     parameters:

@@ -17,6 +17,9 @@
 
 package inet.linklayer.ieee8022;
 
+//
+// TODO
+//
 moduleinterface IIeee8022Llc
 {
     parameters:

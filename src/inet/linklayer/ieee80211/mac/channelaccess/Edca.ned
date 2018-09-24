@@ -21,6 +21,9 @@ package inet.linklayer.ieee80211.mac.channelaccess;
 import inet.linklayer.ieee80211.mac.contention.Contention;
 import inet.linklayer.ieee80211.mac.contract.ICollisionController;
 
+//
+// TODO
+//
 module Edca
 {
     parameters:

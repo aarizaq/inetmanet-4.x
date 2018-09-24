@@ -17,6 +17,9 @@
 
 package inet.linklayer.contract;
 
+//
+// TODO
+//
 moduleinterface IExternalInterface extends INetworkInterface
 {
     parameters:

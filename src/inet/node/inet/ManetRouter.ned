@@ -2,6 +2,9 @@ package inet.node.inet;
 
 import inet.routing.contract.IManetRouting;
 
+//
+// TODO
+//
 module ManetRouter extends AdhocHost
 {
     submodules:

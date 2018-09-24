@@ -19,6 +19,9 @@ package inet.physicallayer.ieee80211.packetlevel.errormodel;
 
 import inet.physicallayer.base.packetlevel.ErrorModelBase;
 
+//
+// TODO
+//
 module Ieee80211NistErrorModel extends ErrorModelBase
 {
     parameters:

@@ -19,6 +19,9 @@ package inet.networklayer.configurator.base;
 
 import inet.networklayer.configurator.contract.INetworkConfigurator;
 
+//
+// TODO
+//
 simple NetworkConfiguratorBase like INetworkConfigurator
 {
     parameters:

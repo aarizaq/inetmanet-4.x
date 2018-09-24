@@ -15,6 +15,9 @@
 
 package inet.physicallayer.contract.packetlevel;
 
+//
+// TODO
+//
 moduleinterface ICommunicationCache
 {
     parameters:

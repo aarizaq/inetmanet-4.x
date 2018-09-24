@@ -19,6 +19,9 @@ package inet.physicallayer.analogmodel.bitlevel;
 
 import inet.physicallayer.contract.packetlevel.IAnalogModel;
 
+//
+// TODO
+//
 module LayeredDimensionalAnalogModel like IAnalogModel
 {
     parameters:

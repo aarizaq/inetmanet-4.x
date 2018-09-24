@@ -19,6 +19,9 @@ package inet.physicallayer.ieee802154.bitlevel;
 
 import inet.physicallayer.apskradio.packetlevel.ApskDimensionalRadioMedium;
 
+//
+// TODO
+//
 module Ieee802154UwbIrRadioMedium extends ApskDimensionalRadioMedium
 {
     parameters:

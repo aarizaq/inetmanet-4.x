@@ -17,6 +17,9 @@
 
 package inet.linklayer.ieee80211.mac.contract;
 
+//
+// TODO
+//
 moduleinterface IHcf
 {
     parameters:

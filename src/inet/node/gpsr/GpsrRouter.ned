@@ -7,6 +7,9 @@ package inet.node.gpsr;
 import inet.node.inet.AdhocHost;
 import inet.routing.gpsr.Gpsr;
 
+//
+// TODO
+//
 module GpsrRouter extends AdhocHost
 {
     submodules:

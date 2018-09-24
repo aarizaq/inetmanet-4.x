@@ -17,6 +17,9 @@
 
 package inet.environment.contract;
 
+//
+// TODO
+//
 moduleinterface IGround
 {
     parameters:

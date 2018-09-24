@@ -17,6 +17,9 @@
 
 package inet.physicallayer.contract.bitlevel;
 
+//
+// TODO
+//
 moduleinterface IInterleaver
 {
     parameters:

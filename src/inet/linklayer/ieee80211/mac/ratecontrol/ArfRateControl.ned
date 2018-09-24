@@ -17,6 +17,9 @@
 
 package inet.linklayer.ieee80211.mac.ratecontrol;
 
+//
+// TODO
+//
 simple ArfRateControl extends AarfRateControl
 {
     parameters:

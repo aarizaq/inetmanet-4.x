@@ -19,6 +19,9 @@ package inet.mobility.single;
 
 import inet.mobility.base.MovingMobilityBase;
 
+//
+// TODO
+//
 simple VehicleMobility extends MovingMobilityBase
 {
     parameters:

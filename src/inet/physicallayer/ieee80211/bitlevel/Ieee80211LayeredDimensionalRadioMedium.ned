@@ -19,6 +19,9 @@ package inet.physicallayer.ieee80211.bitlevel;
 
 import inet.physicallayer.common.packetlevel.RadioMedium;
 
+//
+// TODO
+//
 module Ieee80211LayeredDimensionalRadioMedium extends RadioMedium
 {
     parameters:

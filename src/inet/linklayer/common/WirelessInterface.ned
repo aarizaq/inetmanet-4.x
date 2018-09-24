@@ -21,6 +21,9 @@ import inet.linklayer.contract.IMacProtocol;
 import inet.linklayer.contract.IWirelessInterface;
 import inet.physicallayer.contract.packetlevel.IRadio;
 
+//
+// TODO
+//
 module WirelessInterface like IWirelessInterface
 {
     parameters:

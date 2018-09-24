@@ -17,6 +17,9 @@
 
 package inet.routing.contract;
 
+//
+// TODO
+//
 moduleinterface IManetRouting
 {
     parameters:

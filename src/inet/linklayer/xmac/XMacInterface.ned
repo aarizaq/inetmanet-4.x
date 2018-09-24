@@ -19,6 +19,9 @@ package inet.linklayer.xmac;
 
 import inet.linklayer.common.WirelessInterface;
 
+//
+// TODO
+//
 module XMacInterface extends WirelessInterface
 {
     parameters:

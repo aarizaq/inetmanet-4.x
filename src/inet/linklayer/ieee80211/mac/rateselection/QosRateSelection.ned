@@ -17,6 +17,9 @@
 
 package inet.linklayer.ieee80211.mac.rateselection;
 
+//
+// TODO
+//
 simple QosRateSelection
 {
     parameters:

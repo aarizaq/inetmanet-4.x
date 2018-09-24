@@ -7,6 +7,9 @@ package inet.node.dymo;
 import inet.node.inet.AdhocHost;
 import inet.routing.dymo.Dymo;
 
+//
+// TODO
+//
 module DymoRouter extends AdhocHost
 {
     submodules:

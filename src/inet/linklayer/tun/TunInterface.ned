@@ -20,6 +20,9 @@ package inet.linklayer.tun;
 
 import inet.linklayer.contract.ITunnelInterface;
 
+//
+// TODO
+//
 module TunInterface like ITunnelInterface
 {
     parameters:

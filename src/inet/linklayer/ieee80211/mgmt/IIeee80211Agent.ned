@@ -17,6 +17,9 @@
 
 package inet.linklayer.ieee80211.mgmt;
 
+//
+// TODO
+//
 moduleinterface IIeee80211Agent
 {
     parameters:

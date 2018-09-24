@@ -19,6 +19,9 @@ package inet.applications.tunapp;
 
 import inet.applications.contract.IApp;
 
+//
+// TODO
+//
 simple TunLoopbackApp like IApp
 {
     parameters:

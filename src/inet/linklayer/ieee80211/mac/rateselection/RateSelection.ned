@@ -19,6 +19,9 @@ package inet.linklayer.ieee80211.mac.rateselection;
 
 import inet.linklayer.ieee80211.mac.contract.IRateSelection;
 
+//
+// TODO
+//
 simple RateSelection like IRateSelection
 {
     parameters:

@@ -19,6 +19,9 @@ package inet.linklayer.ethernet.switch;
 
 import inet.linklayer.contract.IMacRelayUnit;
 
+//
+// TODO
+//
 simple MacRelayUnit like IMacRelayUnit
 {
     parameters:

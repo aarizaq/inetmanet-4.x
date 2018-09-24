@@ -19,6 +19,9 @@ package inet.linklayer.ieee80211.mac.ratecontrol;
 
 import inet.linklayer.ieee80211.mac.contract.IRateControl;
 
+//
+// TODO
+//
 simple OnoeRateControl like IRateControl
 {
     parameters:

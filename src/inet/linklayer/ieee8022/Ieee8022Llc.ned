@@ -17,6 +17,11 @@
 
 package inet.linklayer.ieee8022;
 
+//
+// TODO
+//
+// @see ~IIeee8022Llc
+//
 simple Ieee8022Llc like IIeee8022Llc
 {
     parameters:

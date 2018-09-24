@@ -19,6 +19,9 @@ package inet.physicallayer.errormodel.bitlevel;
 
 import inet.physicallayer.base.bitlevel.LayeredErrorModelBase;
 
+//
+// TODO
+//
 module StochasticLayeredErrorModel extends LayeredErrorModelBase
 {
     parameters:

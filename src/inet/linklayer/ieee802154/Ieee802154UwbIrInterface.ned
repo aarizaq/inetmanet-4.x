@@ -22,6 +22,11 @@ import inet.linklayer.acking.AckingMac;
 import inet.linklayer.contract.IWirelessInterface;
 import inet.physicallayer.contract.packetlevel.IRadio;
 
+//
+// TODO
+//
+// @see ~IWirelessInterface
+//
 module Ieee802154UwbIrInterface like IWirelessInterface
 {
     parameters:

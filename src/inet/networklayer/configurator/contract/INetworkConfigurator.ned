@@ -17,6 +17,9 @@
 
 package inet.networklayer.configurator.contract;
 
+//
+// TODO
+//
 moduleinterface INetworkConfigurator
 {
 }

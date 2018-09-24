@@ -20,6 +20,9 @@ package inet.physicallayer.ieee802154.packetlevel;
 
 import inet.physicallayer.base.packetlevel.NarrowbandReceiverBase;
 
+//
+// TODO
+//
 module Ieee802154NarrowbandScalarReceiver extends NarrowbandReceiverBase
 {
     parameters:

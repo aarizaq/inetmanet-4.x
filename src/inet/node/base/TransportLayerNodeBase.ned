@@ -22,6 +22,9 @@ import inet.transportlayer.contract.ISctp;
 import inet.transportlayer.contract.ITcp;
 import inet.transportlayer.contract.IUdp;
 
+//
+// TODO
+//
 module TransportLayerNodeBase extends NetworkLayerNodeBase
 {
     parameters:

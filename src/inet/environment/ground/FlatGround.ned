@@ -19,6 +19,9 @@ package inet.environment.ground;
 
 import inet.environment.contract.IGround;
 
+//
+// TODO
+//
 module FlatGround like IGround
 {
     parameters:

@@ -19,6 +19,9 @@ package inet.linklayer.shortcut;
 
 import inet.linklayer.common.WirelessInterface;
 
+//
+// TODO
+//
 module ShortcutInterface extends WirelessInterface
 {
     parameters:

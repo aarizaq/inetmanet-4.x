@@ -19,6 +19,9 @@ package inet.visualizer.linklayer;
 
 import inet.visualizer.contract.IInterfaceTableVisualizer;
 
+//
+// TODO
+//
 module InterfaceTableVisualizer like IInterfaceTableVisualizer
 {
     parameters:
