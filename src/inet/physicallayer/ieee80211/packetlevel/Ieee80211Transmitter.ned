@@ -22,7 +22,7 @@ package inet.physicallayer.ieee80211.packetlevel;
 // transmission power in their analog representation. The bit domain, symbol
 // domain, and sample domains of the transmissions are not represented.
 //
-// See also ~Ieee80211ScalarReceiver, ~Ieee80211Radio, and
+// See also ~Ieee80211Receiver, ~Ieee80211Radio, and
 // ~Ieee80211ScalarRadioMedium.
 //
 module Ieee80211Transmitter extends Ieee80211TransmitterBase
