@@ -16,7 +16,9 @@
 //
 
 #include "inet/mobility/contract/IMobility.h"
+#include "inet/physicallayer/analogmodel/packetlevel/DimensionalTransmission.h"
 #include "inet/physicallayer/analogmodel/packetlevel/ScalarTransmission.h"
+#include "inet/physicallayer/apskradio/packetlevel/ApskDimensionalTransmission.h"
 #include "inet/physicallayer/apskradio/packetlevel/ApskPhyHeader_m.h"
 #include "inet/physicallayer/apskradio/packetlevel/ApskScalarTransmission.h"
 #include "inet/physicallayer/apskradio/packetlevel/ApskScalarTransmitter.h"
@@ -29,14 +31,22 @@ namespace physicallayer {
 Define_Module(ApskScalarTransmitter);
 
 ApskScalarTransmitter::ApskScalarTransmitter() :
-    FlatTransmitterBase()
+    FlatTransmitterBase(),
+    DimensionalTransmitterBase()
 {
+}
+
+void ApskScalarTransmitter::initialize(int stage)
+{
+    FlatTransmitterBase::initialize(stage);
+    DimensionalTransmitterBase::initialize(stage);
 }
 
 std::ostream& ApskScalarTransmitter::printToStream(std::ostream& stream, int level) const
 {
     stream << "ApskScalarTransmitter";
-    return FlatTransmitterBase::printToStream(stream, level);
+    FlatTransmitterBase::printToStream(stream, level);
+    return DimensionalTransmitterBase::printToStream(stream, level);
 }
 
 const ITransmission *ApskScalarTransmitter::createTransmission(const IRadio *transmitter, const Packet *packet, const simtime_t startTime) const
@@ -56,7 +66,12 @@ const ITransmission *ApskScalarTransmitter::createTransmission(const IRadio *tra
     const Coord endPosition = mobility->getCurrentPosition();
     const Quaternion startOrientation = mobility->getCurrentAngularPosition();
     const Quaternion endOrientation = mobility->getCurrentAngularPosition();
-    return new ApskScalarTransmission(transmitter, packet, startTime, endTime, preambleDuration, headerDuration, dataDuration, startPosition, endPosition, startOrientation, endOrientation, modulation, headerLength, dataLength, transmissionCarrierFrequency, transmissionBandwidth, transmissionBitrate, transmissionPower);
+    if (true)
+        return new ApskScalarTransmission(transmitter, packet, startTime, endTime, preambleDuration, headerDuration, dataDuration, startPosition, endPosition, startOrientation, endOrientation, modulation, headerLength, dataLength, transmissionCarrierFrequency, transmissionBandwidth, transmissionBitrate, transmissionPower);
+    else {
+        const ConstMapping *powerMapping = createPowerMapping(startTime, endTime, carrierFrequency, bandwidth, transmissionPower);
+        return new ApskDimensionalTransmission(transmitter, packet, startTime, endTime, preambleDuration, headerDuration, dataDuration, startPosition, endPosition, startOrientation, endOrientation, modulation, headerLength, dataLength, transmissionCarrierFrequency, transmissionBandwidth, transmissionBitrate, powerMapping);
+    }
 }
 
 } // namespace physicallayer

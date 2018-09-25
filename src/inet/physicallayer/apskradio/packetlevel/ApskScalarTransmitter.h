@@ -18,14 +18,18 @@
 #ifndef __INET_APSKSCALARTRANSMITTER_H
 #define __INET_APSKSCALARTRANSMITTER_H
 
+#include "inet/physicallayer/base/packetlevel/DimensionalTransmitterBase.h"
 #include "inet/physicallayer/base/packetlevel/FlatTransmitterBase.h"
 
 namespace inet {
 
 namespace physicallayer {
 
-class INET_API ApskScalarTransmitter : public FlatTransmitterBase
+class INET_API ApskScalarTransmitter : public FlatTransmitterBase, public DimensionalTransmitterBase
 {
+  protected:
+    virtual void initialize(int stage) override;
+
   public:
     ApskScalarTransmitter();
 

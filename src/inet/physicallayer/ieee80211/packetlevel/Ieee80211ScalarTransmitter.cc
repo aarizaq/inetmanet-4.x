@@ -19,6 +19,7 @@
 #include "inet/physicallayer/contract/packetlevel/IRadio.h"
 #include "inet/physicallayer/contract/packetlevel/RadioControlInfo_m.h"
 #include "inet/physicallayer/ieee80211/packetlevel/Ieee80211PhyHeader_m.h"
+#include "inet/physicallayer/ieee80211/packetlevel/Ieee80211DimensionalTransmission.h"
 #include "inet/physicallayer/ieee80211/packetlevel/Ieee80211ScalarTransmission.h"
 #include "inet/physicallayer/ieee80211/packetlevel/Ieee80211ScalarTransmitter.h"
 
@@ -29,14 +30,22 @@ namespace physicallayer {
 Define_Module(Ieee80211ScalarTransmitter);
 
 Ieee80211ScalarTransmitter::Ieee80211ScalarTransmitter() :
-    Ieee80211TransmitterBase()
+    Ieee80211TransmitterBase(),
+    DimensionalTransmitterBase()
 {
+}
+
+void Ieee80211ScalarTransmitter::initialize(int stage)
+{
+    Ieee80211TransmitterBase::initialize(stage);
+    DimensionalTransmitterBase::initialize(stage);
 }
 
 std::ostream& Ieee80211ScalarTransmitter::printToStream(std::ostream& stream, int level) const
 {
     stream << "Ieee80211ScalarTransmitter";
-    return Ieee80211TransmitterBase::printToStream(stream, level);
+    Ieee80211TransmitterBase::printToStream(stream, level);
+    return DimensionalTransmitterBase::printToStream(stream, level);
 }
 
 const ITransmission *Ieee80211ScalarTransmitter::createTransmission(const IRadio *transmitter, const Packet *packet, simtime_t startTime) const
@@ -60,7 +69,12 @@ const ITransmission *Ieee80211ScalarTransmitter::createTransmission(const IRadio
     const simtime_t preambleDuration = transmissionMode->getPreambleMode()->getDuration();
     const simtime_t headerDuration = transmissionMode->getHeaderMode()->getDuration();
     const simtime_t dataDuration = duration - headerDuration - preambleDuration;
-    return new Ieee80211ScalarTransmission(transmitter, packet, startTime, endTime, preambleDuration, headerDuration, dataDuration, startPosition, endPosition, startOrientation, endOrientation, modulation, headerLength, dataLength, carrierFrequency, bandwidth, transmissionBitrate, transmissionPower, transmissionMode, transmissionChannel);
+    if (true)
+        return new Ieee80211ScalarTransmission(transmitter, packet, startTime, endTime, preambleDuration, headerDuration, dataDuration, startPosition, endPosition, startOrientation, endOrientation, modulation, headerLength, dataLength, carrierFrequency, bandwidth, transmissionBitrate, transmissionPower, transmissionMode, transmissionChannel);
+    else {
+        const ConstMapping *powerMapping = createPowerMapping(startTime, endTime, carrierFrequency, bandwidth, transmissionPower);
+        return new Ieee80211DimensionalTransmission(transmitter, packet, startTime, endTime, preambleDuration, headerDuration, dataDuration, startPosition, endPosition, startOrientation, endOrientation, modulation, headerLength, dataLength, carrierFrequency, bandwidth, transmissionBitrate, powerMapping, transmissionMode, transmissionChannel);
+    }
 }
 
 } // namespace physicallayer

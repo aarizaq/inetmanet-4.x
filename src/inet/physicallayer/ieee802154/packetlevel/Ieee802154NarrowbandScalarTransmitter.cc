@@ -16,10 +16,11 @@
 // along with this program; if not, see <http://www.gnu.org/licenses/>.
 //
 
-#include "inet/physicallayer/ieee802154/packetlevel/Ieee802154NarrowbandScalarTransmitter.h"
+#include "inet/mobility/contract/IMobility.h"
+#include "inet/physicallayer/analogmodel/packetlevel/DimensionalTransmission.h"
 #include "inet/physicallayer/analogmodel/packetlevel/ScalarTransmission.h"
 #include "inet/physicallayer/contract/packetlevel/RadioControlInfo_m.h"
-#include "inet/mobility/contract/IMobility.h"
+#include "inet/physicallayer/ieee802154/packetlevel/Ieee802154NarrowbandScalarTransmitter.h"
 
 namespace inet {
 
@@ -28,14 +29,22 @@ namespace physicallayer {
 Define_Module(Ieee802154NarrowbandScalarTransmitter);
 
 Ieee802154NarrowbandScalarTransmitter::Ieee802154NarrowbandScalarTransmitter() :
-    FlatTransmitterBase()
+    FlatTransmitterBase(),
+    DimensionalTransmitterBase()
 {
+}
+
+void Ieee802154NarrowbandScalarTransmitter::initialize(int stage)
+{
+    FlatTransmitterBase::initialize(stage);
+    DimensionalTransmitterBase::initialize(stage);
 }
 
 std::ostream& Ieee802154NarrowbandScalarTransmitter::printToStream(std::ostream& stream, int level) const
 {
     stream << "Ieee802154NarrowbandScalarTransmitter";
-    return FlatTransmitterBase::printToStream(stream, level);
+    DimensionalTransmitterBase::printToStream(stream, level);
+    return DimensionalTransmitterBase::printToStream(stream, level);
 }
 
 const ITransmission *Ieee802154NarrowbandScalarTransmitter::createTransmission(const IRadio *transmitter, const Packet *packet, const simtime_t startTime) const
@@ -51,7 +60,12 @@ const ITransmission *Ieee802154NarrowbandScalarTransmitter::createTransmission(c
     const Coord endPosition = mobility->getCurrentPosition();
     const Quaternion startOrientation = mobility->getCurrentAngularPosition();
     const Quaternion endOrientation = mobility->getCurrentAngularPosition();
-    return new ScalarTransmission(transmitter, packet, startTime, endTime, preambleDuration, headerDuration, dataDuration, startPosition, endPosition, startOrientation, endOrientation, modulation, headerLength, packet->getTotalLength(), carrierFrequency, bandwidth, transmissionBitrate, transmissionPower);
+    if (true)
+        return new ScalarTransmission(transmitter, packet, startTime, endTime, preambleDuration, headerDuration, dataDuration, startPosition, endPosition, startOrientation, endOrientation, modulation, headerLength, packet->getTotalLength(), carrierFrequency, bandwidth, transmissionBitrate, transmissionPower);
+    else {
+        const ConstMapping *powerMapping = createPowerMapping(startTime, endTime, carrierFrequency, bandwidth, transmissionPower);
+        return new DimensionalTransmission(transmitter, packet, startTime, endTime, preambleDuration, headerDuration, dataDuration, startPosition, endPosition, startOrientation, endOrientation, modulation, headerLength, packet->getTotalLength(), carrierFrequency, bandwidth, transmissionBitrate, powerMapping);
+    }
 }
 
 } // namespace physicallayer
