@@ -30,6 +30,8 @@ module ApskRadio extends FlatRadioBase
 {
     parameters:
         antenna.typename = default("IsotropicAntenna");
+        transmitter.typename = default("ApskScalarTransmitter");
+        receiver.typename = default("ApskScalarReceiver");
         @class(ApskRadio);
 }
 
