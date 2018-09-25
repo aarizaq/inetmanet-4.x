@@ -16,33 +16,16 @@
 // along with this program; if not, see <http://www.gnu.org/licenses/>.
 //
 
-#ifndef __INET_IEEE802154NARROWBANDDIMENSIONALRECEIVER_H
-#define __INET_IEEE802154NARROWBANDDIMENSIONALRECEIVER_H
+package inet.physicallayer.ieee802154.packetlevel;
 
-#include "inet/physicallayer/base/packetlevel/FlatReceiverBase.h"
+import inet.physicallayer.base.packetlevel.NarrowbandReceiverBase;
 
-namespace inet {
-
-namespace physicallayer {
-
-class INET_API Ieee802154NarrowbandDimensionalReceiver : public FlatReceiverBase
+module Ieee802154NarrowbandReceiver extends NarrowbandReceiverBase
 {
-  protected:
-    W minInterferencePower;
-
-  public:
-    Ieee802154NarrowbandDimensionalReceiver();
-
-    void initialize(int stage) override;
-
-    virtual std::ostream& printToStream(std::ostream& stream, int level) const override;
-
-    virtual W getMinInterferencePower() const override { return minInterferencePower; }
-};
-
-} // namespace physicallayer
-
-} // namespace inet
-
-#endif // ifndef __INET_IEEE802154DIMENSIONALRECEIVER_H
+    parameters:
+        modulation = default("DSSS-OQPSK-16");
+        errorModel.typename = default("ApskErrorModel");
+        double minInterferencePower @unit(dBm);
+        @class(Ieee802154NarrowbandReceiver);
+}
 

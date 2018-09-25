@@ -18,7 +18,8 @@
 #include "inet/physicallayer/analogmodel/packetlevel/ScalarNoise.h"
 #include "inet/physicallayer/analogmodel/packetlevel/ScalarReception.h"
 #include "inet/physicallayer/analogmodel/packetlevel/ScalarSnir.h"
-#include "inet/physicallayer/apskradio/packetlevel/ApskScalarReceiver.h"
+#include "inet/physicallayer/apskradio/packetlevel/ApskDimensionalTransmission.h"
+#include "inet/physicallayer/apskradio/packetlevel/ApskReceiver.h"
 #include "inet/physicallayer/apskradio/packetlevel/ApskScalarTransmission.h"
 #include "inet/physicallayer/common/packetlevel/BandListening.h"
 
@@ -26,29 +27,31 @@ namespace inet {
 
 namespace physicallayer {
 
-Define_Module(ApskScalarReceiver);
+Define_Module(ApskReceiver);
 
-ApskScalarReceiver::ApskScalarReceiver() :
+ApskReceiver::ApskReceiver() :
     FlatReceiverBase()
 {
 }
 
-std::ostream& ApskScalarReceiver::printToStream(std::ostream& stream, int level) const
+std::ostream& ApskReceiver::printToStream(std::ostream& stream, int level) const
 {
-    stream << "ApskScalarReceiver";
+    stream << "ApskReceiver";
     return FlatReceiverBase::printToStream(stream, level);
 }
 
-bool ApskScalarReceiver::computeIsReceptionPossible(const IListening *listening, const ITransmission *transmission) const
+bool ApskReceiver::computeIsReceptionPossible(const IListening *listening, const ITransmission *transmission) const
 {
-    auto apskTransmission = dynamic_cast<const ApskScalarTransmission *>(transmission);
-    return apskTransmission && NarrowbandReceiverBase::computeIsReceptionPossible(listening, transmission);
+    return (dynamic_cast<const ApskScalarTransmission *>(transmission) ||
+            dynamic_cast<const ApskDimensionalTransmission *>(transmission)) &&
+            NarrowbandReceiverBase::computeIsReceptionPossible(listening, transmission);
 }
 
-bool ApskScalarReceiver::computeIsReceptionPossible(const IListening *listening, const IReception *reception, IRadioSignal::SignalPart part) const
+bool ApskReceiver::computeIsReceptionPossible(const IListening *listening, const IReception *reception, IRadioSignal::SignalPart part) const
 {
-    auto apksTransmission = dynamic_cast<const ApskScalarTransmission *>(reception->getTransmission());
-    return apksTransmission && FlatReceiverBase::computeIsReceptionPossible(listening, reception, part);
+    return (dynamic_cast<const ApskScalarTransmission *>(reception->getTransmission()) ||
+            dynamic_cast<const ApskDimensionalTransmission *>(reception->getTransmission())) &&
+            FlatReceiverBase::computeIsReceptionPossible(listening, reception, part);
 }
 
 } // namespace physicallayer

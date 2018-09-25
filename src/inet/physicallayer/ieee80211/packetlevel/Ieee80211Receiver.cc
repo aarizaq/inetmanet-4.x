@@ -15,37 +15,38 @@
 // along with this program; if not, see <http://www.gnu.org/licenses/>.
 //
 
-#include "inet/physicallayer/base/packetlevel/NarrowbandTransmissionBase.h"
-#include "inet/physicallayer/ieee80211/packetlevel/Ieee80211DimensionalReceiver.h"
+#include "inet/physicallayer/base/packetlevel/FlatTransmissionBase.h"
 #include "inet/physicallayer/ieee80211/packetlevel/Ieee80211DimensionalTransmission.h"
+#include "inet/physicallayer/ieee80211/packetlevel/Ieee80211Receiver.h"
+#include "inet/physicallayer/ieee80211/packetlevel/Ieee80211ScalarTransmission.h"
 
 namespace inet {
 
 namespace physicallayer {
 
-Define_Module(Ieee80211DimensionalReceiver);
+Define_Module(Ieee80211Receiver);
 
-Ieee80211DimensionalReceiver::Ieee80211DimensionalReceiver() :
+Ieee80211Receiver::Ieee80211Receiver() :
     Ieee80211ReceiverBase()
 {
 }
 
-std::ostream& Ieee80211DimensionalReceiver::printToStream(std::ostream& stream, int level) const
+std::ostream& Ieee80211Receiver::printToStream(std::ostream& stream, int level) const
 {
-    stream << "Ieee80211DimensionalReceiver";
+    stream << "Ieee80211Receiver";
     return Ieee80211ReceiverBase::printToStream(stream, level);
 }
 
-bool Ieee80211DimensionalReceiver::computeIsReceptionPossible(const IListening *listening, const ITransmission *transmission) const
+bool Ieee80211Receiver::computeIsReceptionPossible(const IListening *listening, const ITransmission *transmission) const
 {
-    const Ieee80211DimensionalTransmission *ieee80211Transmission = dynamic_cast<const Ieee80211DimensionalTransmission *>(transmission);
+    auto ieee80211Transmission = dynamic_cast<const Ieee80211TransmissionBase *>(transmission);
     return ieee80211Transmission && modeSet->containsMode(ieee80211Transmission->getMode()) && NarrowbandReceiverBase::computeIsReceptionPossible(listening, transmission);
 }
 
-bool Ieee80211DimensionalReceiver::computeIsReceptionPossible(const IListening *listening, const IReception *reception, IRadioSignal::SignalPart part) const
+bool Ieee80211Receiver::computeIsReceptionPossible(const IListening *listening, const IReception *reception, IRadioSignal::SignalPart part) const
 {
-    auto ieee80211Transmission = dynamic_cast<const Ieee80211DimensionalTransmission *>(reception->getTransmission());
-    return ieee80211Transmission && modeSet->containsMode(ieee80211Transmission->getMode()) && NarrowbandReceiverBase::computeIsReceptionPossible(listening, reception, part);
+    auto ieee80211Transmission = dynamic_cast<const Ieee80211TransmissionBase *>(reception->getTransmission());
+    return ieee80211Transmission && modeSet->containsMode(ieee80211Transmission->getMode()) && FlatReceiverBase::computeIsReceptionPossible(listening, reception, part);
 }
 
 } // namespace physicallayer

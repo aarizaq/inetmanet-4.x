@@ -15,24 +15,21 @@
 // along with this program; if not, see <http://www.gnu.org/licenses/>.
 //
 
-package inet.physicallayer.apskradio.packetlevel;
-
-import inet.physicallayer.base.packetlevel.NarrowbandReceiverBase;
+package inet.physicallayer.ieee80211.packetlevel;
 
 //
-// This receiver model receives a transmission succesfully if the minimum of the
-// signal to noise and interference ratio over the duration of the reception is
-// sufficiently high. It uses the error model to compute the error rate based on
-// this value and the used modulation.
+// This receiver model receives an IEEE 802.11 transmission successfully if the
+// minimum of the signal to noise and interference ratio over the duration of
+// the reception is sufficiently high. It uses one of the IEEE 802.11 specific
+// error models to compute the error rate based on this value and the used
+// operation mode.
 //
-// See also ~ApskDimensionalTransmitter, ~ApskRadio,
-// ~ApskDimensionalRadioMedium, and ~DimensionalAnalogModel.
+// See also ~Ieee80211Transmitter, ~Ieee80211Radio, and
+// ~Ieee80211ScalarRadioMedium.
 //
-module ApskDimensionalReceiver extends NarrowbandReceiverBase
+module Ieee80211Receiver extends Ieee80211ReceiverBase
 {
     parameters:
-        modulation = default("BPSK");
-        errorModel.typename = default("ApskErrorModel");
-        @class(ApskDimensionalReceiver);
+        @class(Ieee80211Receiver);
 }
 

@@ -1,4 +1,5 @@
 //
+// Copyright (C) 2014 Florian Meier
 // Copyright (C) 2013 OpenSim Ltd.
 //
 // This program is free software; you can redistribute it and/or
@@ -15,31 +16,33 @@
 // along with this program; if not, see <http://www.gnu.org/licenses/>.
 //
 
-#ifndef __INET_APSKSCALARRECEIVER_H
-#define __INET_APSKSCALARRECEIVER_H
+#ifndef __INET_IEEE802154NARROWBANDRECEIVER_H
+#define __INET_IEEE802154NARROWBANDRECEIVER_H
 
 #include "inet/physicallayer/base/packetlevel/FlatReceiverBase.h"
-#include "inet/physicallayer/contract/packetlevel/IModulation.h"
 
 namespace inet {
 
 namespace physicallayer {
 
-class INET_API ApskScalarReceiver : public FlatReceiverBase
+class INET_API Ieee802154NarrowbandReceiver : public FlatReceiverBase
 {
   protected:
-    virtual bool computeIsReceptionPossible(const IListening *listening, const ITransmission *transmission) const override;
-    virtual bool computeIsReceptionPossible(const IListening *listening, const IReception *reception, IRadioSignal::SignalPart part) const override;
+    W minInterferencePower;
 
   public:
-    ApskScalarReceiver();
+    Ieee802154NarrowbandReceiver();
+
+    void initialize(int stage) override;
 
     virtual std::ostream& printToStream(std::ostream& stream, int level) const override;
+
+    virtual W getMinInterferencePower() const override { return minInterferencePower; }
 };
 
 } // namespace physicallayer
 
 } // namespace inet
 
-#endif // ifndef __INET_APSKSCALARRECEIVER_H
+#endif // ifndef __INET_IEEE802154NARROWBANDRECEIVER_H
 
