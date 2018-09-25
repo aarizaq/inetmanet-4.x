@@ -28,7 +28,7 @@ import inet.node.ethernet.EtherSwitch;
 import inet.node.inet.AdhocHost;
 import inet.node.inet.Router;
 import inet.node.inet.StandardHost;
-import inet.physicallayer.apskradio.packetlevel.ApskScalarRadio;
+import inet.physicallayer.apskradio.packetlevel.ApskRadio;
 import inet.physicallayer.ieee80211.packetlevel.Ieee80211ScalarRadioMedium;
 import inet.transportlayer.tcp.Tcp;
 
@@ -115,7 +115,7 @@ module WirelessInterfaceExample
         input radioIn; // incoming packets from other hosts in the network
     submodules:
         mac: AckingMac; // simple MAC supporting ACKs
-        radio: ApskScalarRadio; // simple radio supporting many modulations
+        radio: ApskRadio; // simple radio supporting many modulations
     connections: // network interface internal connections
         mac.upperLayerOut --> upperLayerOut;
         mac.upperLayerIn <-- upperLayerIn;

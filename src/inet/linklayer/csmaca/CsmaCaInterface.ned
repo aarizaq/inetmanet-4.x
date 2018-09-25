@@ -22,7 +22,7 @@ import inet.linklayer.common.WirelessInterface;
 module CsmaCaInterface extends WirelessInterface
 {
     parameters:
-        radio.typename = default("ApskScalarRadio");
+        radio.typename = default("ApskRadio");
         mac.typename = "CsmaCaMac";
 }
 

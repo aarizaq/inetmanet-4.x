@@ -23,9 +23,9 @@ import inet.physicallayer.common.packetlevel.RadioMedium;
 // This radio medium model provides a hypothetical radio that simply uses one of
 // the  well-known modulations without utilizing other techiques such as forward
 // error correction, interleaving, spreading, etc. It must be used in
-// conjunction with the ~ApskDimensionalRadio model.
+// conjunction with the ~ApskRadio model.
 //
-// See also ~ApskDimensionalRadio, ~DimensionalAnalogModel,
+// See also ~ApskRadio, ~DimensionalAnalogModel,
 // ~ApskDimensionalTransmitter, and ~ApskDimensionalReceiver.
 //
 module ApskDimensionalRadioMedium extends RadioMedium

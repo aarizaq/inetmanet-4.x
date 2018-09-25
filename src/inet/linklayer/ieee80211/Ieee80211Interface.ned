@@ -81,7 +81,7 @@ module Ieee80211Interface like IWirelessInterface
             parameters:
                 @display("p=250,350");
         }
-        radio: <default("Ieee80211ScalarRadio")> like IRadio {
+        radio: <default("Ieee80211Radio")> like IRadio {
             parameters:
                 @display("p=250,500");
         }

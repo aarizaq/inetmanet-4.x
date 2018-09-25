@@ -29,7 +29,7 @@ import inet.physicallayer.base.packetlevel.FlatRadioBase;
 // used in IEEE 802.11 simulations. It also supports switching channels via
 // ~ConfigureRadioCommand, or with direct C++ function calls.
 //
-// See also ~Ieee80211ScalarRadio, and ~Ieee80211DimensionalRadio for more
+// See also ~Ieee80211Radio, and ~Ieee80211Radio for more
 // details.
 //
 // TODO: check this Table 18-14—Receiver performance requirements

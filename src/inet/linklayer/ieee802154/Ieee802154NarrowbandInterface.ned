@@ -39,7 +39,7 @@ module Ieee802154NarrowbandInterface like IWirelessInterface
             parameters:
                 @display("p=100,100");
         }
-        radio: <default("Ieee802154NarrowbandScalarRadio")> like IRadio {
+        radio: <default("Ieee802154NarrowbandRadio")> like IRadio {
             parameters:
                 @display("p=100,200");
         }

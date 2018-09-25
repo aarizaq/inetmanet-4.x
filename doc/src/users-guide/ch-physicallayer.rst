@@ -120,7 +120,7 @@ Some of the transmitter types available in INET:
 
 -  :ned:`UnitDiskTransmitter`
 
--  :ned:`ApskScalarTransmitter`
+-  :ned:`ApskTransmitter`
 
 -  :ned:`ApskDimensionalTransmitter`
 
