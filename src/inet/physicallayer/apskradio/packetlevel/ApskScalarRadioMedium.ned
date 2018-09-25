@@ -26,7 +26,7 @@ import inet.physicallayer.common.packetlevel.RadioMedium;
 // conjunction with the ~ApskRadio model.
 //
 // See also ~ApskRadio, ~ScalarAnalogModel, ~ApskTransmitter, and
-// ~ApskScalarReceiver.
+// ~ApskReceiver.
 //
 module ApskScalarRadioMedium extends RadioMedium
 {

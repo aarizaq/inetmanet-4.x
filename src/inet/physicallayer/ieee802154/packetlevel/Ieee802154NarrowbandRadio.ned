@@ -24,8 +24,8 @@ module Ieee802154NarrowbandRadio extends FlatRadioBase
 {
     parameters:
         antenna.typename = default("IsotropicAntenna");
-        transmitter.typename = default("Ieee802154NarrowbandScalarTransmitter");
-        receiver.typename = default("Ieee802154NarrowbandScalarReceiver");
+        transmitter.typename = default("Ieee802154NarrowbandTransmitter");
+        receiver.typename = default("Ieee802154NarrowbandReceiver");
 
         carrierFrequency = default(2450 MHz);
 
