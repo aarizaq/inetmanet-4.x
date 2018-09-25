@@ -1,4 +1,5 @@
 //
+// Copyright (C) 2014 Florian Meier
 // Copyright (C) 2013 OpenSim Ltd.
 //
 // This program is free software; you can redistribute it and/or
@@ -15,8 +16,8 @@
 // along with this program; if not, see <http://www.gnu.org/licenses/>.
 //
 
-#ifndef __INET_APSKSCALARTRANSMITTER_H
-#define __INET_APSKSCALARTRANSMITTER_H
+#ifndef __INET_IEEE802154NARROWBANDTRANSMITTER_H
+#define __INET_IEEE802154NARROWBANDTRANSMITTER_H
 
 #include "inet/physicallayer/base/packetlevel/DimensionalTransmitterBase.h"
 #include "inet/physicallayer/base/packetlevel/FlatTransmitterBase.h"
@@ -25,13 +26,13 @@ namespace inet {
 
 namespace physicallayer {
 
-class INET_API ApskScalarTransmitter : public FlatTransmitterBase, public DimensionalTransmitterBase
+class INET_API Ieee802154NarrowbandTransmitter : public FlatTransmitterBase, public DimensionalTransmitterBase
 {
   protected:
     virtual void initialize(int stage) override;
 
   public:
-    ApskScalarTransmitter();
+    Ieee802154NarrowbandTransmitter();
 
     virtual std::ostream& printToStream(std::ostream& stream, int level) const override;
     virtual const ITransmission *createTransmission(const IRadio *radio, const Packet *packet, const simtime_t startTime) const override;
@@ -41,5 +42,5 @@ class INET_API ApskScalarTransmitter : public FlatTransmitterBase, public Dimens
 
 } // namespace inet
 
-#endif // ifndef __INET_APSKSCALARTRANSMITTER_H
+#endif // ifndef __INET_IEEE802154NARROWBANDTRANSMITTER_H
 

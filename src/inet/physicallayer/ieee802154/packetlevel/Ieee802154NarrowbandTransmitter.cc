@@ -1,4 +1,5 @@
 //
+// Copyright (C) 2014 Florian Meier
 // Copyright (C) 2013 OpenSim Ltd.
 //
 // This program is free software; you can redistribute it and/or
@@ -18,47 +19,40 @@
 #include "inet/mobility/contract/IMobility.h"
 #include "inet/physicallayer/analogmodel/packetlevel/DimensionalTransmission.h"
 #include "inet/physicallayer/analogmodel/packetlevel/ScalarTransmission.h"
-#include "inet/physicallayer/apskradio/packetlevel/ApskDimensionalTransmission.h"
-#include "inet/physicallayer/apskradio/packetlevel/ApskPhyHeader_m.h"
-#include "inet/physicallayer/apskradio/packetlevel/ApskScalarTransmission.h"
-#include "inet/physicallayer/apskradio/packetlevel/ApskScalarTransmitter.h"
 #include "inet/physicallayer/contract/packetlevel/RadioControlInfo_m.h"
+#include "inet/physicallayer/ieee802154/packetlevel/Ieee802154NarrowbandTransmitter.h"
 
 namespace inet {
 
 namespace physicallayer {
 
-Define_Module(ApskScalarTransmitter);
+Define_Module(Ieee802154NarrowbandTransmitter);
 
-ApskScalarTransmitter::ApskScalarTransmitter() :
+Ieee802154NarrowbandTransmitter::Ieee802154NarrowbandTransmitter() :
     FlatTransmitterBase(),
     DimensionalTransmitterBase()
 {
 }
 
-void ApskScalarTransmitter::initialize(int stage)
+void Ieee802154NarrowbandTransmitter::initialize(int stage)
 {
     FlatTransmitterBase::initialize(stage);
     DimensionalTransmitterBase::initialize(stage);
 }
 
-std::ostream& ApskScalarTransmitter::printToStream(std::ostream& stream, int level) const
+std::ostream& Ieee802154NarrowbandTransmitter::printToStream(std::ostream& stream, int level) const
 {
-    stream << "ApskScalarTransmitter";
-    FlatTransmitterBase::printToStream(stream, level);
+    stream << "Ieee802154NarrowbandTransmitter";
+    DimensionalTransmitterBase::printToStream(stream, level);
     return DimensionalTransmitterBase::printToStream(stream, level);
 }
 
-const ITransmission *ApskScalarTransmitter::createTransmission(const IRadio *transmitter, const Packet *packet, const simtime_t startTime) const
+const ITransmission *Ieee802154NarrowbandTransmitter::createTransmission(const IRadio *transmitter, const Packet *packet, const simtime_t startTime) const
 {
-    auto phyHeader = packet->peekAtFront<ApskPhyHeader>();
-    auto dataLength = packet->getTotalLength() - phyHeader->getChunkLength();
     W transmissionPower = computeTransmissionPower(packet);
-    Hz transmissionCarrierFrequency = computeCarrierFrequency(packet);
-    Hz transmissionBandwidth = computeBandwidth(packet);
     bps transmissionBitrate = computeTransmissionDataBitrate(packet);
     const simtime_t headerDuration = b(headerLength).get() / bps(transmissionBitrate).get();
-    const simtime_t dataDuration = b(dataLength).get() / bps(transmissionBitrate).get();
+    const simtime_t dataDuration = b(packet->getTotalLength()).get() / bps(transmissionBitrate).get();
     const simtime_t duration = preambleDuration + headerDuration + dataDuration;
     const simtime_t endTime = startTime + duration;
     IMobility *mobility = transmitter->getAntenna()->getMobility();
@@ -67,10 +61,10 @@ const ITransmission *ApskScalarTransmitter::createTransmission(const IRadio *tra
     const Quaternion startOrientation = mobility->getCurrentAngularPosition();
     const Quaternion endOrientation = mobility->getCurrentAngularPosition();
     if (true)
-        return new ApskScalarTransmission(transmitter, packet, startTime, endTime, preambleDuration, headerDuration, dataDuration, startPosition, endPosition, startOrientation, endOrientation, modulation, headerLength, dataLength, transmissionCarrierFrequency, transmissionBandwidth, transmissionBitrate, transmissionPower);
+        return new ScalarTransmission(transmitter, packet, startTime, endTime, preambleDuration, headerDuration, dataDuration, startPosition, endPosition, startOrientation, endOrientation, modulation, headerLength, packet->getTotalLength(), carrierFrequency, bandwidth, transmissionBitrate, transmissionPower);
     else {
         const ConstMapping *powerMapping = createPowerMapping(startTime, endTime, carrierFrequency, bandwidth, transmissionPower);
-        return new ApskDimensionalTransmission(transmitter, packet, startTime, endTime, preambleDuration, headerDuration, dataDuration, startPosition, endPosition, startOrientation, endOrientation, modulation, headerLength, dataLength, transmissionCarrierFrequency, transmissionBandwidth, transmissionBitrate, powerMapping);
+        return new DimensionalTransmission(transmitter, packet, startTime, endTime, preambleDuration, headerDuration, dataDuration, startPosition, endPosition, startOrientation, endOrientation, modulation, headerLength, packet->getTotalLength(), carrierFrequency, bandwidth, transmissionBitrate, powerMapping);
     }
 }
 

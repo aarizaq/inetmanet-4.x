@@ -15,8 +15,8 @@
 // along with this program; if not, see <http://www.gnu.org/licenses/>.
 //
 
-#ifndef __INET_IEEE80211SCALARTRANSMITTER_H
-#define __INET_IEEE80211SCALARTRANSMITTER_H
+#ifndef __INET_IEEE80211TRANSMITTER_H
+#define __INET_IEEE80211TRANSMITTER_H
 
 #include "inet/physicallayer/base/packetlevel/DimensionalTransmitterBase.h"
 #include "inet/physicallayer/ieee80211/packetlevel/Ieee80211TransmitterBase.h"
@@ -25,13 +25,13 @@ namespace inet {
 
 namespace physicallayer {
 
-class INET_API Ieee80211ScalarTransmitter : public Ieee80211TransmitterBase, public DimensionalTransmitterBase
+class INET_API Ieee80211Transmitter : public Ieee80211TransmitterBase, public DimensionalTransmitterBase
 {
   protected:
     virtual void initialize(int stage) override;
 
   public:
-    Ieee80211ScalarTransmitter();
+    Ieee80211Transmitter();
 
     virtual std::ostream& printToStream(std::ostream& stream, int level) const override;
     virtual const ITransmission *createTransmission(const IRadio *radio, const Packet *packet, simtime_t startTime) const override;
@@ -41,5 +41,5 @@ class INET_API Ieee80211ScalarTransmitter : public Ieee80211TransmitterBase, pub
 
 } // namespace inet
 
-#endif // ifndef __INET_IEEE80211SCALARTRANSMITTER_H
+#endif // ifndef __INET_IEEE80211TRANSMITTER_H
 

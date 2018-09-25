@@ -20,7 +20,7 @@ package inet.physicallayer.ieee802154.packetlevel;
 
 import inet.physicallayer.base.packetlevel.NarrowbandTransmitterBase;
 
-module Ieee802154NarrowbandScalarTransmitter extends NarrowbandTransmitterBase
+module Ieee802154NarrowbandTransmitter extends NarrowbandTransmitterBase
 {
     parameters:
         string dimensions = default("");                    // dimensions of power: time and/or frequency
@@ -28,6 +28,6 @@ module Ieee802154NarrowbandScalarTransmitter extends NarrowbandTransmitterBase
         string frequencyGains = default("0% 0dB 100% 0dB"); // sequence of frequency and gain pairs; frequency is in [%] or [Hz], negative frequency measures from the end; gain is in [dB] or [0..1]; default value is a flat signal
         string interpolationMode @enum("linear", "sample-hold") = default("sample-hold");
         modulation = default("DSSS-OQPSK-16");
-        @class(Ieee802154NarrowbandScalarTransmitter);
+        @class(Ieee802154NarrowbandTransmitter);
 }
 

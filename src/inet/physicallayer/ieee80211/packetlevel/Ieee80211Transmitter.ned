@@ -25,7 +25,7 @@ package inet.physicallayer.ieee80211.packetlevel;
 // See also ~Ieee80211ScalarReceiver, ~Ieee80211ScalarRadio, and
 // ~Ieee80211ScalarRadioMedium.
 //
-module Ieee80211ScalarTransmitter extends Ieee80211TransmitterBase
+module Ieee80211Transmitter extends Ieee80211TransmitterBase
 {
     parameters:
         // TODO: remove parameters when base module is changed
@@ -33,6 +33,6 @@ module Ieee80211ScalarTransmitter extends Ieee80211TransmitterBase
         string timeGains = default("0% 0dB 100% 0dB");      // sequence of time and gain pairs; time is in [%] or [s], negative time measures from the end; gain is in [dB] or [0..1]; default value is a flat signal
         string frequencyGains = default("0% 0dB 100% 0dB"); // sequence of frequency and gain pairs; frequency is in [%] or [Hz], negative frequency measures from the end; gain is in [dB] or [0..1]; default value is a flat signal
         string interpolationMode @enum("linear", "sample-hold") = default("sample-hold");
-        @class(Ieee80211ScalarTransmitter);
+        @class(Ieee80211Transmitter);
 }
 
