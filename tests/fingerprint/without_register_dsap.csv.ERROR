@@ -1,0 +1,12 @@
+# Errors:
+/examples/manetrouting/dymo/,        -f omnetpp.ini -c DynamicIPv6 -r 0,            22s,             5fe9-22ea/tplx, ERROR, wireless adhoc # IPv6: Shutdown not supported
+/examples/manetrouting/gpsr/,        -f omnetpp.ini -c DynamicIPv6 -r 0,            20s,             0000-0000/tplx, ERROR, wireless adhoc # This module doesn't support starting in node DOWN state
+/examples/mpls/net37/,               -f omnetpp.ini -c General -r 0,                100s,            0000-0000/tplx, ERROR,    # <!> Error in module (TED) R37.LSR0.ted (id=45) during network initialization: Model error: ASSERT: condition !remote.isUnspecified() false in function initialize, networklayer/ted/TED.cc line 86.
+/examples/wireless/corruptionmode/,  -f omnetpp.ini -c ByteCorruptionMode -r 0,     10s,         0000-0000/tplx, ERROR,
+/examples/wireless/hiddennode/,      -f omnetpp.ini -c General -r 0,                5s,         a24a-dd6e/tplx, PASS, wireless
+/examples/wireless/hosttohost/,      -f omnetpp.ini -c Throughput1 -r 0,            5s,           a03e-1258/tplx, PASS, wireless
+/examples/wireless/ratecontrol/, -f omnetpp.ini -c Mac -r 0,                    100s,            1061-45c2/tplx, PASS, wireless
+/examples/wireless/testnewmac/,      -f omnetpp.ini -c Mac -r 0,                    10s,          163d-6ab5/tplx, PASS, wireless
+/examples/wireless/throughput/,      -f omnetpp.ini -c Throughput1 -r 0,            20s,           fe7b-db43/tplx, PASS, wireless
+/examples/wireless/throughput/,      -f omnetpp.ini -c Mac -r 0,                    10s,         eb11-057e/tplx, PASS, wireless
+/showcases/visualizer/osgdemo/,      -f omnetpp.ini -c General -r 0,                100s,         0000-0000/tplx, ERROR,
