@@ -166,6 +166,10 @@ class INET_API Radio : public PhysicalLayerBase, public virtual IRadio
     //@}
 
   private:
+    static int macIdIndex;
+    static std::map<std::string, int> registeredMac;
+    int macType = -1;
+
     void parseRadioModeSwitchingTimes();
     void startRadioModeSwitch(RadioMode newRadioMode, simtime_t switchingTime);
     void completeRadioModeSwitch(RadioMode newRadioMode);
@@ -216,6 +220,9 @@ class INET_API Radio : public PhysicalLayerBase, public virtual IRadio
     virtual ~Radio();
 
     virtual int getId() const override { return id; }
+
+
+    virtual int getMacTypeId() const override {return macType;}
 
     virtual std::ostream& printToStream(std::ostream& stream, int level, int evFlags = 0) const override;
 

@@ -23,7 +23,7 @@
 #include "inet/common/lifecycle/ModuleOperations.h"
 #include "inet/physicallayer/wireless/common/contract/packetlevel/SignalTag_m.h"
 #include "inet/physicallayer/wireless/common/medium/RadioMedium.h"
-
+#include <typeinfo>
 #ifdef NS3_VALIDATION
 #include "inet/linklayer/ieee80211/mac/Ieee80211Frame_m.h"
 #endif
@@ -31,6 +31,9 @@
 namespace inet {
 namespace physicallayer {
 
+
+int Radio::macIdIndex = 0;
+std::map<std::string, int> Radio::registeredMac;
 Define_Module(Radio);
 
 Radio::~Radio()
@@ -61,6 +64,18 @@ void Radio::initialize(int stage)
         sendRawBytes = par("sendRawBytes");
         separateTransmissionParts = par("separateTransmissionParts");
         separateReceptionParts = par("separateReceptionParts");
+
+        auto mod = check_and_cast<cSimpleModule *> (gate("upperLayerOut")->getPathEndGate()->getOwner());
+        auto className = std::string(mod->getClassName());
+        auto itMac = registeredMac.find(className);
+        if (itMac == registeredMac.end()) {
+            macIdIndex++;
+            macType = macIdIndex;
+            registeredMac.insert(std::make_pair(className, macType));
+        }
+        else
+            macType = itMac->second;
+
         WATCH(radioMode);
         WATCH(receptionState);
         WATCH(transmissionState);
@@ -476,12 +491,24 @@ void Radio::endReception(cMessage *timer)
         // TODO this would draw twice from the random number generator in isReceptionSuccessful: auto isReceptionSuccessful = medium->isReceptionSuccessful(this, transmission, part);
         auto isReceptionSuccessful = medium->getReceptionDecision(this, signal->getListening(), transmission, part)->isReceptionSuccessful();
         EV_INFO << "Reception ended: " << (isReceptionSuccessful ? "\x1b[1msuccessfully\x1b[0m" : "\x1b[1munsuccessfully\x1b[0m") << " for " << (IWirelessSignal *)signal << " " << IRadioSignal::getSignalPartName(part) << " as " << reception << endl;
-        auto macFrame = medium->receivePacket(this, signal);
-        take(macFrame);
-        // FIXME see handling packets with incorrect PHY headers in the TODO file
-        decapsulate(macFrame);
-        sendUp(macFrame);
-        emit(receptionEndedSignal, check_and_cast<const cObject *>(reception));
+        if (transmission->getTransmitter()->getMacTypeId() != -1 && this->macType != -1) {
+            if (transmission->getTransmitter()->getMacTypeId() == this->macType) {
+                auto macFrame = medium->receivePacket(this, signal);
+                take(macFrame);
+                // FIXME see handling packets with incorrect PHY headers in the TODO file
+                decapsulate(macFrame);
+                sendUp(macFrame);
+                emit(receptionEndedSignal, check_and_cast<const cObject*>(reception));
+            }
+        }
+        else {
+            auto macFrame = medium->receivePacket(this, signal);
+            take(macFrame);
+            // FIXME see handling packets with incorrect PHY headers in the TODO file
+            decapsulate(macFrame);
+            sendUp(macFrame);
+            emit(receptionEndedSignal, check_and_cast<const cObject *>(reception));
+        }
     }
     else
         EV_INFO << "Reception ended: \x1b[1mignoring\x1b[0m " << (IWirelessSignal *)signal << " " << IRadioSignal::getSignalPartName(part) << " as " << reception << endl;

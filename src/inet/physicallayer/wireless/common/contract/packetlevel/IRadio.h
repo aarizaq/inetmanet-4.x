@@ -281,6 +281,8 @@ class INET_API IRadio : public IPhysicalLayer, public IPrintableObject
      */
     virtual IRadioSignal::SignalPart getReceivedSignalPart() const = 0;
 
+    virtual int getMacTypeId() const = 0;
+
   public:
     /**
      * Returns the name of the provided radio mode.
