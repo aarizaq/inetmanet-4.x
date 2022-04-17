@@ -37,7 +37,7 @@ class RplNetConfigurator : public Ipv6FlatNetworkConfigurator
 {
   protected:
     void initialize(int stage) override;
-    void configureAdvPrefixes(cTopology& topo) override;
+    void configureAdvPrefixes(Topology& topo) override;
 };
 
 }

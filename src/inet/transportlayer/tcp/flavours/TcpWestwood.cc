@@ -11,24 +11,9 @@
 #include "inet/transportlayer/tcp/Tcp.h"
 
 namespace inet {
-
 namespace tcp {
 
 Register_Class(TcpWestwood);
-
-TcpWestwoodStateVariables::TcpWestwoodStateVariables()
-{
-    ssthresh = 65535;
-    w_RTTmin = SIMTIME_MAX;
-    w_a = 1;
-    w_lastAckTime = 0;
-    w_bwe = 0;
-    w_sample_bwe = 0;
-}
-
-TcpWestwoodStateVariables::~TcpWestwoodStateVariables()
-{
-}
 
 std::string TcpWestwoodStateVariables::str() const
 {
@@ -54,7 +39,8 @@ TcpWestwood::TcpWestwood()
 
 void TcpWestwood::recalculateSlowStartThreshold()
 {
-    state->ssthresh = (uint32_t)((state->w_bwe * SIMTIME_DBL(state->w_RTTmin)) / (state->w_a));
+    double x = (state->w_bwe * SIMTIME_DBL(state->w_RTTmin)) / (state->w_a);
+    state->ssthresh = x <= UINT32_MAX ? (uint32_t)(x) : UINT32_MAX;
 
     conn->emit(ssthreshSignal, state->ssthresh);
 
@@ -294,6 +280,5 @@ void TcpWestwood::segmentRetransmitted(uint32_t fromseq, uint32_t toseq)
 }
 
 } // namespace tcp
-
 } // namespace inet
 

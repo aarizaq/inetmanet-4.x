@@ -24,10 +24,10 @@ extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 
-#ifndef HAVE_FFMPEG_AVRESAMPLE
-#error Please install libavresample or disable 'VoipStream' feature
+#ifndef HAVE_FFMPEG_SWRESAMPLE
+#error Please install libswresample or disable 'VoipStream' feature
 #endif // ifndef HAVE_FFMPEG_AVRESAMPLE
-#include <libavresample/avresample.h>
+#include <libswresample/swresample.h>
 };
 
 #include "inet/applications/voipstream/AudioOutFile.h"
@@ -54,6 +54,7 @@ class INET_API VoipStreamSender : public cSimpleModule, public LifecycleUnsuppor
     virtual Packet *generatePacket();
     virtual bool checkSilence(AVSampleFormat sampleFormat, void *_buf, int samples);
     virtual void readFrame();
+    virtual void resampleFrame(const uint8_t **in_data, int in_nb_samples);
 
   protected:
     class Buffer {
@@ -103,7 +104,7 @@ class INET_API VoipStreamSender : public cSimpleModule, public LifecycleUnsuppor
     AVFormatContext *pFormatCtx = nullptr;
     AVCodecContext *pCodecCtx = nullptr;
     AVCodec *pCodec = nullptr; // input decoder codec
-    AVAudioResampleContext *pReSampleCtx = nullptr;
+    SwrContext *pReSampleCtx = nullptr;
     AVCodecContext *pEncoderCtx = nullptr;
     AVCodec *pCodecEncoder = nullptr; // output encoder codec
 

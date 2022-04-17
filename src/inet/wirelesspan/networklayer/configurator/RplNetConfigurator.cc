@@ -35,7 +35,7 @@ void RplNetConfigurator::initialize(int stage)
 
     if (stage == INITSTAGE_NETWORK_CONFIGURATION) {
         EV_DETAIL << "Initializing RplNetConfigurator" << endl;
-        cTopology topo("topo");
+        Topology topo("topo");
 
         // extract topology
         topo.extractByProperty("networkNode");
@@ -49,7 +49,7 @@ void RplNetConfigurator::initialize(int stage)
 }
 
 
-void RplNetConfigurator::configureAdvPrefixes(cTopology& topo)
+void RplNetConfigurator::configureAdvPrefixes(Topology& topo)
 {
     EV_DETAIL << "Configuring adv prefixes:" << endl;
     // assign advertised prefixes to all router interfaces

@@ -5,6 +5,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 
+#include <cstdarg>
+
 #include "inet/applications/voipstream/VoipStreamReceiver.h"
 
 #include "inet/common/INETEndians.h"
@@ -52,6 +54,7 @@ void VoipStreamReceiver::initialize(int stage)
 
         // initialize avcodec library
         av_register_all();
+        av_log_set_callback(&inet_av_log);
     }
     else if (stage == INITSTAGE_APPLICATION_LAYER) {
         cModule *node = findContainingNode(this);
@@ -141,7 +144,7 @@ void VoipStreamReceiver::Connection::writeAudioFrame(uint8_t *inbuf, int inbytes
     simtime_t decodedTime(1.0 * decodedFrame.nb_samples / sampleRate);
     lastPacketFinish += decodedTime;
     if (outFile.isOpen())
-        outFile.write(decodedFrame.data[0], decodedFrame.linesize[0]);
+        outFile.write(decodedFrame.data[0], decodedFrame.nb_samples * av_get_bytes_per_sample(decCtx->sample_fmt));
 }
 
 void VoipStreamReceiver::Connection::closeAudio()
@@ -249,9 +252,12 @@ void VoipStreamReceiver::decodePacket(Packet *pk)
         emit(packetHasVoiceSignal, 1);
         uint16_t len = vp->getDataLength();
         auto bb = pk->peekDataAt<BytesChunk>(b(0), B(len));
-        auto buff = bb->getBytes();
-        curConn.writeAudioFrame(&buff.front(), buff.size());
-        FINGERPRINT_ADD_EXTRA_DATA2((const char *)(&buff.front()), buff.size());
+        //auto buff = bb->getBytes();
+        uint8_t *buff = new uint8_t[len + AV_INPUT_BUFFER_PADDING_SIZE]; // required extra AV_INPUT_BUFFER_PADDING_SIZE bytes at end of buff for avcodec_decode_audio4()
+        bb->copyToBuffer(buff, len);
+        curConn.writeAudioFrame(buff, len);
+        FINGERPRINT_ADD_EXTRA_DATA2((const char *)buff, len);
+        delete [] buff;
     }
     else if (vp->getType() == SILENCE) {
         emit(packetHasVoiceSignal, 0);
