@@ -122,6 +122,7 @@ ProtocolGroup ProtocolGroup::ipprotocol("ipprotocol", {
     { IP_PROT_SCTP, &Protocol::sctp },
     { IP_PROT_IPv6EXT_MOB, &Protocol::mobileipv6 },
     { IP_PROT_MANET, &Protocol::manet },
+
     { IP_PROT_LINK_STATE_ROUTING, &Protocol::linkStateRouting },
     { IP_PROT_FLOODING, &Protocol::flooding },          // INET specific non-standard protocol
     { IP_PROT_PROBABILISTIC, &Protocol::probabilistic },     // INET specific non-standard protocol

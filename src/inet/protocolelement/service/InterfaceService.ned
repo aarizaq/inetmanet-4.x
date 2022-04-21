@@ -24,7 +24,6 @@ import inet.queueing.common.PacketMultiplexer;
 module InterfaceService extends NetworkInterface
 {
     parameters:
-        isWireless = default(false);
         string interfaceTableModule;
         string protocol;
         @class(inet::NetworkInterface);

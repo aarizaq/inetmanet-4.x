@@ -200,6 +200,8 @@ void LoRaMac::handleUpperPacket(Packet *packet)
     EV << "frame " << packet << " received from higher layer " << endl;
     auto pktEncap = encapsulate(packet);
     const auto &frame = pktEncap->peekAtFront<LoRaMacFrame>();
+    if (frame == nullptr)
+        throw cRuntimeError("Header LoRaMacFrame not found");
 
     if (currentTxFrame != nullptr)
         throw cRuntimeError("Model error: incomplete transmission exists");

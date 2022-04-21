@@ -29,7 +29,7 @@ module WakeUpSensorNode extends ApplicationLayerNodeBase
         @figure[submodules];
         numWlanInterfaces = default(0);
         energyStorage.typename = default("IdealEpEnergyStorage");
-        wlanWake.radio.energyConsumer.typename = default("SensorStateBasedEpEnergyConsumer"); //FIXME does this consumer exist???
+        wlanWake.radio.energyConsumer.typename = default("WakeUpStateBasedEpEnergyConsumer"); //FIXME does this consumer exist???
         wlanWake.controlledRadio.energyConsumer.typename = default("SensorStateBasedEpEnergyConsumer"); //FIXME does this consumer exist???
     gates:
         input radioInW[2] @directIn;

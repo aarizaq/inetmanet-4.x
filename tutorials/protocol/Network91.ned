@@ -176,7 +176,6 @@ module DataService
 module Interface extends NetworkInterface
 {
     parameters:
-        isWireless = default(false);
         string interfaceTableModule;
         @class(NetworkInterface);
         @display("i=block/ifcard");
@@ -264,7 +263,7 @@ module Node
         d1: MessageDispatcher {
             @display("p=450,400");
         }
-        interface[sizeof(phys)]: Interface {
+        interface[sizeof(g)]: Interface {
             @display("p=450,500,row,150");
         }
     connections:
