@@ -37,6 +37,7 @@ simple RandomWaypointMobility extends MovingMobilityBase
         bool initFromDisplayString = default(true); // enables one time initialization from the subject module's display string
         volatile double speed @unit(mps) = default(mps); // use uniform(minSpeed, maxSpeed) or another distribution
         volatile double waitTime @unit(s) = default(0s); // wait time between reaching a target and choosing a new one
+        string physicalEnvironmentModule = default("physicalEnvironment");
         @class(RandomWaypointMobility);
 }
 

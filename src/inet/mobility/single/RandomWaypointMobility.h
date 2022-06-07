@@ -10,6 +10,7 @@
 #define __INET_RANDOMWAYPOINTMOBILITY_H
 
 #include "inet/mobility/base/LineSegmentsMobilityBase.h"
+#include "inet/environment/contract/IPhysicalEnvironment.h"
 
 namespace inet {
 
@@ -26,6 +27,21 @@ class INET_API RandomWaypointMobility : public LineSegmentsMobilityBase
     cPar *speedParameter = nullptr;
     cPar *waitTimeParameter = nullptr;
     bool hasWaitTime;
+
+    physicalenvironment::IPhysicalEnvironment* physicalEnvironment = nullptr;
+    virtual bool isObstacle(const physicalenvironment::IPhysicalObject *object, const Coord& transmissionPosition, const Coord& receptionPosition) const;
+    class Visitor : public IVisitor
+    {
+    protected:
+        const RandomWaypointMobility *obstacles = nullptr;
+        const Coord transmissionPosition;
+        const Coord receptionPosition;
+        mutable bool isObstacleFound_ = false;
+    public:
+        Visitor(RandomWaypointMobility *, const Coord& endPosition, const Coord& initialPosition);
+        void visit(const cObject *object) const override;
+        bool isObstacleFound() const { return isObstacleFound_; }
+    };
 
   protected:
     virtual int numInitStages() const override { return NUM_INIT_STAGES; }
