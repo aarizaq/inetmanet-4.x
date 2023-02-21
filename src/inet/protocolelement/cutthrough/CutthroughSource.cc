@@ -35,7 +35,6 @@ void CutthroughSource::handleMessage(cMessage *message)
         cutthroughData->markImmutable();
         cutthroughBuffer = makeShared<StreamBufferChunk>(cutthroughData, simTime(), datarate);
         cutthroughPacket->insertAtBack(cutthroughBuffer);
-        cutthroughPacket->copyRegionTags(*streamedPacket, cutthroughPosition, cutthroughPosition, cutthroughData->getChunkLength());
         auto cutthroughTag = cutthroughPacket->addTag<CutthroughTag>();
         cutthroughTag->setCutthroughPosition(cutthroughPosition);
         EV_INFO << "Sending cut-through packet" << EV_FIELD(packet, *cutthroughPacket) << EV_ENDL;
