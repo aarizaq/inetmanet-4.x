@@ -56,7 +56,7 @@ module Radio extends PhysicalLayerBase like IRadio
         bool displayCommunicationRange = default(false); // If true communication range is displayed as a blue circle around the node
         bool displayInterferenceRange = default(false);  // If true interference range is displayed as a gray circle around the node
 
-        string signalAnalogRepresentation @enum("unitDisk", "scalar", "dimensional") = default("scalar");
+        string signalAnalogRepresentation @enum("unitDisk", "scalar", "dimensional","unitDiskLoss") = default("scalar");
 
         *.signalAnalogRepresentation = default(this.signalAnalogRepresentation);
         *.energySourceModule = default(absPath(this.energySourceModule));
