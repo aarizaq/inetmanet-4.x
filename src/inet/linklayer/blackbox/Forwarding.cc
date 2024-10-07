@@ -16,6 +16,7 @@
 #include "inet/linklayer/common/InterfaceTag_m.h"
 #include "inet/linklayer/ppp/Ppp.h"
 #include "inet/networklayer/contract/IInterfaceTable.h"
+#include "inet/networklayer/ipv4/Ipv4Header_m.h"
 #include "inet/common/IProtocolRegistrationListener.h"
 
 /**
@@ -191,6 +192,9 @@ void Forwarding::handleMessage(cMessage *msg)
             }
             else {
                 // this is the end path, search the final destination
+                const auto& ipv4Header = pkt->peekAtFront<Ipv4Header>();
+                pkt->addTagIfAbsent<NetworkProtocolInd>()->setNetworkProtocolHeader(ipv4Header);
+                pkt->addTagIfAbsent<NetworkProtocolInd>()->setProtocol(&Protocol::ipv4);
                 const auto& networkHeader = getNetworkProtocolHeader(pkt);
                 auto destAddr = networkHeader->getDestinationAddress();
                 auto it = l3AddressDestination.find(destAddr);
@@ -211,6 +215,9 @@ void Forwarding::handleMessage(cMessage *msg)
         }
         else {
             // this is the end path, search the final destination
+            const auto& ipv4Header = pkt->peekAtFront<Ipv4Header>();
+            pkt->addTagIfAbsent<NetworkProtocolInd>()->setNetworkProtocolHeader(ipv4Header);
+            pkt->addTagIfAbsent<NetworkProtocolInd>()->setProtocol(&Protocol::ipv4);
             const auto& networkHeader = getNetworkProtocolHeader(pkt);
             auto destAddr = networkHeader->getDestinationAddress();
             auto it = l3AddressDestination.find(destAddr);
