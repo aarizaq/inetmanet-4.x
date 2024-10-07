@@ -87,7 +87,7 @@ ifeq ($(WITH_Z3), enabled)
     HAVE_Z3 := $(shell $(PKGCFG) --exists z3 && echo yes)
     ifeq ($(HAVE_Z3), yes)
       Z3_LIBS := $(shell $(PKGCFG) --libs z3)
-      Z3_CFLAGS := $(shell $(PKGCFG) --clags z3)
+      Z3_CFLAGS := $(shell $(PKGCFG) --cflags z3)
     else
       Z3_LIBS := -lz3     # default in case pkg-config doesn't have z3 in its database (such as in NIX)
     endif
