@@ -1124,11 +1124,11 @@ const Ptr<Chunk> SctpHeaderSerializer::deserialize(MemoryInputStream& stream) co
 
 //    auto position = stream.getPosition();
     int bufsize = B(stream.getRemainingLength()).get();
-    uint8_t buffer[bufsize];
+    uint8_t *buffer = new uint8_t[bufsize];
     stream.readBytes(buffer, B(bufsize));
     auto dest = makeShared<SctpHeader>();
 
-    struct common_header *common_header = (struct common_header *)((void *)&buffer);
+    struct common_header *common_header = (struct common_header *)((void *)buffer);
     int32_t tempChecksum = common_header->checksum;
     common_header->checksum = 0;
     int32_t chksum = SctpChecksum::checksum((unsigned char *)common_header, bufsize);
@@ -1156,6 +1156,7 @@ const Ptr<Chunk> SctpHeaderSerializer::deserialize(MemoryInputStream& stream) co
         int32_t chunkType = chunk->type;
         woPadding = ntohs(chunk->length);
         if (woPadding == 0) {
+            delete [] buffer;
             return dest;
         }
         cLen = ADD_PADDING(woPadding);
@@ -2147,6 +2148,7 @@ const Ptr<Chunk> SctpHeaderSerializer::deserialize(MemoryInputStream& stream) co
         chunkPtr += cLen;
     } // end of while()
     EV_INFO << "SctpSerializer - pkt info - " << B(dest->getChunkLength()).get() << " bytes" << endl;
+    delete [] buffer;
     return dest;
 }
 
