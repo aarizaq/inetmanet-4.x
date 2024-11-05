@@ -382,10 +382,10 @@ void DsrDataBase::erasePathWithLink(const L3Address &addr1,const L3Address &addr
 
         for (itMap = pathsCache.begin();itMap != pathsCache.end();++itMap)
         {
-            int contador = 0;
+            //int contador = 0;
             for(auto itPaths = itMap->second.begin(); itPaths != itMap->second.end();)
             {
-                contador++;
+                //contador++;
                 if (now >= itPaths->getExpires())
                 {
                     itPaths = itMap->second.erase(itPaths);

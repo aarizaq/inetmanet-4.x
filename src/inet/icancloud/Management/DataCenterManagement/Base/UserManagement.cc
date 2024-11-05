@@ -233,13 +233,13 @@ int UserManagement::getUserPositionByUserID (int uid){
         vector <tenant_T*>::iterator userIt;
         int userPosition = -1;
         bool found = false;
-        int counter = 0;
+        //int counter = 0;
 
         for (userIt = userList.begin(); (userIt < userList.end()) && (!found);userIt++ ){
             if ((*userIt)->userPtr->getId() == uid)
                 found = true;
-             else
-                counter++;
+             //else
+             //   counter++;
 
         }
 
@@ -250,7 +250,7 @@ AbstractUser* UserManagement::getUserByID (int uId){
 
         vector <tenant_T*>::iterator userIt;
         bool found = false;
-        int counter = 0;
+        //int counter = 0;
         AbstractUser* user;
 
         for (userIt = userList.begin(); (userIt < userList.end()) && (!found);userIt++ ){
@@ -258,8 +258,8 @@ AbstractUser* UserManagement::getUserByID (int uId){
                 found = true;
                 user = (*userIt)->userPtr;
             }
-             else
-                counter++;
+            // else
+            //    counter++;
 
         }
 

@@ -231,7 +231,7 @@ void ManetRoutingBase::registerRoutingModule()
     const char *name;
     /* Set host parameters */
     isRegistered = true;
-    int  num_80211 = 0;
+    //int  num_80211 = 0;
 
     createTimerQueue();
 
@@ -289,7 +289,7 @@ void ManetRoutingBase::registerRoutingModule()
                         InterfaceIdentification interface;
                         interface.interfacePtr = ie;
                         interface.index = i;
-                        num_80211++;
+                        //num_80211++;
                         interfaceVector->push_back(interface);
                     }
                 }
@@ -302,7 +302,7 @@ void ManetRoutingBase::registerRoutingModule()
                         InterfaceIdentification interface;
                         interface.interfacePtr = ie;
                         interface.index = i;
-                        num_80211++;
+                        //num_80211++;
                         interfaceVector->push_back(interface);
                     }
                 }
@@ -331,7 +331,7 @@ void ManetRoutingBase::registerRoutingModule()
                 InterfaceIdentification interface;
                 interface.interfacePtr = ie;
                 interface.index = i;
-                num_80211++;
+                //num_80211++;
                 interfaceVector->push_back(interface);
             }
         }

@@ -83,7 +83,7 @@ std::string DSRPkt::str() const
 {
     std::stringstream out;
     struct dsr_opt *dopt;
-    int l = DSR_OPT_HDR_LEN;
+    //int l = DSR_OPT_HDR_LEN;
     out << " DSR Options "  << "\n"; // Khmm...
 
     for (unsigned int i = 0; i < dsrOptions.size(); i++)
@@ -155,7 +155,7 @@ std::string DSRPkt::str() const
                     break;
                 case DSR_OPT_PAD1:
                     out << " DSR_OPT_PAD1 " << "\n"; // Khmm...
-                    l++;
+                    //l++;
                     dopt++;
                     continue;
                 default:

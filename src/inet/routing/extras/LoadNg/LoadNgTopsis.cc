@@ -863,9 +863,9 @@ void LoadNgTopsis::handleRREP(const Ptr<Rrep>& rrep, const L3Address& sourceAddr
     if (itSeq != seqNumbers.end() && itSeq->second > rrep->getSeqNum())
         return;
 
-    int64_t oldSeqNum = -1;
-    if (itSeq != seqNumbers.end())
-        oldSeqNum = itSeq->second;
+    //int64_t oldSeqNum = -1;
+    //if (itSeq != seqNumbers.end())
+    //    oldSeqNum = itSeq->second;
 
     if (itSeq == seqNumbers.end() || (itSeq != seqNumbers.end() && itSeq->second < rrep->getSeqNum())) {
         seqNumbers[rrep->getOriginatorAddr()] = rrep->getSeqNum();
@@ -1862,7 +1862,7 @@ void LoadNgTopsis::handleRREQ(const Ptr<Rreq>& rreq, const L3Address& sourceAddr
             if ((!previousHopRoute || previousHopRoute->getSource() != this) && !rreq->getAccumulate()) {
                 // create without valid sequence number
                 previousHopRoute = createRoute(sourceAddr, sourceAddr, 1, -1, true, simTime() + activeRouteTimeout, metricType, metricNeg);
-                auto loadNgRouteData = check_and_cast<LoadNgRouteData *> (previousHopRoute->getProtocolData());
+                //auto loadNgRouteData = check_and_cast<LoadNgRouteData *> (previousHopRoute->getProtocolData());
                 //actualizeCostUsingNeig(itNeig->second, loadNgRouteData);
 
             }

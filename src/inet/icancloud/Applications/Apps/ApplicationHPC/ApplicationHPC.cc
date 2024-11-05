@@ -38,7 +38,7 @@ void ApplicationHPC::getRAM(bool isInit){
 
     FILE* stream;
     FILE* streamOut;
-    int bufsize = 1000;
+    const int bufsize = 1000;
     char outputFile[100];
 
     // Open mem file
