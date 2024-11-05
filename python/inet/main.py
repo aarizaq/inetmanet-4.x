@@ -28,15 +28,15 @@ def parse_run_tasks_arguments(task_name):
     parser.add_argument("-t", "--sim-time-limit", default=None, help="specifies the simulation time limit")
     parser.add_argument("-T", "--cpu-time-limit", default=None, help="specifies the CPU time limit")
     parser.add_argument("-f", "--filter", default=None, help="includes simulations that match the specified generic filter")
-    parser.add_argument("--exclude-filter", default=None, help="exclude simulations that match the specified generic filter")
+    parser.add_argument("--exclude-filter", default=None, help="excludes simulations that match the specified generic filter")
     parser.add_argument("-w", "--working-directory-filter", default=None, help="includes simulations from a specific working directory")
     parser.add_argument("--exclude-working-directory-filter", default=None, help="excludes simulations from a specific working directory")
     parser.add_argument("-i", "--ini-file-filter", default=None, help="includes simulations from matching INI files")
     parser.add_argument("--exclude-ini-file-filter", default=None, help="excludes simulations from matching INI files")
     parser.add_argument("-c", "--config-filter", default=None, help="includes simulations having the specified INI file config sections")
-    parser.add_argument("--exclude-config-filter", default=None, help="exclude simulations having the specified INI file config sections")
+    parser.add_argument("--exclude-config-filter", default=None, help="excludes simulations having the specified INI file config sections")
     parser.add_argument("-r", "--run-number-filter", default=None, help="includes simulations having the specified run numbers")
-    parser.add_argument("--exclude-run-number-filter", default=None, help="exclude simulations having the specified run numbers")
+    parser.add_argument("--exclude-run-number-filter", default=None, help="excludes simulations having the specified run numbers")
     parser.add_argument("--scheduler", choices=["process", "thread", "cluster"], default="thread", help="specifies the scheduler for concurrent simulations")
     parser.add_argument("--simulation-runner", choices=["subprocess", "inprocess"], default="subprocess", help="specifies the simulation runner for individual simulations")
     parser.add_argument("--hosts", default="localhost", help="specifies the hosts where the simulations are run")
@@ -169,4 +169,7 @@ def build_project_main():
             _logger.error(str(e))
         else:
             raise e
+
+def run_release_tests_main():
+    run_main(run_release_tests, "release tests")
 

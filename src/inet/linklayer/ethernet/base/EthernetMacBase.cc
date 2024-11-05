@@ -98,6 +98,10 @@ void EthernetMacBase::initialize(int stage)
         WATCH(promiscuous);
         WATCH(pauseUnitsRequested);
     }
+    else if (stage == INITSTAGE_LINK_LAYER) {
+        emit(transmissionStateChangedSignal, transmitState);
+        emit(receptionStateChangedSignal, receiveState);
+    }
 }
 
 void EthernetMacBase::initializeFlags()
@@ -287,7 +291,7 @@ void EthernetMacBase::decapsulate(Packet *packet)
     packet->addTagIfAbsent<PacketProtocolTag>()->setProtocol(&Protocol::ethernetMac);
 }
 
-// FIXME should use it in EthernetCsmaMac, EthernetMac, etc. modules. But should not use it in EtherBus, EthernetHub.
+// FIXME should use it in EthernetCsmaMacPhy, EthernetMacPhy, etc. modules. But should not use it in EtherBus, EthernetHub.
 bool EthernetMacBase::verifyCrcAndLength(Packet *packet)
 {
     EV_STATICCONTEXT;
@@ -532,14 +536,18 @@ void EthernetMacBase::refreshDisplay() const
 
 void EthernetMacBase::changeTransmissionState(MacTransmitState newState)
 {
-    transmitState = newState;
-    emit(transmissionStateChangedSignal, newState);
+    if (transmitState != newState) {
+        transmitState = newState;
+        emit(transmissionStateChangedSignal, newState);
+    }
 }
 
 void EthernetMacBase::changeReceptionState(MacReceiveState newState)
 {
-    receiveState = newState;
-    emit(receptionStateChangedSignal, newState);
+    if (receiveState != newState) {
+        receiveState = newState;
+        emit(receptionStateChangedSignal, newState);
+    }
 }
 
 void EthernetMacBase::addPaddingAndSetFcs(Packet *packet, B requiredMinBytes) const

@@ -17,7 +17,7 @@ __sphinx_mock__ = True # ignore this module in documentation
 _logger = logging.getLogger(__name__)
 
 class PacketTestTask(TestTask):
-    def __init__(self, simulation_project, name="packet test", task_result_class=TestTaskResult, **kwargs):
+    def __init__(self, simulation_project=inet_project, name="packet test", task_result_class=TestTaskResult, **kwargs):
         super().__init__(name=name, task_result_class=task_result_class, **kwargs)
         self.simulation_project = simulation_project
 
@@ -25,20 +25,21 @@ class PacketTestTask(TestTask):
         return self.name
 
     def run_protected(self, **kwargs):
-        executable = "./runtest"
+        args = ["make", "-s", "MODE=debug", "-j", str(multiprocessing.cpu_count())]
         working_directory = self.simulation_project.get_full_path("tests/packet")
-        args = [executable, "-s"]
+        subprocess_result = subprocess.run(args, cwd=working_directory)
+        if subprocess_result.returncode != 0:
+            raise Exception(f"Build {simulation_project.get_name()} failed")
+        args = [f"./packet_test_dbg", "-s", "-u", "Cmdenv", "-c", "UnitTest"]
         _logger.debug(args)
         subprocess_result = subprocess.run(args, cwd=working_directory, capture_output=True, env=self.simulation_project.get_env())
-        stdout = subprocess_result.stdout.decode("utf-8")
-        match = re.search(r"Packet unit test: (\w+)", stdout)
-        return self.task_result_class(self, result=match.group(1) if match and subprocess_result.returncode == 0 else "FAIL")
+        return self.task_result_class(self, result="PASS" if subprocess_result.returncode == 0 else "FAIL")
 
 def get_packet_test_tasks(filter=None, working_directory_filter=None, ini_file_filter=None, config_filter=None, run_filter=None, **kwargs):
-    if filter or ini_file_filter or config_filter or run_filter:
+    if filter or (working_directory_filter and not os.path.abspath("tests/packet").startswith(os.path.abspath(working_directory_filter))) or ini_file_filter or config_filter or run_filter:
         packet_test_tasks = []
     else:
-        packet_test_tasks = [PacketTestTask(inet_project)]
+        packet_test_tasks = [PacketTestTask(**kwargs)]
     return MultipleTestTasks(tasks=packet_test_tasks, name="packet test", **kwargs)
 
 def get_queueing_test_tasks(**kwargs):
@@ -54,25 +55,27 @@ def get_unit_test_tasks(**kwargs):
     return get_opp_test_tasks("tests/unit", name="unit test", **kwargs)
 
 def get_all_test_tasks(**kwargs):
-    test_task_functions = [get_smoke_test_tasks,
-                           get_sanitizer_test_tasks,
+    test_task_functions = [
+                           get_chart_test_tasks,
+                           get_feature_test_tasks,
                            get_fingerprint_test_tasks,
-                           get_statistical_test_tasks,
-                           get_validation_test_tasks,
-                           #get_speed_test_tasks,
-                           #get_feature_test_tasks,
-                           get_packet_test_tasks,
-                           get_queueing_test_tasks,
-                           get_protocol_test_tasks,
                            get_module_test_tasks,
+                           get_packet_test_tasks,
+                           get_protocol_test_tasks,
+                           get_queueing_test_tasks,
+                           get_sanitizer_test_tasks,
+                           get_smoke_test_tasks,
+                           get_speed_test_tasks,
+                           get_statistical_test_tasks,
                            get_unit_test_tasks,
-                           get_chart_test_tasks]
+                           get_validation_test_tasks
+                          ]
     test_tasks = []
     for test_task_function in test_task_functions:
         multiple_test_tasks = test_task_function(**kwargs)
         if multiple_test_tasks.tasks:
             test_tasks.append(multiple_test_tasks)
-    return MultipleTestTasks(test_tasks, name="test group", **dict(kwargs, concurrent=False))
+    return MultipleTestTasks(tasks=test_tasks, **dict(kwargs, name="test group", start=None, end=None, concurrent=False))
 
 def run_packet_tests(**kwargs):
     return get_packet_test_tasks(**kwargs).run(**kwargs)
