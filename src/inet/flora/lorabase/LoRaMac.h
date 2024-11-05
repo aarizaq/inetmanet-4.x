@@ -83,7 +83,7 @@ class LoRaMac : public MacProtocolBase, public IMacProtocol, public queueing::IA
     IRadio::TransmissionState transmissionState = IRadio::TRANSMISSION_STATE_UNDEFINED;
     IRadio::ReceptionState receptionState = IRadio::RECEPTION_STATE_UNDEFINED;
 
-    cFSM fsm;
+    Fsm fsm;
 
     /** Remaining backoff period in seconds */
     simtime_t backoffPeriod = -1;
