@@ -70,24 +70,22 @@ void NS_CLASS log_init()
 #ifndef _WIN32
     /* NS_PORT: Log filename is prefix + IP address + suffix */
 #ifdef NS_PORT
-
-    char AODV_LOG_PATH[strlen(AODV_LOG_PATH_PREFIX) +
-                       strlen(AODV_LOG_PATH_SUFFIX) + 16];
-    char AODV_RT_LOG_PATH[strlen(AODV_LOG_PATH_PREFIX) +
-                          strlen(AODV_RT_LOG_PATH_SUFFIX) + 16];
-
-
-    sprintf(AODV_LOG_PATH, "%s%d%s", AODV_LOG_PATH_PREFIX, node_id,
-            AODV_LOG_PATH_SUFFIX);
-    sprintf(AODV_RT_LOG_PATH, "%s%d%s", AODV_LOG_PATH_PREFIX, node_id,
-            AODV_RT_LOG_PATH_SUFFIX);
-
+    //char AODV_LOG_PATH[strlen(AODV_LOG_PATH_PREFIX) +
+    //                   strlen(AODV_LOG_PATH_SUFFIX) + 16];
+    //char AODV_RT_LOG_PATH[strlen(AODV_LOG_PATH_PREFIX) +
+    //                      strlen(AODV_RT_LOG_PATH_SUFFIX) + 16];
+    // sprintf(AODV_LOG_PATH, "%s%d%s", AODV_LOG_PATH_PREFIX, node_id,
+    //        AODV_LOG_PATH_SUFFIX);
+    // sprintf(AODV_RT_LOG_PATH, "%s%d%s", AODV_LOG_PATH_PREFIX, node_id,
+    //        AODV_RT_LOG_PATH_SUFFIX);
+    std::string AODV_LOG_PATH = std::string(AODV_LOG_PATH_PREFIX)+std::to_string(node_id)+std::string(AODV_LOG_PATH_SUFFIX);
+    std::string AODV_RT_LOG_PATH = std::string(AODV_LOG_PATH_PREFIX) + std::to_string(node_id)+std::string(AODV_RT_LOG_PATH_SUFFIX);
 #endif              /* NS_PORT */
 
     if (log_to_file)
     {
         if ((log_file_fd =
-                    open(AODV_LOG_PATH, O_RDWR | O_CREAT | O_TRUNC,
+                    open(AODV_LOG_PATH.c_str(), O_RDWR | O_CREAT | O_TRUNC,
                          S_IROTH | S_IWUSR | S_IRUSR | S_IRGRP)) < 0)
         {
             perror("open log file failed!");
@@ -97,7 +95,7 @@ void NS_CLASS log_init()
     if (rt_log_interval)
     {
         if ((log_rt_fd =
-                    open(AODV_RT_LOG_PATH, O_RDWR | O_CREAT | O_TRUNC,
+                    open(AODV_RT_LOG_PATH.c_str(), O_RDWR | O_CREAT | O_TRUNC,
                          S_IROTH | S_IWUSR | S_IRUSR | S_IRGRP)) < 0)
         {
             perror("open rt log file failed!");
