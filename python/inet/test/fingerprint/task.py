@@ -308,8 +308,8 @@ class SimulationEvent:
         self.simulation_task.run(debug_event_number=self.event_number)
 
 def get_calculated_fingerprint(simulation_result, ingredients):
-    stdout = simulation_result.subprocess_result.stdout.decode("utf-8")
-    stderr = simulation_result.subprocess_result.stderr.decode("utf-8")
+    stdout = simulation_result.subprocess_result.stdout
+    stderr = simulation_result.subprocess_result.stderr
     match = re.search(r"Fingerprint successfully verified:.*? ([0-9a-f]{4}-[0-9a-f]{4})/" + ingredients, stdout)
     if match:
         value = match.groups()[0]
@@ -399,7 +399,7 @@ def get_fingerprint_test_tasks(**kwargs):
         fingerprint_test_groups = []
         for simulation_task in multiple_simulation_tasks.tasks:
             simulation_config = simulation_task.simulation_config
-            fingerprint_test_groups += collect_fingerprint_test_groups(simulation_task, **kwargs)
+            fingerprint_test_groups += collect_fingerprint_test_groups(simulation_task, **dict(kwargs, pass_keyboard_interrupt=True))
         return MultipleFingerprintTestTasks(multiple_simulation_tasks=multiple_simulation_tasks, tasks=fingerprint_test_groups, **dict(kwargs, simulation_project=multiple_simulation_tasks.simulation_project))
     return get_tasks(**kwargs)
 
