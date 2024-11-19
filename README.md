@@ -1,16 +1,16 @@
-[![Build: Linux](https://github.com/aarizaq/inetmanet-4/inet/actions/workflows/build-linux.yml/badge.svg)](https://github.com/aarizaq/inetmanet-4/inet/actions/workflows/build-linux.yml)
-[![Build: Mac OS](https://github.com/aarizaq/inetmanet-4/inet/actions/workflows/build-macos.yml/badge.svg)](https://github.com/aarizaq/inetmanet-4/inet/actions/workflows/build-macos.yml)
-[![Build: Windows](https://github.com/aarizaq/inetmanet-4/inet/actions/workflows/build-windows.yml/badge.svg)](https://github.com/aarizaq/inetmanet-4/inet/actions/workflows/build-windows.yml)
+[![Build: Linux](https://github.com/aarizaq/inetmanet-4/actions/workflows/build-linux.yml/badge.svg)](https://github.com/aarizaq/inetmanet-4/actions/workflows/build-linux.yml)
+[![Build: Mac OS](https://github.com/aarizaq/inetmanet-4/actions/workflows/build-macos.yml/badge.svg)](https://github.com/aarizaq/inetmanet-4/actions/workflows/build-macos.yml)
+[![Build: Windows](https://github.com/aarizaq/inetmanet-4/actions/workflows/build-windows.yml/badge.svg)](https://github.com/aarizaq/inetmanet-4/actions/workflows/build-windows.yml)
 
-[![Test: chart](https://github.com/aarizaq/inetmanet-4/inet/actions/workflows/chart-tests.yml/badge.svg)](https://github.com/aarizaq/inetmanet-4/inet/actions/workflows/chart-tests.yml)
-[![Test: feature](https://github.com/aarizaq/inetmanet-4/inet/actions/workflows/feature-tests.yml/badge.svg)](https://github.com/aarizaq/inetmanet-4/inet/actions/workflows/feature-tests.yml)
-[![Test: fingerprint](https://github.com/aarizaq/inetmanet-4/inet/actions/workflows/fingerprint-tests.yml/badge.svg)](https://github.com/aarizaq/inetmanet-4/inet/actions/workflows/fingerprint-tests.yml)
-[![Test: module](https://github.com/aarizaq/inetmanet-4/inet/actions/workflows/module-tests.yml/badge.svg)](https://github.com/aarizaq/inetmanet-4/inet/actions/workflows/module-tests.yml)
-[![Test: other](https://github.com/aarizaq/inetmanet-4/inet/actions/workflows/other-tests.yml/badge.svg)](https://github.com/aarizaq/inetmanet-4/inet/actions/workflows/other-tests.yml)
-[![Test: speed](https://github.com/aarizaq/inetmanet-4/inet/actions/workflows/speed-tests.yml/badge.svg)](https://github.com/aarizaq/inetmanet-4/inet/actions/workflows/speed-tests.yml)
-[![Test: statistical](https://github.com/aarizaq/inetmanet-4/inet/actions/workflows/statistical-tests.yml/badge.svg)](https://github.com/aarizaq/inetmanet-4/inet/actions/workflows/statistical-tests.yml)
-[![Test: unit](https://github.com/aarizaq/inetmanet-4/inet/actions/workflows/unit-tests.yml/badge.svg)](https://github.com/aarizaq/inetmanet-4/inet/actions/workflows/unit-tests.yml)
-[![Test: validation](https://github.com/aarizaq/inetmanet-4/inet/actions/workflows/validation-tests.yml/badge.svg)](https://github.com/aarizaq/inetmanet-4/inet/actions/workflows/validation-tests.yml)
+[![Test: chart](https://github.com/aarizaq/inetmanet-4/actions/workflows/chart-tests.yml/badge.svg)](https://github.com/aarizaq/inetmanet-4/actions/workflows/chart-tests.yml)
+[![Test: feature](https://github.com/aarizaq/inetmanet-4/actions/workflows/feature-tests.yml/badge.svg)](https://github.com/aarizaq/inetmanet-4/actions/workflows/feature-tests.yml)
+[![Test: fingerprint](https://github.com/aarizaq/inetmanet-4/actions/workflows/fingerprint-tests.yml/badge.svg)](https://github.com/aarizaq/inetmanet-4/actions/workflows/fingerprint-tests.yml)
+[![Test: module](https://github.com/aarizaq/inetmanet-4/actions/workflows/module-tests.yml/badge.svg)](https://github.com/aarizaq/inetmanet-4/actions/workflows/module-tests.yml)
+[![Test: other](https://github.com/aarizaq/inetmanet-4/actions/workflows/other-tests.yml/badge.svg)](https://github.com/aarizaq/inetmanet-4/actions/workflows/other-tests.yml)
+[![Test: speed](https://github.com/aarizaq/inetmanet-4/actions/workflows/speed-tests.yml/badge.svg)](https://github.com/aarizaq/inetmanet-4/actions/workflows/speed-tests.yml)
+[![Test: statistical](https://github.com/aarizaq/inetmanet-4/actions/workflows/statistical-tests.yml/badge.svg)](https://github.com/aarizaq/inetmanet-4/actions/workflows/statistical-tests.yml)
+[![Test: unit](https://github.com/aarizaq/inetmanet-4/actions/workflows/unit-tests.yml/badge.svg)](https://github.com/aarizaq/inetmanet-4/actions/workflows/unit-tests.yml)
+[![Test: validation](https://github.com/aarizaq/inetmanet-4/actions/workflows/validation-tests.yml/badge.svg)](https://github.com/aarizaq/inetmanet-4/actions/workflows/validation-tests.yml)
 
 Inetmanet/INET Framework for OMNEST/OMNeT++
 =================================
