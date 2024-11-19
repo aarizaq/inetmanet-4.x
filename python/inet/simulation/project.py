@@ -44,7 +44,7 @@ class SimulationProject:
                  bin_folder=".", library_folder=".", executables=None, dynamic_libraries=None, static_libraries=None, build_types=["dynamic library"],
                  ned_folders=["."], ned_exclusions=[], ini_file_folders=["."], python_folders=["python"], image_folders=["."],
                  include_folders=["."], cpp_folders=["."], cpp_defines=[], msg_folders=["."],
-                 media_folder=".", statistics_folder=".", fingerprint_store="fingerprint.json",
+                 media_folder=".", statistics_folder=".", fingerprint_store="fingerprint.json", speed_store="speed.json",
                  used_projects=[], external_bin_folders=[], external_library_folders=[], external_libraries=[], external_include_folders=[],
                  simulation_configs=None, **kwargs):
         """
@@ -123,6 +123,9 @@ class SimulationProject:
             fingerprint_store (String):
                 The relative path of the JSON fingerprint store for fingerprint tests.
 
+            speed_store (String):
+                The relative path of the JSON measurement store for speed tests.
+
             used_projects (List of strings):
                 The list of used simulation project names.
 
@@ -174,6 +177,7 @@ class SimulationProject:
         self.media_folder = media_folder
         self.statistics_folder = statistics_folder
         self.fingerprint_store = fingerprint_store
+        self.speed_store = speed_store
         self.used_projects = used_projects
         self.external_bin_folders = external_bin_folders
         self.external_library_folders = external_library_folders
@@ -260,7 +264,8 @@ class SimulationProject:
         return [*self.get_full_path_args("-l", self.get_dynamic_libraries_for_running()), *self.get_full_path_args("-n", self.get_ned_folders_for_running()), *self.get_multiple_args("-x", self.ned_exclusions or self.get_ned_exclusions()), *self.get_full_path_args("--image-path", self.image_folders)]
 
     def get_ned_exclusions(self):
-        return [s.strip() for s in open(self.get_full_path(".nedexclusions")).readlines()]
+        nedexclusions_path = self.get_full_path(".nedexclusions")
+        return [s.strip() for s in open(nedexclusions_path).readlines()] if os.path.exists(nedexclusions_path) else []
 
     def get_direct_include_folders(self):
         return list(map(lambda include_folder: self.get_full_path(include_folder), self.include_folders))
@@ -346,11 +351,6 @@ class SimulationProject:
         general_config_dict = config_dicts["General"]
         for config, config_dict in config_dicts.items():
             config = config_dict["config"]
-            executable = self.get_executable(mode="release")
-            if not os.path.exists(executable):
-                executable = self.get_executable(mode="release")
-            default_args = self.get_default_args()
-            args = [executable, *default_args, "-s", "-f", ini_file, "-c", config, "-q", "numruns"]
             if num_runs_fast:
                 num_runs = num_runs_fast
             else:
@@ -358,6 +358,11 @@ class SimulationProject:
                     inifile_contents = InifileContents(ini_path)
                     num_runs = inifile_contents.getNumRunsInConfig(config)
                 except Exception as e:
+                    executable = self.get_executable(mode="release")
+                    if not os.path.exists(executable):
+                        executable = self.get_executable(mode="release")
+                    default_args = self.get_default_args()
+                    args = [executable, *default_args, "-s", "-f", ini_file, "-c", config, "-q", "numruns"]
                     result = run_command_with_logging(args, cwd=working_directory, env=self.get_env())
                     if result.returncode == 0:
                         # KLUDGE: this was added to test source dependency based task result caching

@@ -27,7 +27,7 @@ class PacketTestTask(TestTask):
     def run_protected(self, **kwargs):
         working_directory = self.simulation_project.get_full_path("tests/packet")
         args = ["make", "-s", "MODE=debug", "-j", str(multiprocessing.cpu_count())]
-        subprocess_result = run_command_with_logging(args, cwd=working_directory, error_message=f"Build {self.simulation_project.get_name()} failed")
+        run_command_with_logging(args, cwd=working_directory, error_message=f"Build {self.simulation_project.get_name()} failed")
         args = [f"./packet_test_dbg", "-s", "-u", "Cmdenv", "-c", "UnitTest"]
         subprocess_result = run_command_with_logging(args, cwd=working_directory, env=self.simulation_project.get_env())
         return self.task_result_class(self, result="PASS" if subprocess_result.returncode == 0 else "FAIL")
@@ -37,7 +37,7 @@ def get_packet_test_tasks(filter=None, working_directory_filter=None, ini_file_f
         packet_test_tasks = []
     else:
         packet_test_tasks = [PacketTestTask(**kwargs)]
-    return MultipleTestTasks(tasks=packet_test_tasks, name="packet test", **kwargs)
+    return MultipleTestTasks(tasks=packet_test_tasks, name="packet test", **dict(kwargs, concurrent=False))
 
 def get_queueing_test_tasks(**kwargs):
     return get_opp_test_tasks("tests/queueing", name="queueing test", **kwargs)

@@ -1,3 +1,4 @@
+import itertools
 import pathlib
 import logging
 import subprocess
@@ -23,34 +24,50 @@ def enable_features(feature):
     run_command_with_logging(["opp_featuretool", "enable", "-f", feature])
 
 class FeatureTestTask(TestTask):
-    def __init__(self, simulation_project, feature, packages, **kwargs):
+    def __init__(self, simulation_project, feature, packages, type="enable", **kwargs):
         super().__init__(**kwargs)
         self.locals = locals()
         self.locals.pop("self")
         self.kwargs = kwargs
         self.simulation_project = simulation_project
         self.feature = feature
+        self.type = type
         self.packages = packages
         self.multiple_simulation_tasks = self.get_multiple_simulation_tasks()
 
     def get_multiple_simulation_tasks(self):
-        folders = []
-        for package in self.packages:
-             folder = get_package_folder(package)
-             folders.append(folder)
-             folders.append(folder + "/.*")
-        working_directory_filter = "|".join(folders)
-        multiple_simulation_tasks = get_simulation_tasks(working_directory_filter=working_directory_filter, full_match=True, run_number=0)
+        if len(self.packages) != 0:
+            folders = []
+            for package in self.packages:
+                 folder = get_package_folder(package)
+                 folders.append(folder)
+                 folders.append(folder + "/.*")
+            working_directory_filter = "|".join(folders)
+            multiple_simulation_tasks = get_simulation_tasks(working_directory_filter=working_directory_filter, full_match=True, run_number=0)
+        else:
+            multiple_simulation_tasks = MultipleSimulationTasks()
         if len(multiple_simulation_tasks.tasks) == 0:
             multiple_simulation_tasks = get_simulation_tasks(working_directory_filter="examples/empty", full_match=True, run_number=0)
         return multiple_simulation_tasks
 
     def get_parameters_string(self, **kwargs):
-        return self.feature
+        return self.type + " " + (self.feature or "")
 
     def run_protected(self, **kwargs):
-        disable_features("all")
-        enable_features(self.feature)
+        if self.type == "default":
+            run_command_with_logging(["opp_featuretool", "reset"])
+        elif self.type == "enable all":
+            enable_features("all")
+        elif self.type == "disable all":
+            disable_features("all")
+        elif self.type == "enable":
+            disable_features("all")
+            enable_features(self.feature)
+        elif self.type == "disable":
+            enable_features("all")
+            disable_features(self.feature)
+        else:
+            raise Exception("Unknown test type")
         make_makefiles(simulation_project=self.simulation_project)
         clean_project(simulation_project=self.simulation_project)
         build_project(simulation_project=self.simulation_project)
@@ -75,6 +92,7 @@ class MultipleFeatureTestTasks(MultipleTestTasks):
         _logger.info("Collected " + str(self.get_total_simulation_task_count()) + " simulations in total")
         multiple_test_tasks_result = super().run_protected(**kwargs)
         _logger.info("Run " + str(self.get_total_simulation_task_count()) + " simulations in total")
+        enable_features("all")
         return multiple_test_tasks_result
 
 
@@ -84,10 +102,15 @@ def get_feature_test_tasks(simulation_project=None, filter=".*", full_match=Fals
     oppfeatures = read_xml_file(simulation_project.get_full_path(".oppfeatures"))
     features = get_features(oppfeatures)
     feature_to_packages = get_feature_to_packages(oppfeatures)
-    def create_test_task(feature):
-        return FeatureTestTask(simulation_project, feature, feature_to_packages[feature], task_result_class=TestTaskResult, **kwargs)
+    def create_test_tasks(feature):
+        return [FeatureTestTask(simulation_project, feature, feature_to_packages[feature], type="enable", task_result_class=TestTaskResult, **kwargs),
+                FeatureTestTask(simulation_project, feature, [], type="disable", task_result_class=TestTaskResult, **kwargs)]
     test_features = list(builtins.filter(lambda feature: matches_filter(feature, filter, None, full_match), features))
-    test_tasks = list(map(create_test_task, test_features))
+    test_tasks = list(itertools.chain.from_iterable(map(create_test_tasks, test_features)))
+    if filter == ".*":
+        test_tasks = test_tasks + [FeatureTestTask(simulation_project, None, [], type="default", task_result_class=TestTaskResult, **kwargs),
+                                   FeatureTestTask(simulation_project, None, [], type="enable all", task_result_class=TestTaskResult, **kwargs),
+                                   FeatureTestTask(simulation_project, None, [], type="disable all", task_result_class=TestTaskResult, **kwargs)]
     return MultipleFeatureTestTasks(tasks=test_tasks, multiple_task_results_class=MultipleTestTaskResults, **dict(kwargs, concurrent=False))
 
 def run_feature_tests(**kwargs):
@@ -304,30 +327,31 @@ def get_feature_to_required_features_for_simulation_project(simulation_project, 
     simulation_to_used_types = get_simulation_to_used_types(simulation_results)
     return get_feature_to_required_features(simulation_project, features, feature_to_packages, package_to_used_types, package_to_used_headers, defined_types_to_feature, folder_to_simulations, simulation_to_used_types)
 
-def update_oppfeatures_file(simulation_project, feature_to_required_features):
+def update_oppfeatures_file(simulation_project, feature_to_required_features, feature_id_filter=None):
     file_name = simulation_project.get_full_path(".oppfeatures")
     with open(file_name, "r") as file:
         lines = []
+        feature_id = None
         for line in file:
             match = re.search(r"id *= *\"(.*?)\"", line)
             if match:
-                feature = match.group(1)
+                feature_id = match.group(1)
             match = re.search(r"( *requires *= *\").*?(\")", line)
-            if match:
-                lines.append(match.group(1) + " ".join(feature_to_required_features[feature]) + match.group(2) + "\n")
+            if match and (feature_id_filter is None or re.search(feature_id_filter, feature_id)):
+                lines.append(match.group(1) + " ".join(feature_to_required_features[feature_id]) + match.group(2) + "\n")
             else:
                 lines.append(line)
     with open(file_name, "w") as file:
         file.write("".join(lines))
 
-def update_oppfeatures(simulation_project=None, simulation_results=None):
+def update_oppfeatures(simulation_project=None, simulation_results=None, feature_id_filter=None, mode="release", **kwargs):
     if simulation_project is None:
         simulation_project = get_default_simulation_project()
     enable_features("all")
     make_makefiles(simulation_project=simulation_project)
-    clean_project(simulation_project=simulation_project)
-    build_project(simulation_project=simulation_project)
+    clean_project(simulation_project=simulation_project, mode=mode)
+    build_project(simulation_project=simulation_project, mode=mode)
     if simulation_results is None:
-        simulation_results = run_simulations(simulation_project=simulation_project, run_number=0)
+        simulation_results = run_simulations(simulation_project=simulation_project, mode=mode, run_number=0, extra_args=["--print-instantiated-ned-types=true"], **kwargs)
     feature_to_required_features = get_feature_to_required_features_for_simulation_project(simulation_project, simulation_results)
-    update_oppfeatures_file(simulation_project, feature_to_required_features)
+    update_oppfeatures_file(simulation_project, feature_to_required_features, feature_id_filter=feature_id_filter)

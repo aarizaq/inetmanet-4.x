@@ -68,9 +68,9 @@ const IReceptionBitModel *Ieee80211OfdmErrorModel::computeBitModel(const ISnir *
 {
     auto transmission = snir->getReception()->getTransmission();
     const ITransmissionBitModel *transmissionBitModel = transmission->getBitModel();
-    int signalBitLength = b(transmissionBitModel->getHeaderLength()).get();
+    int signalBitLength = transmissionBitModel->getHeaderLength().get<b>();
     bps signalBitrate = transmissionBitModel->getHeaderGrossBitrate();
-    int dataBitLength = b(transmissionBitModel->getDataLength()).get();
+    int dataBitLength = transmissionBitModel->getDataLength().get<b>();
     bps dataBitrate = transmissionBitModel->getDataGrossBitrate();
     ASSERT(transmission->getSymbolModel() != nullptr);
     const IModulation *signalModulation = check_and_cast<const Ieee80211OfdmModulation *>(transmission->getSymbolModel()->getHeaderModulation())->getSubcarrierModulation();
@@ -151,8 +151,8 @@ const IReceptionSymbolModel *Ieee80211OfdmErrorModel::computeSymbolModel(const I
 
     snirFunction->partition(interval, [&] (const math::Interval<simsec, Hz>& i1, const math::IFunction<double, math::Domain<simsec, Hz>> *f1) {
 
-        auto intervalStartTime = std::get<0>(i1.getLower()).get();
-        auto intervalEndTime = std::get<0>(i1.getUpper()).get();
+        auto intervalStartTime = std::get<0>(i1.getLower()).get<simsec>();
+        auto intervalEndTime = std::get<0>(i1.getUpper()).get<simsec>();
         // sum SNIR
 
         int startTimeSlot = (int)std::floor((intervalStartTime - reception->getHeaderStartTime()) / SimTime(4, SIMTIME_US));
