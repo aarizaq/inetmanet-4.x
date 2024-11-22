@@ -54,6 +54,8 @@ class INET_API MemoryOutputStream
         data.reserve((initialCapacity.get<b>() + 7) >> 3);
     }
 
+    void clear() { data.clear(); length = b(0); }
+
     /** @name Stream querying functions */
     //@{
     /**
@@ -61,7 +63,27 @@ class INET_API MemoryOutputStream
      */
     b getLength() const { return length; }
 
+    void setCapacity(b capacity) {
+        data.reserve((capacity.get<b>() + 7) >> 3);
+    }
+
     const std::vector<uint8_t>& getData() const { return data; }
+
+    void writeData(const std::vector<uint8_t>& src, b srcOffset, b srcLength) {
+        assert(srcOffset + srcLength <= B(src.size()));
+        size_t srcPosInBits = srcOffset.get<b>();
+        size_t srcEndPosInBits = (srcOffset + srcLength).get<b>();
+
+        for ( ; srcPosInBits < srcEndPosInBits && ((srcPosInBits & 7) != 0); srcPosInBits++)
+            writeBit(src.at(srcPosInBits >> 3) & (1 << (7 - (srcPosInBits & 7))));
+        size_t remainedBytes = (srcEndPosInBits - srcPosInBits) >> 3;
+        if (remainedBytes != 0) {
+            writeBytes(&src.at(srcPosInBits >> 3), B(remainedBytes));
+            srcPosInBits += remainedBytes << 3;
+        }
+        for ( ; srcPosInBits < srcEndPosInBits; srcPosInBits++)
+            writeBit(src.at(srcPosInBits >> 3) & (1 << (7 - (srcPosInBits & 7))));
+    }
 
     void copyData(std::vector<bool>& result, b offset = b(0), b length = b(-1)) const {
         size_t end = (length == b(-1) ? this->length : offset + length).get<b>();
@@ -127,13 +149,12 @@ class INET_API MemoryOutputStream
      * Writes a byte to the end of the stream in MSB to LSB bit order.
      */
     void writeByte(uint8_t value) {
-        if (isByteAligned())
+        uint8_t bitOffset = length.get<b>() % 8;
+        if (bitOffset == 0)
             data.push_back(value);
         else {
-            int l1 = length.get<b>() % 8;
-            int l2 = 8 - l1;
-            data.back() |= (value & (0xFF << l1)) >> l1;
-            data.push_back((value & (0xFF >> l2)) << l2);
+            data.back() |= value >> bitOffset;
+            data.push_back(value << (8 - bitOffset));
         }
         length += B(1);
     }
@@ -156,14 +177,7 @@ class INET_API MemoryOutputStream
         ASSERT(b(0) <= offset && offset <= B(bytes.size()));
         ASSERT(b(0) <= end && end <= B(bytes.size()));
         ASSERT(offset <= end);
-        if (isByteAligned()) {
-            data.insert(data.end(), bytes.begin() + offset.get<B>(), bytes.begin() + end.get<B>());
-            this->length += end - offset;
-        }
-        else {
-            for (B::value_type i = offset.get<B>(); i < end.get<B>(); i++)
-                writeByte(bytes.at(i));
-        }
+        writeBytes(bytes.data() + offset.get<B>(), end - offset);
     }
 
     /**
@@ -173,6 +187,8 @@ class INET_API MemoryOutputStream
     void writeBytes(const uint8_t *buffer, B length) {
         ASSERT(buffer != nullptr);
         ASSERT(B(0) <= length);
+        if (length == B(0))
+            return;
         if (isByteAligned()) {
             data.insert(data.end(), buffer, buffer + length.get<B>());
             this->length += length;
@@ -344,8 +360,7 @@ class INET_API MemoryOutputStream
      * and MSB to LSB bit order.
      */
     void writeMacAddress(MacAddress address) {
-        for (int i = 0; i < MAC_ADDRESS_SIZE; i++)
-            writeByte(address.getAddressByte(i));
+        writeUint48Be(address.getInt());
     }
 
     /**
@@ -372,7 +387,7 @@ class INET_API MemoryOutputStream
      * Writes a zero terminated string in the order of the characters.
      */
     void writeString(std::string s) {
-        writeBytes(std::vector<uint8_t>(s.begin(), s.end()));
+        writeBytes(reinterpret_cast<const uint8_t*>(s.c_str()), B(s.length()));
         writeByte(0);
     }
 
