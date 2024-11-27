@@ -5,6 +5,7 @@ import io
 import IPython
 import logging
 import os
+import platform
 import pickle
 import re
 import signal
@@ -91,6 +92,8 @@ def initialize_logging(log_level, external_command_log_level, log_file):
     logging.getLogger("opp_run_dbg").setLevel(external_command_log_level)
     logging.getLogger("opp_run_release").setLevel(external_command_log_level)
     logging.getLogger("opp_run_sanitize").setLevel(external_command_log_level)
+    logging.getLogger("opp_run_coverage").setLevel(external_command_log_level)
+    logging.getLogger("opp_run_profile").setLevel(external_command_log_level)
     logging.getLogger("opp_test").setLevel(external_command_log_level)
     logging.addLevelName(STDOUT_LEVEL, "STDOUT")
     logging.addLevelName(STDERR_LEVEL, "STDERR")
@@ -338,7 +341,7 @@ def run_command_with_logging(args, error_message=None, nice=10, **kwargs):
         stream.close()
     stdout_lines = []
     stderr_lines = []
-    _logger.info(f"Running external command: {' '.join(args)}")
+    _logger.debug(f"Running external command: {' '.join(args)}")
     process = subprocess.Popen(["nice", "-n", str(nice), *args], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, **kwargs)
     stdout_thread = threading.Thread(target=log_stream, args=(process.stdout, logger.stdout, stdout_lines))
     stderr_thread = threading.Thread(target=log_stream, args=(process.stderr, logger.stderr, stderr_lines))
@@ -356,6 +359,14 @@ def run_command_with_logging(args, error_message=None, nice=10, **kwargs):
     if error_message and process.returncode != 0:
         raise Exception(error_message)
     return subprocess.CompletedProcess(args, process.returncode, "".join(stdout_lines), ''.join(stderr_lines))
+
+def open_file_with_default_editor(file_path):
+    if platform.system() == "Windows":
+        os.startfile(file_path)
+    elif platform.system() == "Darwin":  # macOS
+        subprocess.run(["open", file_path])
+    else:  # Linux/Unix
+        subprocess.run(["xdg-open", file_path])
 
 def collect_existing_ned_types():
     types = set()
