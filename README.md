@@ -7,7 +7,7 @@
 [![Test: fingerprint](https://github.com/aarizaq/inetmanet-4.x/actions/workflows/fingerprint-tests.yml/badge.svg)](https://github.com/aarizaq/inetmanet-4.x/actions/workflows/fingerprint-tests.yml)
 [![Test: module](https://github.com/aarizaq/inetmanet-4.x/actions/workflows/module-tests.yml/badge.svg)](https://github.com/aarizaq/inetmanet-4.x/actions/workflows/module-tests.yml)
 [![Test: other](https://github.com/aarizaq/inetmanet-4.x/actions/workflows/other-tests.yml/badge.svg)](https://github.com/aarizaq/inetmanet-4.x/actions/workflows/other-tests.yml)
-[![Test: speed](https://github.com/aarizaq/inetmanet-4.x/actions/workflows/speed-tests.yml/badge.svg)](https://github.com/aarizaq/inetmanet-4.x/actions/workflows/speed-tests.yml)
+<!-- [![Test: speed](https://github.com/aarizaq/inetmanet-4.x/actions/workflows/speed-tests.yml/badge.svg)](https://github.com/aarizaq/inetmanet-4.x/actions/workflows/speed-tests.yml) -->
 [![Test: statistical](https://github.com/aarizaq/inetmanet-4.x/actions/workflows/statistical-tests.yml/badge.svg)](https://github.com/aarizaq/inetmanet-4.x/actions/workflows/statistical-tests.yml)
 [![Test: unit](https://github.com/aarizaq/inetmanet-4.x/actions/workflows/unit-tests.yml/badge.svg)](https://github.com/aarizaq/inetmanet-4.x/actions/workflows/unit-tests.yml)
 [![Test: validation](https://github.com/aarizaq/inetmanet-4.x/actions/workflows/validation-tests.yml/badge.svg)](https://github.com/aarizaq/inetmanet-4.x/actions/workflows/validation-tests.yml)
