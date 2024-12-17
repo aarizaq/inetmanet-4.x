@@ -226,16 +226,14 @@ class TcpHeader extends TransportHeaderBase
 }
 
 cplusplus(cc) {{
-void doParsimArrayPacking(omnetpp::cCommBuffer *b, TcpOption* *t, int n)
+void doParsimPacking(omnetpp::cCommBuffer *b, TcpOption *t)
 {
-    for (int i = 0; i < n; i++)
-        b->packObject(t[i]);
+    b->packObject(t);
 }
 
-void doParsimArrayUnpacking(omnetpp::cCommBuffer *b, TcpOption* *t, int n)
+void doParsimUnpacking(omnetpp::cCommBuffer *b, TcpOption * &t)
 {
-    for (int i = 0; i < n; i++)
-        t[i] = check_and_cast<TcpOption*>(b->unpackObject());
+    t = check_and_cast<TcpOption*>(b->unpackObject());
 }
 
 }}
@@ -251,7 +249,7 @@ cplusplus(TcpHeader) {{
     uint32_t getSynFinLen() const { return (finBit ? 1 : 0) + (synBit ? 1 : 0); }
 
     /** Calculate Length of TCP Options Array in bytes */
-    virtual B getHeaderOptionArrayLength();
+    virtual B getHeaderOptionArrayLength() const;
 
     /** Drops all TCP options of the TCP segment */
     virtual void dropHeaderOptions();

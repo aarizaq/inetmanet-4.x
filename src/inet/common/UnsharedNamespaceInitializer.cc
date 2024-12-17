@@ -8,8 +8,10 @@
 
 #include <fcntl.h>
 #include <fstream>
-#include <linux/prctl.h>
+
+#ifdef __linux__
 #include <sys/prctl.h>
+#endif
 
 namespace inet {
 
