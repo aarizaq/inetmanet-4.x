@@ -251,11 +251,10 @@ void LoRaMac::handleWithFsm(cMessage *msg)
         const auto &chunk = pkt->peekAtFront<Chunk>();
         frame = dynamicPtrCast<LoRaMacFrame>(constPtrCast<Chunk>(chunk));
     }
-    FSMA_Switch(fsm)
-    {
+    {FSMA_Switch(fsm){
         FSMA_State(IDLE)
         {
-            FSMA_Enter(turnOffReceiver());
+            FSMA_Enter(FSMA_Delay_Action(turnOffReceiver()));
             FSMA_Event_Transition(Idle-Transmit,
                                   isUpperMessage(msg),
                                   TRANSMIT,
@@ -263,7 +262,7 @@ void LoRaMac::handleWithFsm(cMessage *msg)
         }
         FSMA_State(TRANSMIT)
         {
-            FSMA_Enter(sendDataFrame(getCurrentTransmission()));
+            FSMA_Enter(FSMA_Delay_Action(sendDataFrame(getCurrentTransmission())));
             FSMA_Event_Transition(Transmit-Wait_Delay_1,
                                   msg == endTransmission,
                                   WAIT_DELAY_1,
@@ -273,7 +272,7 @@ void LoRaMac::handleWithFsm(cMessage *msg)
         }
         FSMA_State(WAIT_DELAY_1)
         {
-            FSMA_Enter(turnOffReceiver());
+            FSMA_Enter(FSMA_Delay_Action(turnOffReceiver()));
             FSMA_Event_Transition(Wait_Delay_1-Listening_1,
                                   msg == endDelay_1 || endDelay_1->isScheduled() == false,
                                   LISTENING_1,
@@ -281,7 +280,7 @@ void LoRaMac::handleWithFsm(cMessage *msg)
         }
         FSMA_State(LISTENING_1)
         {
-            FSMA_Enter(turnOnReceiver());
+            FSMA_Enter(FSMA_Delay_Action(turnOnReceiver()));
             FSMA_Event_Transition(Listening_1-Wait_Delay_2,
                                   msg == endListening_1 || endListening_1->isScheduled() == false,
                                   WAIT_DELAY_2,
@@ -314,7 +313,7 @@ void LoRaMac::handleWithFsm(cMessage *msg)
         }
         FSMA_State(WAIT_DELAY_2)
         {
-            FSMA_Enter(turnOffReceiver());
+            FSMA_Enter(FSMA_Delay_Action(turnOffReceiver()));
             FSMA_Event_Transition(Wait_Delay_2-Listening_2,
                                   msg == endDelay_2 || endDelay_2->isScheduled() == false,
                                   LISTENING_2,
@@ -322,7 +321,7 @@ void LoRaMac::handleWithFsm(cMessage *msg)
         }
         FSMA_State(LISTENING_2)
         {
-            FSMA_Enter(turnOnReceiver());
+            FSMA_Enter(FSMA_Delay_Action(turnOnReceiver()));
             FSMA_Event_Transition(Listening_2-idle,
                                   msg == endListening_2 || endListening_2->isScheduled() == false,
                                   IDLE,
@@ -350,7 +349,7 @@ void LoRaMac::handleWithFsm(cMessage *msg)
                                   LISTENING_2,
             );
         }
-    }
+    }}
 
 //    if (fsm.getState() == IDLE) {
 //        if (isReceiving())
@@ -362,7 +361,7 @@ void LoRaMac::handleWithFsm(cMessage *msg)
 //            handleWithFsm(currentTxFrame);
 //        }
 //    }
-
+    fsm.executeDelayedActions();
     if (fsm.getState() == IDLE) {
         if (isReceiving())
             handleWithFsm(mediumStateChange);
@@ -500,10 +499,10 @@ void LoRaMac::sendAckFrame()
  */
 void LoRaMac::finishCurrentTransmission()
 {
-    scheduleAt(simTime() + waitDelay1Time, endDelay_1);
-    scheduleAt(simTime() + waitDelay1Time + listening1Time, endListening_1);
-    scheduleAt(simTime() + waitDelay1Time + listening1Time + waitDelay2Time, endDelay_2);
-    scheduleAt(simTime() + waitDelay1Time + listening1Time + waitDelay2Time + listening2Time, endListening_2);
+    scheduleAfter(waitDelay1Time, endDelay_1);
+    scheduleAfter(waitDelay1Time + listening1Time, endListening_1);
+    scheduleAfter(waitDelay1Time + listening1Time + waitDelay2Time, endDelay_2);
+    scheduleAfter(waitDelay1Time + listening1Time + waitDelay2Time + listening2Time, endListening_2);
     deleteCurrentTxFrame();
     //popTxQueue();
 }
