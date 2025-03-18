@@ -100,20 +100,23 @@ class SimulationTestTask(TestTask):
 
 class MultipleSimulationTestTasks(MultipleTestTasks):
     def __init__(self, build=None, mode="debug", simulation_project=None, **kwargs):
-        super().__init__(build=build or get_default_build_argument(), simulation_project=simulation_project, **kwargs)
+        super().__init__(simulation_project=simulation_project, **kwargs)
         self.locals = locals()
         self.locals.pop("self")
         self.kwargs = kwargs
-        self.build = build or get_default_build_argument()
+        self.build = build if build is not None else get_default_build_argument()
         self.mode = mode
         self.simulation_project = simulation_project
 
     def get_description(self):
         return ((self.simulation_project.get_name() + " ") if self.simulation_project else "") + super().get_description()
 
+    def build_before_run(self, **kwargs):
+        build_project(**dict(kwargs, simulation_project=self.simulation_project, mode=self.mode))
+
     def run_protected(self, **kwargs):
         if self.build:
-            build_project(**dict(kwargs, simulation_project=self.simulation_project, mode=self.mode))
+            self.build_before_run(**kwargs)
         return super().run_protected(**kwargs)
 
 def get_simulation_test_tasks(simulation_test_task_class=SimulationTestTask, multiple_simulation_test_tasks_class=MultipleSimulationTestTasks, **kwargs):

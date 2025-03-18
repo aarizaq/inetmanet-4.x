@@ -298,6 +298,10 @@ class SimulationProject:
             msg_files = msg_files + list(map(lambda file_path: self.get_relative_path(file_path), file_paths))
         return msg_files
 
+    def build(self, **kwargs):
+        import inet.simulation.build
+        inet.simulation.build.build_project(simulation_project=self, **kwargs)
+
     # KLUDGE TODO replace this with a Python binding to the C++ configuration reader
     def collect_ini_file_simulation_configs(self, ini_path):
         def get_sim_time_limit(config_dicts, config):
@@ -390,6 +394,7 @@ class SimulationProject:
         def local_collect_ini_file_simulation_configs(ini_path, **kwargs):
             return self.collect_ini_file_simulation_configs(ini_path, **kwargs)
         _logger.info(f"Collecting {self.name} simulation configs started")
+        self.build(mode="release")
         ini_paths = [f for f in itertools.chain.from_iterable(map(lambda g: glob.glob(g, recursive=True), ini_path_globs)) if os.path.isfile(f)]
         if concurrent:
             pool = multiprocessing.pool.ThreadPool(multiprocessing.cpu_count())

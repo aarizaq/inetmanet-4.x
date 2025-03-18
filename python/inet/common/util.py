@@ -27,10 +27,33 @@ COLOR_RESET = "\033[0;0m"
 STDOUT_LEVEL = 25  # between INFO (20) and WARNING (30)
 STDERR_LEVEL = 35  # between WARNING (30) and ERROR (40)
 
+class StopExecutionException(Exception):
+    def __init__(self, **kwargs):
+        super().__init__()
+        self.value = kwargs.get("value", None)
+        self.value_provided = "value" in kwargs
+
+class TerminalInteractiveShell(IPython.terminal.interactiveshell.TerminalInteractiveShell):
+    def _showtraceback(self, etype, evalue, stb):
+        if isinstance(evalue, StopExecutionException):
+            if evalue.value_provided:
+                _logger.warning("Execution stopped programmatically by calling stop_execution(...) with:")
+                print(evalue.value)
+            else:
+                _logger.warning("Execution stopped programmatically by calling stop_execution()")
+            return None
+        super()._showtraceback(etype, evalue, stb)
+
+def stop_execution(*args):
+    if len(args) == 0:
+        raise StopExecutionException()
+    else:
+        raise StopExecutionException(value=args[0])
+
 def enable_autoreload():
     ipython = IPython.get_ipython()
-    ipython.magic("load_ext autoreload")
-    ipython.magic("autoreload 2")
+    ipython.run_line_magic("load_ext", "autoreload")
+    ipython.run_line_magic("autoreload", "2")
 
 _file_handler = None
 
@@ -86,7 +109,8 @@ def initialize_logging(log_level, external_command_log_level, log_file):
     logger.addHandler(handler)
     logging.addLevelName(STDOUT_LEVEL, "STDOUT")
     logging.addLevelName(STDERR_LEVEL, "STDERR")
-    set_logging_levels(log_level, external_command_log_level)
+    set_python_log_level(log_level)
+    set_external_command_log_level(external_command_log_level)
     _logging_initialized = True
 
 def ensure_logging_initialized(log_level, external_command_log_level, log_file):
@@ -100,25 +124,55 @@ def get_logging_formatter():
     logger = logging.getLogger()
     return logger.handlers[0].formatter
 
-def set_logging_levels(log_level, external_command_log_level="WARN"):
+def set_python_log_level(log_level):
     logger = logging.getLogger()
     logger.setLevel(log_level)
-    logging.getLogger("py4j").setLevel(external_command_log_level)
-    logging.getLogger("make").setLevel(external_command_log_level)
-    logging.getLogger("opp_charttool").setLevel(external_command_log_level)
-    logging.getLogger("opp_eventlogtool").setLevel(external_command_log_level)
-    logging.getLogger("opp_featuretool").setLevel(external_command_log_level)
-    logging.getLogger("opp_msgtool").setLevel(external_command_log_level)
-    logging.getLogger("opp_nedtool").setLevel(external_command_log_level)
-    logging.getLogger("opp_scavetool").setLevel(external_command_log_level)
-    logging.getLogger("opp_makemake").setLevel(external_command_log_level)
-    logging.getLogger("opp_run").setLevel(external_command_log_level)
-    logging.getLogger("opp_run_dbg").setLevel(external_command_log_level)
-    logging.getLogger("opp_run_release").setLevel(external_command_log_level)
-    logging.getLogger("opp_run_sanitize").setLevel(external_command_log_level)
-    logging.getLogger("opp_run_coverage").setLevel(external_command_log_level)
-    logging.getLogger("opp_run_profile").setLevel(external_command_log_level)
-    logging.getLogger("opp_test").setLevel(external_command_log_level)
+
+def get_python_log_level():
+    logger = logging.getLogger()
+    return logger.getEffectiveLevel()
+
+def set_external_command_log_level(log_level):
+    logging.getLogger("py4j").setLevel(log_level)
+    logging.getLogger("make").setLevel(log_level)
+    logging.getLogger("opp_charttool").setLevel(log_level)
+    logging.getLogger("opp_eventlogtool").setLevel(log_level)
+    logging.getLogger("opp_featuretool").setLevel(log_level)
+    logging.getLogger("opp_msgtool").setLevel(log_level)
+    logging.getLogger("opp_nedtool").setLevel(log_level)
+    logging.getLogger("opp_scavetool").setLevel(log_level)
+    logging.getLogger("opp_makemake").setLevel(log_level)
+    logging.getLogger("opp_run").setLevel(log_level)
+    logging.getLogger("opp_run_dbg").setLevel(log_level)
+    logging.getLogger("opp_run_release").setLevel(log_level)
+    logging.getLogger("opp_run_sanitize").setLevel(log_level)
+    logging.getLogger("opp_run_coverage").setLevel(log_level)
+    logging.getLogger("opp_run_profile").setLevel(log_level)
+    logging.getLogger("opp_test").setLevel(log_level)
+
+def get_external_command_log_level():
+    return logging.getLogger("opp_run").getEffectiveLevel()
+
+def run_with_log_levels(func, *args, log_level=None, python_log_level=None, external_command_log_level=None, **kwargs):
+    if python_log_level is None:
+        python_log_level = python_log_level
+    if external_command_log_level is None:
+        external_command_log_level = python_log_level
+    old_python_log_level = None
+    old_external_command_log_level = None
+    try:
+        if python_log_level is not None:
+            old_python_log_level = get_python_log_level()
+            set_python_log_level(python_log_level)
+        if external_command_log_level is not None:
+            old_external_command_log_level = get_external_command_log_level()
+            set_external_command_log_level(external_command_log_level)
+        return func(*args, **kwargs)
+    finally:
+        if old_python_log_level is not None:
+            set_python_log_level(old_python_log_level)
+        if old_external_command_log_level is not None:
+            set_external_command_log_level(old_external_command_log_level)
 
 _default_build_argument = True
 

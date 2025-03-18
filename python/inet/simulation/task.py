@@ -399,12 +399,12 @@ class MultipleSimulationTasks(MultipleTasks):
             kwargs (dict):
                 Additional arguments are inherited from :py:class:`MultipleTasks <inet.common.task.MultipleTasks>` constructor.
         """
-        super().__init__(build=build or get_default_build_argument(), name=name, **kwargs)
+        super().__init__(name=name, **kwargs)
         self.locals = locals()
         self.locals.pop("self")
         self.kwargs = kwargs
         self.mode = mode
-        self.build = build or get_default_build_argument()
+        self.build = build if build is not None else get_default_build_argument()
         self.simulation_project = simulation_project
 
     def run(self, **kwargs):
@@ -421,9 +421,12 @@ class MultipleSimulationTasks(MultipleTasks):
         """
         return super().run(**kwargs)
 
+    def build_before_run(self, **kwargs):
+        build_project(**dict(kwargs, simulation_project=self.simulation_project, mode=self.mode))
+
     def run_protected(self, **kwargs):
         if self.build:
-            build_project(**dict(kwargs, simulation_project=self.simulation_project, mode=self.mode))
+            self.build_before_run(**kwargs)
         return super().run_protected(**kwargs)
 
 def get_simulation_tasks(simulation_project=None, simulation_configs=None, mode=None, debug=None, break_at_event_number=None, break_at_matching_event=None, run_number=None, run_number_filter=None, exclude_run_number_filter=None, sim_time_limit=None, cpu_time_limit=None, concurrent=True, expected_num_tasks=None, simulation_task_class=SimulationTask, multiple_simulation_tasks_class=MultipleSimulationTasks, **kwargs):
