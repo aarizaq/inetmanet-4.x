@@ -24,7 +24,6 @@ void ClockBase::initialize(int stage)
     }
     else if (stage == INITSTAGE_LAST) {
         referenceClockModule.reference(this, "referenceClock", false);
-        updateDisplayString();
         emit(timeChangedSignal, getClockTime().asSimTime());
     }
 }
@@ -46,15 +45,8 @@ void ClockBase::finish()
 
 void ClockBase::refreshDisplay() const
 {
-    updateDisplayString();
-}
-
-void ClockBase::updateDisplayString() const
-{
-    if (getEnvir()->isGUI()) {
-        auto text = StringFormat::formatString(displayStringTextFormat, this);
-        getDisplayString().setTagArg("t", 0, text.c_str());
-    }
+    auto text = StringFormat::formatString(displayStringTextFormat, this);
+    getDisplayString().setTagArg("t", 0, text.c_str());
 }
 
 clocktime_t ClockBase::getClockTime() const
