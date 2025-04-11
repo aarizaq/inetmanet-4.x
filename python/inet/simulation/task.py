@@ -20,6 +20,7 @@ from inet.simulation.build import *
 from inet.simulation.config import *
 from inet.simulation.fingerprint import *
 from inet.simulation.project import *
+from inet.simulation.stdout import *
 from inet.simulation.subprocess import *
 from inet.simulation.iderunner import *
 
@@ -136,14 +137,34 @@ class SimulationTaskResult(TaskResult):
         file_path = simulation_project.get_full_path(simulation_config.working_directory + "/" + self.eventlog_file_path)
         eventlog_file = open(file_path)
         fingerprints = []
+        event_numbers = []
         ingredients = None
         for line in eventlog_file:
-            match = re.match(r"E # .* f (.*?)/(.*?)", line)
+            match = re.match(r"E # (\d+) .* f (.*?)/(.*)", line)
             if match:
-                ingredients = match.group(2)
-                fingerprints.append(Fingerprint(match.group(1), match.group(2)))
+                ingredients = match.group(3)
+                fingerprints.append(Fingerprint(match.group(2), match.group(3)))
+                event_numbers.append(int(match.group(1)))
         eventlog_file.close()
-        return FingerprintTrajectory(self, ingredients, fingerprints, range(0, len(fingerprints)))
+        return FingerprintTrajectory(self, ingredients, fingerprints, event_numbers)
+
+    def get_stdout_trajectory(self, filter=None, exclude_filter=None, full_match=False):
+        simulation_task = self.task
+        simulation_config = simulation_task.simulation_config
+        simulation_project = simulation_config.simulation_project
+        event_numbers = []
+        lines = []
+        stdout = self.subprocess_result.stdout or ""
+        event_number = None
+        for line in stdout.split("\n"):
+            match = re.match(r"\*\* Event #(\d+) .*", line)
+            if match:
+                event_number = int(match.group(1))
+            else:
+                if matches_filter(line, filter, exclude_filter, full_match):
+                    event_numbers.append(event_number)
+                    lines.append(line)
+        return StdoutTrajectory(self, event_numbers, lines)
 
 class SimulationTask(Task):
     """

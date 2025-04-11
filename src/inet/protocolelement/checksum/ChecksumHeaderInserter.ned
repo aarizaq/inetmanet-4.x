@@ -7,11 +7,11 @@
 
 package inet.protocolelement.checksum;
 
-import inet.protocolelement.checksum.base.CrcInserterBase;
+import inet.protocolelement.checksum.base.ChecksumInserterBase;
 
-simple CrcHeaderInserter extends CrcInserterBase
+simple ChecksumHeaderInserter extends ChecksumInserterBase
 {
     parameters:
         string headerPosition @enum("front","back") = default("front");
-        @class(CrcHeaderInserter);
+        @class(ChecksumHeaderInserter);
 }
