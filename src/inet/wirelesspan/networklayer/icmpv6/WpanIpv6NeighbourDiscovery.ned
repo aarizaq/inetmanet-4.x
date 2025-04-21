@@ -29,7 +29,7 @@ simple WpanIpv6NeighbourDiscovery
 {
     parameters:
         string interfaceTableModule;   // The path to the InterfaceTable module
-        string crcMode @enum("declared", "computed") = default("declared");
+        string checksumMode @enum("declared", "computed") = default("declared");
         string icmpv6Module;
         string xmipv6Module;
         string routingTableModule;

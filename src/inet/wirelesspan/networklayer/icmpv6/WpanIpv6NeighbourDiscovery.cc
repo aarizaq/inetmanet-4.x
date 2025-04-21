@@ -303,7 +303,7 @@ void WpanIpv6NeighbourDiscovery::createAndSendNsPacket(const Ipv6Address& nsTarg
         ns->addChunkLength(IPv6ND_LINK_LAYER_ADDRESS_OPTION_LENGTH);
     }
     auto packet = new Packet("NSpacket");
-    Icmpv6::insertCrc(crcMode, ns, packet);
+    Icmpv6::insertChecksum(checksumMode, ns, packet);
     packet->insertAtFront(ns);
 //    ORIGINAL
 //    sendPacketToIpv6Module(packet, dgDestAddr, dgSrcAddr, ie->getInterfaceId());

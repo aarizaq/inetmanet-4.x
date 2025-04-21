@@ -18,7 +18,7 @@ import inet.networklayer.contract.NetworkHeaderBase;
 import inet.networklayer.ipv6.Ipv6Header;
 import inet.networklayer.contract.ipv6.Ipv6Address;
 import inet.networklayer.common.L3Address;
-import inet.transportlayer.common.CrcMode;
+import inet.common.checksum.ChecksumMode;
 
 cplusplus {{
 #include "inet/common/INETUtils.h"
@@ -262,8 +262,8 @@ class SixLowPanUdpNhcExtension extends FieldsChunk
     uint8_t  baseFormat = 0xF0; //!< Dispatch + encoding fields.    
     uint16_t srcPort = 0;   //!< Source port.
     uint16_t dstPort = 0;   //!< Destination port.    
-    uint16_t crc = 0 @toString(utils::hex($)) @fromString(utils::uhex($));
-    CrcMode crcMode = CRC_MODE_UNDEFINED;    
+    uint16_t checksum = 0 @toString(utils::hex($)) @fromString(utils::uhex($));
+    ChecksumMode checksumMode = CHECKSUM_MODE_UNDEFINED;
 }
 
 cplusplus(SixLowPanUdpNhcExtension) {{

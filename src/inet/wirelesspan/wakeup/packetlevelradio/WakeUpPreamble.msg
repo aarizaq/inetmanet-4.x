@@ -18,7 +18,7 @@ import inet.networklayer.contract.NetworkHeaderBase;
 import inet.networklayer.ipv6.Ipv6Header;
 import inet.networklayer.contract.ipv6.Ipv6Address;
 import inet.networklayer.common.L3Address;
-import inet.transportlayer.common.CrcMode;
+import inet.common.checksum.ChecksumMode;
 
 namespace inet::wirelesspan::physicallayer;
 

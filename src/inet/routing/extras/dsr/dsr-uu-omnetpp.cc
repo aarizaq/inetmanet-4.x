@@ -1187,8 +1187,8 @@ void DSRUU::EtxMsgSend(void *data) {
 
     ipHeader->setProtocolId(IP_PROT_DSR);
 
-    ipHeader->setCrcMode(CRC_DECLARED_CORRECT);
-    ipHeader->setCrc(0);
+    ipHeader->setChecksumMode(CHECKSUM_DECLARED_CORRECT);
+    ipHeader->setChecksum(0);
     ipHeader->setTotalLengthField(ipHeader->getChunkLength() + etxHeader->getChunkLength());
 
     pkt->addTagIfAbsent<PacketProtocolTag>()->setProtocol(&Protocol::dsr);
@@ -1617,8 +1617,8 @@ Packet * DSRUU::newDsrPacket(struct dsr_pkt *dp, int interface_id, bool withDsrH
     pkt->removeTagIfPresent<DscpReq>();
     pkt->removeTagIfPresent<EcnReq>();
     ipHeader->setTimeToLive(ttl);
-    ipHeader->setCrcMode(CRC_DECLARED_CORRECT);
-    ipHeader->setCrc(0);
+    ipHeader->setChecksumMode(CHECKSUM_DECLARED_CORRECT);
+    ipHeader->setChecksum(0);
     ipHeader->setHeaderLength(B(dp->nh.iph->ihl)); // Header length
     ipHeader->setChunkLength(ipHeader->getHeaderLength());
     ipHeader->setTotalLengthField(ipHeader->getChunkLength() + pkt->getDataLength());
@@ -1730,8 +1730,8 @@ Packet * DSRUU::newDsrPacket(struct dsr_pkt *dp, int interface_id, const Packet 
     pkt->removeTagIfPresent<EcnReq>();
 
     ipHeader->setTimeToLive(ttl);
-    ipHeader->setCrcMode(CRC_DECLARED_CORRECT);
-    ipHeader->setCrc(0);
+    ipHeader->setChecksumMode(CHECKSUM_DECLARED_CORRECT);
+    ipHeader->setChecksum(0);
     ipHeader->setHeaderLength(B(dp->nh.iph->ihl)); // Header length
     ipHeader->setChunkLength(ipHeader->getHeaderLength());
     ipHeader->setTotalLengthField(ipHeader->getChunkLength() + pkt->getDataLength());

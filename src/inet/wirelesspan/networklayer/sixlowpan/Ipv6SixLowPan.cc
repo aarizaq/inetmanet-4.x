@@ -1610,8 +1610,8 @@ Ipv6SixLowPan::compressLowPanUdpNhc (Packet * packet, bool omitChecksum)
 
   // Set the C field and checksum
   udpNhcHeader->setC (false);
-  udpNhcHeader->setCrc(udpHeader->getCrc());
-  udpNhcHeader->setCrcMode(udpHeader->getCrcMode());
+  udpNhcHeader->setChecksum(udpHeader->getChecksum());
+  udpNhcHeader->setChecksumMode(udpHeader->getChecksumMode());
 
   if (Udp::isCorrectPacket(packet, udpHeader))
       udpNhcHeader->setC (true);
@@ -1647,8 +1647,8 @@ Ipv6SixLowPan::decompressLowPanUdpNhc (Packet * packet, Ipv6Address saddr, Ipv6A
 
   auto udpHeader = makeShared<UdpHeader>();
   auto encoding = packet->removeAtFront<SixLowPanUdpNhcExtension>();
-  udpHeader->setCrc(encoding->getCrc());
-  udpHeader->setCrcMode(encoding->getCrcMode());
+  udpHeader->setChecksum(encoding->getChecksum());
+  udpHeader->setChecksumMode(encoding->getChecksumMode());
 
 
   // Set the value of the ports
@@ -1681,11 +1681,11 @@ Ipv6SixLowPan::decompressLowPanUdpNhc (Packet * packet, Ipv6Address saddr, Ipv6A
     }
   B totalLength = udpHeader->getChunkLength() + packet->getDataLength();
   udpHeader->setTotalLengthField(totalLength);
-  if (udpHeader->getCrcMode() == CRC_COMPUTED) {
-      udpHeader->setCrc(0x0000); // crcMode == CRC_COMPUTED is done in an INetfilter hook
+  if (udpHeader->getChecksumMode() == CHECKSUM_COMPUTED) {
+      udpHeader->setChecksum(0x0000); // crcMode == CRC_COMPUTED is done in an INetfilter hook
   }
   else {
-      Udp::insertCrc(&Protocol::ipv6, saddr, daddr, udpHeader, packet);
+      Udp::insertChecksum(&Protocol::ipv6, saddr, daddr, udpHeader, packet);
   }
 
   packet->insertAtFront(udpHeader);
