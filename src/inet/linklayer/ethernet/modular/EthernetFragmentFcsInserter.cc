@@ -8,7 +8,7 @@
 #include "inet/linklayer/ethernet/modular/EthernetFragmentFcsInserter.h"
 
 #include "inet/common/ProtocolTag_m.h"
-#include "inet/common/checksum/EthernetCRC.h"
+#include "inet/common/checksum/Checksum.h"
 #include "inet/linklayer/ethernet/common/EthernetMacHeader_m.h"
 #include "inet/protocolelement/fragmentation/tag/FragmentTag_m.h"
 
@@ -21,23 +21,23 @@ uint64_t EthernetFragmentFcsInserter::computeComputedChecksum(const Packet *pack
     auto data = packet->peekDataAsBytes();
     auto bytes = data->getBytes();
     auto fragmentTag = packet->getTag<FragmentTag>();
-    currentFragmentCompleteFcs = ethernetCRC(bytes.data(), bytes.size(), fragmentTag->getFirstFragment() ? 0 : lastFragmentCompleteFcs);
+    currentFragmentCompleteFcs = ethernetFcs(bytes.data(), bytes.size(), fragmentTag->getFirstFragment() ? 0 : lastFragmentCompleteFcs);
     if (fragmentTag->getLastFragment())
         return currentFragmentCompleteFcs;
     else
-        return ethernetCRC(bytes.data(), bytes.size()) ^ 0xFFFF0000;
+        return ethernetFcs(bytes.data(), bytes.size()) ^ 0xFFFF0000;
 }
 
 void EthernetFragmentFcsInserter::processPacket(Packet *packet)
 {
     const auto& header = makeShared<EthernetFragmentFcs>();
     auto fragmentTag = packet->getTag<FragmentTag>();
-    ASSERT(checksumType == CHECKSUM_CRC32);
+    ASSERT(checksumType == CHECKSUM_ETHERNET_FCS);
     auto fcs = computeChecksum(packet, checksumMode, checksumType);
     header->setFcs(fcs);
     FcsMode fcsMode = (FcsMode)checksumMode; //TODO KLUDGE: use ChecksumMode everywhere
     header->setFcsMode(fcsMode);
-    header->setMCrc(!fragmentTag->getLastFragment());
+    header->setMFcs(!fragmentTag->getLastFragment());
     packet->trimBack();
     packet->insertAtBack(header);
     auto& packetProtocolTag = packet->findTagForUpdate<PacketProtocolTag>();

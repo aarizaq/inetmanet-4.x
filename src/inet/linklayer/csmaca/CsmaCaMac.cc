@@ -10,7 +10,7 @@
 #include "inet/common/ModuleAccess.h"
 #include "inet/common/ProtocolGroup.h"
 #include "inet/common/ProtocolTag_m.h"
-#include "inet/common/checksum/EthernetCRC.h"
+#include "inet/common/checksum/Checksum.h"
 #include "inet/common/packet/chunk/ByteCountChunk.h"
 #include "inet/linklayer/common/InterfaceTag_m.h"
 #include "inet/linklayer/common/MacAddressTag_m.h"
@@ -625,7 +625,7 @@ bool CsmaCaMac::isFcsOk(Packet *frame)
                 auto bufferLength = fcsBytes->getChunkLength().get<B>();
                 auto buffer = new uint8_t[bufferLength];
                 fcsBytes->copyToBuffer(buffer, bufferLength);
-                auto computedFcs = ethernetCRC(buffer, bufferLength);
+                auto computedFcs = ethernetFcs(buffer, bufferLength);
                 delete[] buffer;
                 return computedFcs == trailer->getFcs();
             }
@@ -640,7 +640,7 @@ uint32_t CsmaCaMac::computeFcs(const Ptr<const BytesChunk>& bytes)
     auto bufferLength = bytes->getChunkLength().get<B>();
     auto buffer = new uint8_t[bufferLength];
     bytes->copyToBuffer(buffer, bufferLength);
-    auto computedFcs = ethernetCRC(buffer, bufferLength);
+    auto computedFcs = ethernetFcs(buffer, bufferLength);
     delete[] buffer;
     return computedFcs;
 }

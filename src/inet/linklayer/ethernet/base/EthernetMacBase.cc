@@ -13,7 +13,7 @@
 #include "inet/common/ModuleAccess.h"
 #include "inet/common/ProtocolTag_m.h"
 #include "inet/common/StringFormat.h"
-#include "inet/common/checksum/EthernetCRC.h"
+#include "inet/common/checksum/Checksum.h"
 #include "inet/common/lifecycle/ModuleOperations.h"
 #include "inet/common/packet/chunk/BytesChunk.h"
 #include "inet/linklayer/common/EtherType_m.h"
@@ -292,7 +292,7 @@ void EthernetMacBase::decapsulate(Packet *packet)
 }
 
 // FIXME should use it in EthernetCsmaMacPhy, EthernetMacPhy, etc. modules. But should not use it in EtherBus, EthernetHub.
-bool EthernetMacBase::verifyCrcAndLength(Packet *packet)
+bool EthernetMacBase::verifyFcsAndLength(Packet *packet)
 {
     EV_STATICCONTEXT;
 
@@ -314,7 +314,7 @@ bool EthernetMacBase::verifyCrcAndLength(Packet *packet)
             // 1. fill in the data
             ethBytes->copyToBuffer(buffer, bufferLength);
             // 2. compute the FCS
-            auto computedFcs = ethernetCRC(buffer, bufferLength);
+            auto computedFcs = ethernetFcs(buffer, bufferLength);
             delete[] buffer;
             isFcsBad = (computedFcs != ethTrailer->getFcs()); // FIXME how to check fcs?
             if (isFcsBad)
