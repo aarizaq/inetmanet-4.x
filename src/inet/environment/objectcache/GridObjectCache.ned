@@ -7,6 +7,7 @@
 
 package inet.environment.objectcache;
 
+import inet.common.CompoundModule;
 import inet.environment.contract.IObjectCache;
 
 //
@@ -15,7 +16,7 @@ import inet.environment.contract.IObjectCache;
 // the coordinate axes and it has a configurable cell size in all dimensions.
 // The cell size parameters take precedence over the cell count parameters.
 //
-module GridObjectCache like IObjectCache
+module GridObjectCache extends CompoundModule like IObjectCache
 {
     parameters:
         string physicalEnvironmentModule = default("^");

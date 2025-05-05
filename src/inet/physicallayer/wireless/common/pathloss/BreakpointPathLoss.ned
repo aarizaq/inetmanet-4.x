@@ -7,9 +7,10 @@
 
 package inet.physicallayer.wireless.common.pathloss;
 
+import inet.common.CompoundModule;
 import inet.physicallayer.wireless.common.contract.packetlevel.IPathLoss;
 
-module BreakpointPathLoss like IPathLoss
+module BreakpointPathLoss extends CompoundModule like IPathLoss
 {
     parameters:
         double l01;

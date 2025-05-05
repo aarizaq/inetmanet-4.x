@@ -7,10 +7,11 @@
 
 package inet.linklayer.ieee80211.mac.recipient;
 
-module RecipientMacDataService
+import inet.common.CompoundModule;
+module RecipientMacDataService extends CompoundModule
 {
     parameters:
-        @class("RecipientMacDataService");
+        @class(RecipientMacDataService);
         @display("i=block/join");
         @signal[packetDefragmented](type=inet::Packet);
         @signal[packetDeaggregated](type=inet::Packet);

@@ -7,11 +7,12 @@
 
 package inet.protocolelement.processing;
 
+import inet.common.CompoundModule;
 //
 // Implements the module given interface and can be used as an omitted
 // optional module that removes itself from the module hierarchy during initialization.
 //
-module OmittedProcessingDelayLayer like IProcessingDelayLayer
+module OmittedProcessingDelayLayer extends CompoundModule like IProcessingDelayLayer
 {
     parameters:
         @class(::inet::OmittedModule);
