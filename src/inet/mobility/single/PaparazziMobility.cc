@@ -22,15 +22,27 @@ namespace inet {
 
 Define_Module(PaparazziMobility);
 
-
-Register_Enum2(PaparazziMobilityModels, "inet::PaparazziMobilityModels", (
-        "waypoint", PaparazziMobility::WAYPOINT,
-        "stayat", PaparazziMobility::STAYAT,
-        "scan", PaparazziMobility::SCAN,
-        "oval", PaparazziMobility::OVAL,
-        "eigth", PaparazziMobility::OVAL,
-        nullptr
-        ));
+PaparazziMobility::Mode PaparazziMobility::parseMode(const char * mode)
+{
+    if (strcmp(mode, "waypoint") == 0) {
+        return PaparazziMobility::WAYPOINT;
+    }
+    else if (strcmp(mode, "stayat") == 0) {
+        return PaparazziMobility::STAYAT;
+    }
+    else if (strcmp(mode, "scan") == 0) {
+        return PaparazziMobility::SCAN;
+    }
+    else if (strcmp(mode, "oval") == 0) {
+        return PaparazziMobility::OVAL;
+    }
+    else if (strcmp(mode, "eigth") == 0) {
+        return PaparazziMobility::EIGHT;
+    }
+    else {
+        return PaparazziMobility::Invalid;
+    }
+}
 
 PaparazziMobility::PaparazziMobility()
 {
@@ -102,10 +114,10 @@ void PaparazziMobility::initialize(int stage)
         const char *token;
 
         while ((token = tokenizer.nextToken()) != nullptr) {
-            int state = cEnum::get("inet::PaparazziMobilityModels")->lookup(token);
-            if (state == -1)
+            auto mode = parseMode(token);
+            if (mode == PaparazziMobility::Invalid)
                 throw cRuntimeError("Invalid statate: '%s'", token);
-            sequenceModels.push_back(Mode(state));
+            sequenceModels.push_back(mode);
         }
         latestSeq = -1;
         randomSeq = par("randomSequence");

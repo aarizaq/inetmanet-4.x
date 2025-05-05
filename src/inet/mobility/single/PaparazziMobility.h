@@ -37,7 +37,8 @@ class INET_API PaparazziMobility : public MovingMobilityBase
         WAYPOINT,
         EIGHT,
         SCAN,
-        OVAL
+        OVAL,
+        Invalid
     };
 
     PaparazziMobility();
@@ -50,6 +51,7 @@ class INET_API PaparazziMobility : public MovingMobilityBase
     int latestSeq = -1;
 
 
+    PaparazziMobility::Mode parseMode(const char * mode);
     PaparazziMobility::Mode getNextState();
     void startNextState();
     void startState(const Mode &s);
