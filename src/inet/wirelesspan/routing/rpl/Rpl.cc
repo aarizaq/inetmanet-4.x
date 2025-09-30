@@ -432,6 +432,11 @@ void Rpl::start()
     deleteManualRoutes();
 
     if (isRoot && !par("disabled").boolValue()) {
+        trickleTimer->setMinInterval(DEFAULT_DIO_INTERVAL_MIN);
+        trickleTimer->setNumDoublings(DEFAULT_DIO_INTERVAL_DOUBLINGS);
+        trickleTimer->setCurrentInterval(DEFAULT_DIO_INTERVAL_MIN);
+        trickleTimer->setRedundancyConst(DEFAULT_DIO_REDUNDANCY_CONST);
+
         trickleTimer->start(pUseWarmup, par("numSkipTrickleIntervalUpdates").intValue());
         dodagColor = pickRandomColor();
         rank = ROOT_RANK;
@@ -441,8 +446,8 @@ void Rpl::start()
         storing = par("storing").boolValue();
         for (auto app : apps)
             app->subscribe("packetReceived", this);
-    }
 
+    }
 
     // For demo purposes
     if (par("scheduleEthernetPkt").boolValue()) {
@@ -881,6 +886,13 @@ const Ptr<Dio> Rpl::createDio()
     EV_DETAIL << "DIO created advertising DODAG - " << dio->getDodagId()
                 << " and rank " << dio->getRank() << endl;
 
+    if (trickleTimer->getMinInterval() != 0)
+        dio->setMinInterval(trickleTimer->getMinInterval());
+    if (trickleTimer->getNumDoublings() != 0)
+        dio->setDioNumDoublings(trickleTimer->getNumDoublings());
+    if (trickleTimer->getRedundancyConst() != 0)
+        dio->setDioRedundancyConst(trickleTimer->getRedundancyConst());
+
     return dio;
 }
 
@@ -967,6 +979,12 @@ void Rpl::processDio(const Ptr<const Dio>& dio)
         lastTarget = getSelfAddress();
 //        selfAddr = getSelfAddress();
         dodagColor = dio->getColor();
+        if (dio->getMinInterval() != 0 && dio->getMinInterval() != -1)
+            trickleTimer->setMinInterval(dio->getMinInterval());
+        if (dio->getDioRedundancyConst() != 0 && dio->getDioRedundancyConst() != -1)
+            trickleTimer->setRedundancyConst(dio->getDioRedundancyConst());
+        if (dio->getDioNumDoublings() != 0 && dio->getDioNumDoublings() != -1)
+            trickleTimer->setNumDoublings(dio->getDioNumDoublings());
         EV_DETAIL << "Joined DODAG with id - " << dodagId << endl;
         // Start broadcasting DIOs, diffusing DODAG control data, TODO: refactor TT lifecycle
         if (trickleTimer->hasStarted())

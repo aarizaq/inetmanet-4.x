@@ -36,9 +36,9 @@ namespace routing {
 class TrickleTimer : public cSimpleModule
 {
   private:
-    uint8_t minInterval = DEFAULT_DIO_INTERVAL_MIN;
-    uint8_t numDoublings = DEFAULT_DIO_INTERVAL_DOUBLINGS;
-    int currentInterval = DEFAULT_DIO_INTERVAL_MIN;
+    uint8_t minInterval = 0;
+    uint8_t numDoublings = 0;
+    int currentInterval = 0;
     int skipIntDoublings = 0;
     int intervalUpdatesCtn = 0;
     int maxInterval = DEFAULT_DIO_INTERVAL_MIN * (pow(2, DEFAULT_DIO_INTERVAL_DOUBLINGS));
@@ -47,7 +47,7 @@ class TrickleTimer : public cSimpleModule
     cMessage *trickleTriggerMsg = nullptr;
     cMessage *intervalTriggerEvent = nullptr;
 
-    uint8_t redundancyConst = DEFAULT_DIO_REDUNDANCY_CONST;
+    uint8_t redundancyConst = 0;//DEFAULT_DIO_REDUNDANCY_CONST;
     uint8_t ctrlMsgReceivedCtn = 0;
 
   public:

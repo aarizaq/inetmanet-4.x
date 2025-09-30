@@ -86,9 +86,9 @@ class Dio extends RplPacket {
     uint8_t dtsn;
    
 	// Trickle timer parameters (DAG Configuration Option)
-    int minInterval;           
-    int dioRedundancyConst;              
-    int dioNumDoublings;						
+    int minInterval = -1;           
+    int dioRedundancyConst = -1;              
+    int dioNumDoublings = -1;						
     Ocp ocp;                
     
     // Non-RFC fields, misc

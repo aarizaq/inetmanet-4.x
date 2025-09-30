@@ -64,7 +64,16 @@ void TrickleTimer::start(bool warmupDelay, int skipIntervalDoublings) {
     EV_INFO << "Trickle timer started" << endl;
     skipIntDoublings = skipIntervalDoublings;
     started = true;
-    minInterval = DEFAULT_DIO_INTERVAL_MIN;
+    if (minInterval == 0)
+        minInterval = DEFAULT_DIO_INTERVAL_MIN;
+    if (numDoublings == 0)
+        numDoublings = DEFAULT_DIO_INTERVAL_DOUBLINGS;
+    if (currentInterval == 0)
+        currentInterval = DEFAULT_DIO_INTERVAL_MIN;
+
+    if (redundancyConst == 0)
+        redundancyConst = DEFAULT_DIO_REDUNDANCY_CONST;
+
     currentInterval = warmupDelay ? minInterval * 2 : minInterval;
     maxInterval = minInterval * (pow(2, numDoublings));
     ctrlMsgReceivedCtn = 0;
@@ -157,6 +166,14 @@ bool TrickleTimer::checkRedundancyConst() {
 
 void TrickleTimer::reset() {
     Enter_Method_Silent("TrickleTimer::reset()");
+
+    if (minInterval == 0)
+        minInterval = DEFAULT_DIO_INTERVAL_MIN;
+    if (numDoublings == 0)
+        numDoublings = DEFAULT_DIO_INTERVAL_DOUBLINGS;
+    if (currentInterval == 0)
+        currentInterval = DEFAULT_DIO_INTERVAL_MIN;
+
     ctrlMsgReceivedCtn = 0;
     currentInterval = minInterval;
     intervalUpdatesCtn = 0;
@@ -186,6 +203,12 @@ void TrickleTimer::suspend() {
         cancelEvent(intervalTriggerEvent);
     if (trickleTriggerEvent)
         cancelEvent(trickleTriggerEvent);
+
+    minInterval = 0;
+    numDoublings = 0;
+    currentInterval = 0;
+    redundancyConst = 0;
+
     EV_DETAIL << "Trickle timer suspended " << endl;
 }
 
