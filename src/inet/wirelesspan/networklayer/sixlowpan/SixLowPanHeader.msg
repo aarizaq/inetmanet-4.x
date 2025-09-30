@@ -80,6 +80,9 @@ class SixLowPanHc1 extends SixLowPanDispatch {
   L3Address srcInterface;    //!< Source interface.
   L3Address dstPrefix;       //!< Destination prefix.
   L3Address dstInterface;    //!< Destination interface.
+  
+  L3Address origDestAddr; // addr before compression 
+  L3Address origSrcAddr;  // addr before compression
   uint8_t trafficClass;       //!< Traffic Class.
   uint32_t flowLabel;       //!< Flow Label.
   //uint8_t nextHeader;       //!< Next header.
@@ -93,6 +96,9 @@ class SixLowPanHc1 extends SixLowPanDispatch {
 cplusplus(SixLowPanHc1) {{
   public:
     virtual B getSerializedSize() const override;
+    virtual L3Address getSourceAddress() const override {return getOrigSrcAddr();}    
+    virtual L3Address getDestinationAddress() const override {return getOrigDestAddr();}
+    
 }}
 
 class SixLowPanFrag1 extends SixLowPanDispatch {
@@ -140,6 +146,8 @@ class SixLowPanIphc extends SixLowPanDispatch {
   uint8_t dscp;          //!< DSCP bits.
   uint32_t flowLabel;   //!< Flow Label bits.
   uint8_t hopLimit;          //!< Hop Limit.
+  L3Address origDestAddr; // addr before compression 
+  L3Address origSrcAddr;  // addr before compression
   // uint8_t nextHeader;       //!< Next header.
   uint8_t srcInlinePart[16]; //!< source address inline part.
   uint8_t dstInlinePart[16]; //!< destination address inline part.
@@ -254,6 +262,11 @@ cplusplus(SixLowPanIphc) {{
     bool getDac (void) const;
     void setDam (HeaderCompression_e damField);
     HeaderCompression_e getDam (void) const;
+    
+    virtual L3Address getSourceAddress() const override {return getOrigSrcAddr();}    
+    virtual L3Address getDestinationAddress() const override {return getOrigDestAddr();}
+
+    
 }}
 
 

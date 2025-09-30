@@ -610,6 +610,8 @@ Ipv6SixLowPan::compressLowPanHc1 (Packet * packet, L3Address const &src, L3Addre
       //uint8_t bufOne[16];
       //uint8_t bufTwo[16];
         Ipv6Address srcAddr = ipHeader->getSrcAddress();
+        hc1Header->setOrigSrcAddr(srcAddr);
+
         Ipv6Address mySrcAddr = makeAutoconfiguredLinkLocalAddress(src).toIpv6();
         EV_DEBUG << "Checking source compression: " << mySrcAddr << " - " << srcAddr<< endl;
 
@@ -641,6 +643,8 @@ Ipv6SixLowPan::compressLowPanHc1 (Packet * packet, L3Address const &src, L3Addre
         Ipv6Address dstAddr = ipHeader->getDestAddress();
         Ipv6Address myDstAddr = makeAutoconfiguredLinkLocalAddress(dst).toIpv6();
         EV_DEBUG << "Checking destination compression: " << myDstAddr << " - " << dstAddr<< endl;
+
+        hc1Header->setOrigDestAddr(dstAddr);
 
         //memcpy(bufOne,dstAddr.words(),sizeof(bufOne));
         //memcpy(bufTwo,myDstAddr.words(),sizeof(bufTwo));
@@ -927,6 +931,7 @@ Ipv6SixLowPan::compressLowPanIphc (Packet * packet, L3Address const &src, L3Addr
       {
           Ipv6Address srcAddr = ipHeader->getSrcAddress();
           uint8_t srcContextId;
+          iphcHeader->setOrigSrcAddr(srcAddr);
 
           // The "::" address is compressed as a fake stateful compression.
           // TODO: Check any address format
@@ -1021,6 +1026,8 @@ Ipv6SixLowPan::compressLowPanIphc (Packet * packet, L3Address const &src, L3Addr
           convertFromIpv6AddressToUint8(dstAddr, addressBuf);
           //memcpy(addressBuf, dstAddr.words(), sizeof(addressBuf));
           //dstAddr->getBytes (addressBuf);
+
+          iphcHeader->setOrigDestAddr(dstAddr);
 
           EV << "Checking destination compression: " << dstAddr << endl;
 
