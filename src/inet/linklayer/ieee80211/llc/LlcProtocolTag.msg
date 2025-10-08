@@ -9,18 +9,6 @@ cplusplus {{
 
 namespace inet::ieee80211;
 
-//
-// LLC protocols available in IEEE 802.11
-//
-cplusplus {{
-
-static ProtocolGroup llc("llc", {
-    { 0, &Protocol::ieee8022llc },
-    { 1, &Protocol::ieee802epd }
-});
-
-}}
-
 enum LlcProtocolId
 {
     LPD = 0; // IEEE 802.2 LLC header (with SNAP)
@@ -33,10 +21,10 @@ enum LlcProtocolId
 //
 class LlcProtocolTag extends TagBase
 {
-    int protocolId @enum(LlcProtocolId);
+    int protocolNumber @enum(LlcProtocolId);
 }
 
 cplusplus(LlcProtocolTag) {{
-    virtual const Protocol *getProtocol() const { return llc.findProtocol(getProtocolId()); }
-    virtual void setProtocol(const Protocol *protocol) { setProtocolId(static_cast<LlcProtocolId>(protocol->getId())); }
+    virtual const Protocol *getProtocol() const { return ProtocolGroup::getIeee80211LlcProtocolGroup()->findProtocol(getProtocolNumber()); }
+    virtual void setProtocol(const Protocol *protocol) { setProtocolNumber(ProtocolGroup::getIeee80211LlcProtocolGroup()->getProtocolNumber(protocol)); }
 }}
