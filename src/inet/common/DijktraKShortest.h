@@ -55,6 +55,7 @@ protected:
     static CostVector minimumCost;
     static CostVector maximumCost;
     friend bool operator < ( const DijkstraKshortest::CostVector& x, const DijkstraKshortest::CostVector& y );
+    friend bool operator > ( const DijkstraKshortest::CostVector& x, const DijkstraKshortest::CostVector& y );
 
 public:
     typedef std::vector<NodeId> Route;

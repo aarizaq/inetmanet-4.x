@@ -69,6 +69,12 @@ inline bool operator < ( const DijkstraKshortest::CostVector& x, const DijkstraK
     return false;
 }
 
+inline bool operator > ( const DijkstraKshortest::CostVector& x, const DijkstraKshortest::CostVector& y )
+{
+    return y < x;
+}
+
+
 
 DijkstraKshortest::State::State()
 {
