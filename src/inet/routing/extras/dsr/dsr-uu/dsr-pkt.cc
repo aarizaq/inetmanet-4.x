@@ -18,6 +18,36 @@ namespace inet {
 
 namespace inetmanet {
 
+dsr_srt &  dsr_srt::operator= (const dsr_srt &m)
+{
+    if (this==&m) return *this;
+    src = m.src;
+    dst = m.dst;
+    flags = m.flags;
+    index = m.index;
+    laddrs = m.laddrs;
+    addrs = m.addrs;
+    cost = m.cost;
+    return *this;
+}
+dsr_srt::dsr_srt()
+{
+    src.s_addr.reset();
+    dst = src;
+    flags = 0;
+    index = 0;
+    laddrs = 0;
+    addrs.clear();
+    cost.clear();
+}
+
+dsr_srt::~dsr_srt()
+{
+    addrs.clear();
+    cost.clear();
+}
+
+
 struct dsr_opt_hdr * NSCLASS dsr_pkt_alloc_opts(struct dsr_pkt *dp)
 {
     if (!dp)
@@ -80,6 +110,41 @@ struct dsr_pkt *  dsr_pkt::dup()
     dp->flags = this->flags;
     dp->inputInterfaceId = this->inputInterfaceId;
     return dp;
+}
+
+
+void dsr_pkt::clear()
+{
+    costVector.clear();
+    dh.opth.clear();
+    src.s_addr.reset(); /* IP level data */
+    dst = nxt_hop = prv_hop = src;
+    flags = salvage = numRetries = 0;
+    mac.raw = NULL;
+    memset(mac_data,0,sizeof(mac_data));
+    nh.raw = NULL;
+    memset(ip_data,0,sizeof(ip_data));
+    srt_opt = NULL;
+    ack_req_opt = NULL;
+    srt = NULL;
+    srt_opt = NULL;
+    payload_len = 0;
+    moreFragments = false;
+    fragmentOffset = totalPayloadLength = 0;
+    payload = NULL;
+    encapsulate_protocol = 0;
+    next = nullptr;
+
+    rreq_opt.clear();  /* Can only be one */
+    rrep_opt.clear();
+    rerr_opt.clear();
+    ack_opt.clear();
+    inputInterfaceId = -1;
+    encapsulate_protocol = -1;
+    if (payload)
+        delete payload;
+    payload = nullptr;
+
 }
 
 dsr_pkt * NSCLASS dsr_pkt_alloc(Packet * p)

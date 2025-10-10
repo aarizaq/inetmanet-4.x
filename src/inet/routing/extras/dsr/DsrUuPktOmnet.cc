@@ -42,6 +42,28 @@ namespace inet {
 namespace inetmanet {
 
 #define SIZE_COST_BITS 16
+
+EtxCost& EtxCost::operator=(const EtxCost& m)
+{
+    if (this==&m) return *this;
+    this->address = m.address;
+    this->cost = m.cost;
+    return *this;
+}
+
+EtxCost::EtxCost()
+{
+    address.reset();
+    cost = 0;
+}
+
+EtxCost::EtxCost(const EtxCost &m)
+{
+    address = m.address;
+    cost = m.cost;
+}
+
+
 DSRPkt::~DSRPkt()
 {
     clean();
@@ -185,7 +207,7 @@ void DSRPkt::setCostVector(std::vector<EtxCost> &cost)
 }
 
 
-void DSRPkt::setCostVectorSize(EtxCost newLinkCost)
+void DSRPkt::setCostVectorSize(const EtxCost &newLinkCost)
 {
     this->setChunkLength(this->getChunkLength()+b(SIZE_COST_BITS));
     costVector.push_back(newLinkCost);

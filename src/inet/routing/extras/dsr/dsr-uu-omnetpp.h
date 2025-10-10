@@ -434,7 +434,8 @@ private:
     struct dsr_srt_opt *dsr_srt_opt_add(struct dsr_opt_hdr *opt_hdr, int len, int flags, int salvage, struct dsr_srt *srt);
     struct dsr_srt_opt *dsr_srt_opt_add_char(char *buffer, int len, int flags, int salvage, struct dsr_srt *srt);
 
-    struct dsr_srt *dsr_srt_new(struct in_addr,struct in_addr,unsigned int, const std::vector<L3Address>&,const std::vector<EtxCost> & = std::vector<EtxCost>());
+    struct dsr_srt *dsr_srt_new(struct in_addr,struct in_addr,unsigned int, const std::vector<L3Address>&,const std::vector<EtxCost> &);
+    struct dsr_srt *dsr_srt_new(struct in_addr,struct in_addr,unsigned int, const std::vector<L3Address>&);
     void dsr_srt_split_both(struct dsr_srt *,struct in_addr,struct in_addr,struct dsr_srt **,struct dsr_srt **);
 
 

@@ -29,10 +29,13 @@ namespace inetmanet {
 struct  EtxCost
 {
     L3Address address;
-    double cost;
+    double cost = 0;
     const L3Address getAddress() const {return address;}
     const double getCost() const {return cost;}
     ~EtxCost() {}
+    EtxCost();
+    explicit EtxCost(const EtxCost &m);
+    EtxCost & operator= (const EtxCost &m);
 };
 
 class DSRPkt : public FieldsChunk
@@ -83,7 +86,7 @@ class DSRPkt : public FieldsChunk
 
     virtual unsigned getCostVectorSize() const {return costVector.size();}
 
-    virtual void setCostVectorSize(EtxCost);
+    virtual void setCostVectorSize(const EtxCost&);
     virtual void setCostVectorSize(L3Address addr, double cost);
 };
 

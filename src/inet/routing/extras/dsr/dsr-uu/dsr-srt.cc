@@ -58,6 +58,12 @@ static int dsr_srt_find_addr(struct dsr_srt *srt, struct in_addr addr,
     return 0;
 }
 
+struct dsr_srt * NSCLASS dsr_srt_new(struct in_addr src, struct in_addr dst, unsigned int length, const VectorAddress &addrs)
+{
+    std::vector<EtxCost> cost;
+    return dsr_srt_new(src, dst, length, addrs, cost);
+}
+
 struct dsr_srt * NSCLASS dsr_srt_new(struct in_addr src, struct in_addr dst,
                             unsigned int length, const VectorAddress &addrs,const std::vector<EtxCost>&cost)
 {
