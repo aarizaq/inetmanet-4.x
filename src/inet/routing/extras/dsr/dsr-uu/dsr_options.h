@@ -55,7 +55,7 @@ struct dsr_opt_hdr : public cObject
         f = 0;
         p_len = 0;
     }
-    dsr_opt_hdr(const dsr_opt_hdr& other)
+    explicit dsr_opt_hdr(const dsr_opt_hdr& other)
     {
         nh = other.nh;
         res = other.res;

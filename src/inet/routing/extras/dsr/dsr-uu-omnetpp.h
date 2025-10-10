@@ -14,7 +14,7 @@
 #endif
 
 
-#include "inet/routing/extras/base/compatibility.h"
+#include "inet/routing/extras/dsr/dsr-uu/dsr_options.h"
 
 // Force to considere all links bi dir (link cache disjktra)
 #define BIDIR
@@ -26,7 +26,6 @@
 #include "inet/common/lifecycle/ILifecycle.h"
 #include "inet/networklayer/common/NextHopAddressTag_m.h"
 
-#include "inet/routing/extras/dsr/dsr-uu/dsr_options.h"
 #include "inet/routing/extras/dsr/dsr-uu/timer.h"
 #include "inet/routing/extras/dsr/dsr-uu/dsr-pkt.h"
 

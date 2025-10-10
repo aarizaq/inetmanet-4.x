@@ -53,9 +53,9 @@ class DSRPkt : public FieldsChunk
   public:
 
     virtual void cleanAll() {clean(); previous = L3Address(); next = L3Address(); dsr_ttl = 0; encapProtocol = -1; };
-    explicit DSRPkt() : FieldsChunk() {costVector.clear(); dsrOptions.clear(); dsr_ttl=0;}
+    DSRPkt() : FieldsChunk() {costVector.clear(); dsrOptions.clear(); dsr_ttl=0;}
     ~DSRPkt ();
-    DSRPkt (const DSRPkt  &m);
+    explicit DSRPkt (const DSRPkt  &m);
     DSRPkt &  operator= (const DSRPkt &m);
     virtual DSRPkt *dup() const override {return new DSRPkt(*this);}
     //void addOption();
