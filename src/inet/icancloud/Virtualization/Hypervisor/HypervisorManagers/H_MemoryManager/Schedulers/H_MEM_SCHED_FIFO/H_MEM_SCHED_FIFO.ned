@@ -15,8 +15,8 @@ simple H_MEM_SCHED_FIFO like IH_MemoryManager
 {
 	parameters:
 	@class(icancloud::H_MEM_SCHED_FIFO);
-		int blockSize_KB @unit(KiB);
-		int memorySize_MB @unit(MiB);
+		int blockSize_KB @unit(KiB) @mutable;
+		int memorySize_MB @unit(MiB) @mutable;
 		
 		int memoryOverhead_MB;
     gates:
@@ -24,7 +24,7 @@ simple H_MEM_SCHED_FIFO like IH_MemoryManager
         input   fromVMMemoryO[];
         output  toVMMemoryI[];
         output  toVMMemoryO[];
-        
+
         input   fromNodeMemoryI;
         input   fromNodeMemoryO;
         output  toNodeMemoryI;

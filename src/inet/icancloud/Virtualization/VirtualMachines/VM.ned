@@ -21,19 +21,19 @@ module VM like IVM
 {
     parameters:
 
-        int numCores;												// Number of CPUs
-        int memorySize_MB @unit(MiB);										// Amount of memory in MiB
-        int storageSize_GB  @unit(GiB);											// Amount of storage in GiB
+        int numCores @mutable;												// Number of CPUs
+        int memorySize_MB @unit(MiB) @mutable;										// Amount of memory in MiB
+        int storageSize_GB  @unit(GiB) @mutable;											// Amount of storage in GiB
 
-		int numStorageSystems = default(1);							// Number of Block Servers     
+		int numStorageSystems = default(1);							// Number of Block Servers
         int numNetworkInterfaces = default(1);						// Number of network interfaces
 
         string hostName = default("");								// Node's hostname
         string osModuleType = default("VmOperatingSystemModule");  	// Operating System Module type            	
-        string cpuModuleType = default("CPU_Module");				// CPU Module type               
-        
-        string ip = default("");								    // VM IP
-        bool IPForward = default(false);							// IP Forward
+        string cpuModuleType = default("CPU_Module");				// CPU Module type
+
+        string ip @mutable = default("");								    // VM IP
+        bool IPForward @mutable = default(false);							// IP Forward
         int namid = default(-1);									// Nam ID
         string routingFile = default("");							// Routing File
 
@@ -46,7 +46,7 @@ module VM like IVM
         input fromNodeStorageSystem[numStorageSystems]@loose;
         output toNodeStorageSystem[numStorageSystems]@loose;
 
-        //cpu        
+        //cpu
         input fromNodeCPU[this.numCores]@loose;
         output toNodeCPU[this.numCores]@loose;
 
@@ -56,9 +56,9 @@ module VM like IVM
         output toNodeMemoryI@loose;
         output toNodeMemoryO@loose;
 
-        // network 
+        // network
         input fromNodeNet@loose;
         output toNodeNet@loose;
-         
+
  	connections allowunconnected:
 }

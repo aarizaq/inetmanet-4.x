@@ -3,15 +3,15 @@
 // it under the terms of the GNU Lesser General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
-// 
+//
 // This program is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU Lesser General Public License for more details.
-// 
+//
 // You should have received a copy of the GNU Lesser General Public License
 // along with this program.  If not, see http://www.gnu.org/licenses/.
-// 
+//
 
 package inet.examples.cloudNetSim;
 
@@ -43,7 +43,7 @@ import inet.node.ethernet.Eth1G;
 module RACK
 {
     parameters:
-        int N @prompt("Nodes per rack");// = default(1);
+        int N @prompt("Nodes per rack") = default(1);
         @display("bgb=954,473");
     gates:
         inout iogate[];
@@ -173,10 +173,10 @@ network MultipleDatacenterExt
         int accessswitch2 = default(16);
 
     submodules:
-        
+
         configurator: Ipv4NetworkConfigurator {
             @display("p=887,17");
-        }        
+        }
         AS1[aggregateswitch]: Router {
             @display("i=abstract/router2;p=122,494,r,300,80,80");
         }

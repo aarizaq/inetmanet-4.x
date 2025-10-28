@@ -1,7 +1,7 @@
 
 // Module that implements a Node with its virtualization layer (hypervisor).
 //
-// This class models a node with an hypervisor. It is able to execute applications at node and virtual machines 
+// This class models a node with an hypervisor. It is able to execute applications at node and virtual machines
 //	requested by tenants.
 //
 // @author Gabriel González Castañé
@@ -68,13 +68,13 @@ module NodeVL like INode
 
         // Default parameters
         int numNetworkInterfaces = default(1);													// As default, 1 network interface
-        //string tcpType = default(firstAvailable("TCP", "TCP_lwIP", "TCP_NSC", "TCP_None"));   	// Type of TCP protocol     
+        //string tcpType = default(firstAvailable("TCP", "TCP_lwIP", "TCP_NSC", "TCP_None"));   	// Type of TCP protocol
         string ip @mutable = default("");															// Node's IP
         string routingFile = default("");														// Routing File
         int namid = default(-1);																// Nam ID
         bool storageNode = default(false);														// is this a atorage Node? If no, then its a compute node
         int storage_local_port = default(2049);													// Port for listening the incoming connections
-        string hostName = default("");															// Node's hostname       
+        string hostName = default("");															// Node's hostname
 
         bool activeEnergyMeter = default(true);
 
@@ -107,20 +107,20 @@ module NodeVL like INode
         *.interfaceTableModule = default(absPath(".interfaceTable"));
 
 
-        // Main Hardware subsystems        
+        // Main Hardware subsystems
         string cpuModuleType = default("CPU_Module");				// CPUModule type as CPU type
-        string memoryType = default("RAMmemory");					// RAMmemory as memory type  
-        string psuModuleType = default("MainPSU");					// PSU module  
+        string memoryType = default("RAMmemory");					// RAMmemory as memory type
+        string psuModuleType = default("MainPSU");					// PSU module
 
          // Main Software configuration
         string hypervisorType = default("HypervisorNoOverhead");			// Main hypervisor		
 
         // Node parameters
-        int numCores;												// Number of CPU cores		
-        int memorySize_MB @unit(MiB);										// Total amount of memory of this node (in MB)
-        int memoryBlockSize_KB @unit(KiB) = default(128KiB);
-        int numStorageSystems = default(1);							// Number of Storage systems. As default, 1 storage system
-        int storageSize_GB @unit(GiB);									// Total amount of space for each storage system
+        int numCores @mutable;												// Number of CPU cores		
+        int memorySize_MB @unit(MiB) @mutable;										// Total amount of memory of this node (in MB)
+        int memoryBlockSize_KB @unit(KiB) @mutable= default(128KiB);
+        int numStorageSystems @mutable = default(1);							// Number of Storage systems. As default, 1 storage system
+        int storageSize_GB @unit(GiB) @mutable;									// Total amount of space for each storage system
         string initialState;										// state or the node  NODE_STATE_OFF | NODE_STATE_IDLE | NODE_STATE_RUNNING
         int numFS = default(1);													// Number of File Systems
 
@@ -166,7 +166,7 @@ module NodeVL like INode
             parameters:
                 @display("p=53,426;is=s");
         }
-        // TODO: move mobility right after status to have it in the same order as in their positions, changes fingerprints 
+        // TODO: move mobility right after status to have it in the same order as in their positions, changes fingerprints
         mobility: <default("")> like IMobility if typename != "" {
             parameters:
                 @display("p=53,480;is=s");
@@ -352,7 +352,7 @@ module NodeVL like INode
                 toVMMemoryI[];
                 toVMMemoryO[];
 
-				//Hypervisor to HW connections                
+				//Hypervisor to HW connections
                 fromNodeCPU[this.numCPUs];
                 toNodeCPU[this.numCPUs];
 
@@ -407,7 +407,7 @@ module NodeVL like INode
         tn.out++ --> nl.in++;
         tn.in++ <-- nl.out++;
 
-		// Connections between the BS and the Operative System        
+		// Connections between the BS and the Operative System
         for i=0..numStorageSystems-1 {
             osModule.fromStorageSystem++ <-- hypervisor.toVMStorageServers++;
             osModule.toStorageSystem++ --> hypervisor.fromVMStorageServers++;

@@ -8,22 +8,22 @@
 //
 package inet.icancloud.Virtualization.Hypervisor.HypervisorManagers.H_StorageManager.HW_Cells;
 
-moduleinterface IStorage_cell 
+moduleinterface IStorage_cell
 {
     parameters:
-        
+
         // Network file system parameters
-        	int requestSize_KB;		// Request size (in KB)        
-        
+        	int requestSize_KB @mutable;		// Request size (in KB)
+
         // Parallel file system parameters
-		 	int strideSize_KB;		// Stride Size (in KB)
+		 	int strideSize_KB @mutable;		// Stride Size (in KB)
 		 	
 		// Storage size GB
-			int storageSizeGB;	
+			int storageSizeGB @mutable;	
 			
 		// Identification parameters
-			int pId;	// process identification
-			int uId;	// user Identification			
+			int pId @mutable;	// process identification
+			int uId @mutable;	// user Identification			
 	
         @display("i=msg/job");
     gates:

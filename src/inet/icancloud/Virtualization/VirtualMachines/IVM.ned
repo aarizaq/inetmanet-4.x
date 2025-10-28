@@ -18,9 +18,9 @@ package inet.icancloud.Virtualization.VirtualMachines;
 moduleinterface IVM
 {
     parameters:
-  
-        int numCores;												
-        int memorySize_MB @unit(MiB);
-        int storageSize_GB  @unit(GiB);
+
+        int numCores @mutable;												
+        int memorySize_MB @unit(MiB) @mutable;
+        int storageSize_GB  @unit(GiB) @mutable;
 
 }

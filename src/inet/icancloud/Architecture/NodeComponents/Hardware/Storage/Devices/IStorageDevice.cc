@@ -15,14 +15,14 @@ void IStorageDevice::initialize(int stage){
         }
         else
             storageMod->registerDevice(this, getParentModule()->getIndex());
-
-
-
     }
 }
 
 void IStorageDevice::e_changeState (const string &energyState){
-    storageMod->e_changeState(energyState, getIndex());
+    if (this->isVector())
+        storageMod->e_changeState(energyState, getIndex());
+    else
+        storageMod->e_changeState(energyState, getParentModule()->getIndex());
 }
 
 } // namespace icancloud

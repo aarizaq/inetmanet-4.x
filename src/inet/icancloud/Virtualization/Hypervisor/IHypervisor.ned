@@ -14,12 +14,12 @@ moduleinterface IHypervisor
 {
     parameters:
         int numStorageServers; 									// Number of physical Storage Servers	
-        int numCPUs; 	 										// Number of physical CPUs         
-        int memorySize_MB @unit(MiB);        							// Amount of physical memory (MiB)
-		int blockSize_KB @unit(KiB);									// size of blocks (Kb)		
-        int storageSize_GB  @unit(GiB);										// Amount of physical storage size (GiB)       
-        int numNetworkInterfaces;								// Number of physical network interfaces 
-        string ip;												// Node's IP
+        int numCPUs @mutable; 	 										// Number of physical CPUs
+        int memorySize_MB @unit(MiB) @mutable;        							// Amount of physical memory (MiB)
+		int blockSize_KB @unit(KiB) @mutable;									// size of blocks (Kb)		
+        int storageSize_GB  @unit(GiB) @mutable;										// Amount of physical storage size (GiB)
+        int numNetworkInterfaces;								// Number of physical network interfaces
+        string ip @mutable;												// Node's IP
         int storageApp_ModuleIndex;								// Index of the storageApp
         int connectionTimeOut;									// Time limit from a message send by hypervisor until the reception of the response
         string networkServiceType ;								// Network Service type
@@ -52,6 +52,6 @@ moduleinterface IHypervisor
         output toVMNet[];
         input  fromNodeNet;			// Input gate from Network (Ethernet TCP)
 		output toNodeNet;			// Output gate to Network (Ethernet TCP)
-    
+
 }
 

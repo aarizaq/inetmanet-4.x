@@ -26,14 +26,14 @@ module MainHypervisor like IHypervisor
     parameters:
         @class("icancloud::Hypervisor");
         @display("i=energy/Hypervisor_40;p=208,236");
-        
+
         int numStorageServers; 									// Number of physical Storage Servers	
-        int numCPUs; 	 										// Number of physical CPUs         
+        int numCPUs; 	 										// Number of physical CPUs
         int memorySize_MB @unit(MiB);        							// Amount of physical memory (MiB)
 		int blockSize_KB @unit(KiB);									// size of blocks (Kb)		
-        int storageSize_GB @unit(GiB);										// Amount of physical storage size (GiB)       
-        int numNetworkInterfaces;								// Number of physical network interfaces 
-        string ip;												// Node's IP
+        int storageSize_GB @unit(GiB);										// Amount of physical storage size (GiB)
+        int numNetworkInterfaces;								// Number of physical network interfaces
+        string ip @mutable;												// Node's IP
         int storageApp_ModuleIndex;								// Index of the storageApp
         int connectionTimeOut = default(15);					// Time limit from a message send by hypervisor until the reception of the response
         string networkServiceType = default("NetworkService");	// Network Service type
@@ -98,10 +98,10 @@ module MainHypervisor like IHypervisor
                 toNodeMemoryO;
         }
 
-        storageManager:  H_StorageManagerModule { 
+        storageManager:  H_StorageManagerModule {
             parameters:
                 numStorageServers = parent.numStorageServers;
-                // Storage remote parameters                        
+                // Storage remote parameters
                 requestSize_KB = parent.requestSize_KB;
                 strideSize_KB = parent.strideSize_KB;
                 storageManagerSched = parent.storageScheduler;
@@ -155,7 +155,7 @@ module MainHypervisor like IHypervisor
 
     connections allowunconnected:
 
-        // Connections between VMCPU and NodeCPU		 
+        // Connections between VMCPU and NodeCPU		
         for i=0..numCPUs-1 {
             cpuManager.fromNodeCPU[i] <-- fromNodeCPU[i];
             cpuManager.toNodeCPU[i] --> toNodeCPU[i];
@@ -167,15 +167,15 @@ module MainHypervisor like IHypervisor
         memoryManager.fromVMMemoryI++ <-- fromVMMemoryI++;
         memoryManager.fromVMMemoryO++ <-- fromVMMemoryO++;
         memoryManager.toVMMemoryO++ --> toVMMemoryO++;
-        
+
         for i=0..numStorageServers-1 {
         	storageManager.fromVMStorageServers++ <-- fromVMStorageServers++;
         	storageManager.toVMStorageServers++ --> toVMStorageServers++;
         }
-        
+
         netManager.fromVMNet++ <-- fromVMNet++;
         netManager.toVMNet++ --> toVMNet++;
-        
+
 		// Connections between VM Memory and Node Memory
         memoryManager.fromNodeMemoryI <-- fromNodeMemoryI;
         memoryManager.fromNodeMemoryO <-- fromNodeMemoryO;

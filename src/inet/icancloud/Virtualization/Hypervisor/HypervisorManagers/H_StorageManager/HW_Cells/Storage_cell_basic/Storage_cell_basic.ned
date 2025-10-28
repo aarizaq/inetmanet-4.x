@@ -16,17 +16,17 @@ simple Storage_cell_basic like IStorage_cell
     parameters:
         @class(icancloud::Storage_cell_basic);
         // Network file system parameters
-        	int requestSize_KB;		// Request size (in KB)        
-        
+        	int requestSize_KB @mutable;		// Request size (in KB)
+
         // Parallel file system parameters
-		 	int strideSize_KB;		// Stride Size (in KB)				
+		 	int strideSize_KB @mutable;		// Stride Size (in KB)				
 		
 		// Storage size GB
-			int storageSizeGB  = default(20);
+			int storageSizeGB @mutable = default(20);
 			
 		// Identification parameters
-			int pId = default (0);	// process identification
-			int uId = default (0);	// user Identification	
+			int pId @mutable = default (0);	// process identification
+			int uId @mutable = default (0);	// user Identification	
         @display("i=msg/job");
     gates:
         input from_H_StorageManager;			// Input gate from H_BSManager

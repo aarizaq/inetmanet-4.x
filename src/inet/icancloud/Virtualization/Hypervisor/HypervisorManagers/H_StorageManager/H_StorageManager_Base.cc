@@ -331,7 +331,24 @@ cModule* H_StorageManager_Base::createStorageCell(int uId, int pId, int64_t stor
     cloneStorage->par("uId").setIntValue(uId);
     cloneStorage->par("pId").setIntValue(pId);
 
-    cloneStorage->setName("storage_cell");
+    // search submodules
+    int freeVal = 0;
+    bool free = true;
+    std::string name;
+    while (free) {
+        std::string baseName = "storage_cell";
+        name = baseName;
+        if (freeVal != 0)
+            name += std::to_string(freeVal);
+        auto mod = getParentModule()->findSubmodule(name.c_str());
+        if (mod == -1)
+            free = false;
+        else
+            freeVal++;
+    }
+
+
+    cloneStorage->setName(name.c_str());
 
     // Finalize and build the module
     cloneStorage->finalizeParameters();

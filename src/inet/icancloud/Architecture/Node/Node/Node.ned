@@ -89,7 +89,7 @@ module Node like INode
         int namid = default(-1);																// Nam ID
         bool storageNode = default(false);														// is this a atorage Node? If no, then its a compute node
         int storage_local_port = default(2049);													// Port for listening the incoming connections
-        string hostName = default("");															// Node's hostname       
+        string hostName = default("");															// Node's hostname
 
         bool activeEnergyMeter = default(true);
 
@@ -109,16 +109,16 @@ module Node like INode
 
         *.interfaceTableModule = default(absPath(".interfaceTable"));
 
-        // Main Hardware subsystems        
+        // Main Hardware subsystems
         string cpuModuleType = default("CPU_Module");				// CPUModule type as CPU type
-        string memoryType = default("RAMmemory");					// RAMmemory as memory type  
-        string psuModuleType = default("MainPSU");					// PSU module  
+        string memoryType = default("RAMmemory");					// RAMmemory as memory type
+        string psuModuleType = default("MainPSU");					// PSU module
 
         // Node parameters
-        int numCores;												// Number of CPU cores		
-        int memorySize_MB @unit(MiB);										// Total amount of memory of this node (in MB)
-        int numStorageSystems = default(1);							// Number of Storage systems. As default, 1 storage system
-        int storageSize_GB @unit(GiB);											// Total amount of space for each storage system
+        int numCores @mutable;												// Number of CPU cores		
+        int memorySize_MB @unit(MiB) @mutable;										// Total amount of memory of this node (in MB)
+        int numStorageSystems @mutable= default(1);							// Number of Storage systems. As default, 1 storage system
+        int storageSize_GB @unit(GiB) @mutable;											// Total amount of space for each storage system
         string initialState;										// state or the node  NODE_STATE_OFF | NODE_STATE_IDLE | NODE_STATE_RUNNING
 
     gates:
@@ -144,7 +144,7 @@ module Node like INode
             parameters:
                 @display("p=53,505;is=s");
         }
-        // TODO: move mobility right after status to have it in the same order as in their positions, changes fingerprints 
+        // TODO: move mobility right after status to have it in the same order as in their positions, changes fingerprints
         mobility: <default("")> like IMobility if typename != "" {
             parameters:
                 @display("p=53,560;is=s");

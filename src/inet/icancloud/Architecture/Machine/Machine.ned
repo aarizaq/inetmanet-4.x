@@ -14,16 +14,16 @@ moduleinterface Machine
     parameters:
 
         @display("i=old/telnet");
-       		       
-            string hostName;								// Machines's hostname       
+       		
+            string hostName;								// Machines's hostname
        		string osModuleType;							// Type of Operative system
             string cpuModuleType;							// CPUModule type as CPU type
-            int numCores;									// Number of CPU cores		
-         	int numStorageSystems;							// Number of Block Servers     
-            int memorySize_MB @unit(MiB);							// Total amount of memory of this node (in MB)
-    		int storageSize_GB @unit(GiB);								// Total amount of space for each storage system
-            string ip;										// Node's IP
-			bool IPForward;									// IP Forward        
+            int numCores @mutable;									// Number of CPU cores		
+         	int numStorageSystems @mutable;							// Number of Block Servers
+            int memorySize_MB @unit(MiB) @mutable;							// Total amount of memory of this node (in MB)
+    		int storageSize_GB @unit(GiB) @mutable;								// Total amount of space for each storage system
+            string ip @mutable;										// Node's IP
+			bool IPForward;									// IP Forward
             int namid;										// Nam ID	
             string routingFile;
 }

@@ -45,7 +45,7 @@ moduleinterface INode
 {
     parameters:
         @display("i=old/telnet");
-        
+
         int numPcapRecorders;
         int numLoInterfaces;
         int numWlanInterfaces;
@@ -54,25 +54,25 @@ moduleinterface INode
         int numPppInterfaces;  // minimum number of PPP interfaces
         int numTunInterfaces;
         int numVirtInterfaces;
-        
+
         // Main Hardware subsystems
-        // CPU        
-        
+        // CPU
+
         string cpuModuleType;													// CPUModule type as CPU type
-        int numCores;															// Number of CPU cores		
+        int numCores @mutable;															// Number of CPU cores		
         // MEMORY
-        string memoryType;														// RAMmemory as memory type  
-        int memorySize_MB @unit(MiB);													// Total amount of memory of this node (in MB)
+        string memoryType;														// RAMmemory as memory type
+        int memorySize_MB @unit(MiB) @mutable;													// Total amount of memory of this node (in MB)
         // Storage
         bool storageNode;														// is this a atorage Node? If no, then its a compute node
         int storage_local_port;													// Port for listening the incoming connections
-        string hostName;														// Node's hostname       
-        int storageSize_GB  @unit(GiB);												// Total amount of space for each storage system
+        string hostName;														// Node's hostname
+        int storageSize_GB  @unit(GiB) @mutable;												// Total amount of space for each storage system
         int numStorageSystems;													// Number of Storage systems. As default, 1 storage system
         // Network
         int numNetworkInterfaces;												// As default, 1 network interface
-       // string tcpType;   														// Type of TCP protocol          
-        string ip;															// Node's IP
+       // string tcpType;   														// Type of TCP protocol
+        string ip @mutable;															// Node's IP
         string routingFile;														// Routing File
         int namid;																// Nam ID
         bool forwarding;
@@ -83,7 +83,7 @@ moduleinterface INode
         bool activeEnergyMeter;
         string psuModuleType;													// PSU module
         string initialState;													// state or the node  NODE_STATE_OFF | NODE_STATE_IDLE | NODE_STATE_RUNNING
-     gates:        
+     gates:
         input radioIn[numWlanInterfaces] @directIn;
         inout pppg[numPppInterfaces] @labels(PppFrame-conn) @allowUnconnected;
         inout ethg[numEthInterfaces] @labels(EtherFrame-conn) @allowUnconnected;
