@@ -52,66 +52,63 @@ void UDPSchedular::initialize(int stage)
     UdpBasicApp::initialize(stage);
     // because of L3AddressResolver, we need to wait until interfaces are registered,
     // address auto-assignment takes place etc.
-    if (stage != 3)
-        return;
+    if (stage == INITSTAGE_TRANSPORT_LAYER) {
 
-//    filepointer.open("eConsumedServer11.csv");
-  //  delayptr.open("1Mbps-8nodes.csv");
-    //mipsCounter =0;
-    counter = 0;
-    numSent = 0;
-    numReceived = 0;
-    WATCH(numSent);
-    WATCH(numReceived);
-    sentPkSignal = registerSignal("sentPk");
-    rcvdPkSignal = registerSignal("rcvdPk");
-    esignal = registerSignal("arrival");
+        //    filepointer.open("eConsumedServer11.csv");
+        //  delayptr.open("1Mbps-8nodes.csv");
+        //mipsCounter =0;
+        counter = 0;
+        numSent = 0;
+        numReceived = 0;
+        WATCH(numSent);
+        WATCH(numReceived);
+        sentPkSignal = registerSignal("sentPk");
+        rcvdPkSignal = registerSignal("rcvdPk");
+        esignal = registerSignal("arrival");
 
-   // EV_INFO<<"address received are "<<destAddrs<<endl;
-    //const char *destAddrs = "192.168.0.1";
-    //const char *destAddrs = "ServerNode[15]";
-    this->myAddr = L3AddressResolver().resolve(this->getParentModule()->getFullPath().c_str());
+        // EV_INFO<<"address received are "<<destAddrs<<endl;
+        //const char *destAddrs = "192.168.0.1";
+        //const char *destAddrs = "ServerNode[15]";
+        this->myAddr = L3AddressResolver().resolve(this->getParentModule()->getFullPath().c_str());
 
-    DisplayVectorTable();
-    L3Address addr = RoundRobin();
-    EV_INFO<<"The first node available is :"<<addr<<endl;
-    setMyID();
-    //EV_INFO<<"Id "<<this->myId<<" IP: "<<myAddr<<endl;
+        DisplayVectorTable();
+        L3Address addr = RoundRobin();
+        EV_INFO<<"The first node available is :"<<addr<<endl;
+        setMyID();
+        //EV_INFO<<"Id "<<this->myId<<" IP: "<<myAddr<<endl;
 
-    //string str(L3AddressResolver().resolve());
+        //string str(L3AddressResolver().resolve());
 
-    //string str = this->getParentModule()->getFullPath().c_str();
-    string sst= myAddr.str();
-    EV_INFO<<"MY IP In string "<<sst;
+        //string str = this->getParentModule()->getFullPath().c_str();
+        string sst= myAddr.str();
+        EV_INFO<<"MY IP In string "<<sst;
 
-    nominal_mips_ = 10000;
-    eNominalrate_ = 130.0;
-    currentLoad_ = 0;
-    eConsumed_ = 0.0;          /* total W of energy consumed */
-    eNominalrate_ = 130.0;           /* nominal consumption rate at full load at max CPU frequency */
-    eCurrentConsumption_ = 0.0;        /* current consumption rate */
-    eDVFS_enabled_ = true;
-    eDNS_enabled_ = true;
+        nominal_mips_ = 10000;
+        eNominalrate_ = 130.0;
+        currentLoad_ = 0;
+        eConsumed_ = 0.0;          /* total W of energy consumed */
+        eNominalrate_ = 130.0;           /* nominal consumption rate at full load at max CPU frequency */
+        eCurrentConsumption_ = 0.0;        /* current consumption rate */
+        eDVFS_enabled_ = true;
+        eDNS_enabled_ = true;
 
-    //if(this->getIndex()==0)
-    //{
-    setMyID();
-    //if(this->myId=="TskGen[0]")
-    //{
+        //if(this->getIndex()==0)
+        //{
+        setMyID();
+        //if(this->myId=="TskGen[0]")
+        //{
         EV_INFO<<"Scheduling INIT  tsk"<<endl;
-   //     scheduleAt(startTime, timerMsg);
-    //}
+        //     scheduleAt(startTime, timerMsg);
+        //}
         filepointer<< this->getFullPath()<<"\n";
-    EV_INFO<<"********************"<<endl;
-    EV_INFO<<this->getFullPath()<<" My id "<<this->myId<<endl;
-    EV_INFO<<"********************"<<endl;
-//     EV_INFO<<this->getFullName() << "........$$$$$ SCHEDULED CMESSAGE AT "<<size() << " "<<startTime<<endl;
-    //}
-    //sendPacket();
-    status_ = EVENT_IDLE;
-
-
-
+        EV_INFO<<"********************"<<endl;
+        EV_INFO<<this->getFullPath()<<" My id "<<this->myId<<endl;
+        EV_INFO<<"********************"<<endl;
+        //     EV_INFO<<this->getFullName() << "........$$$$$ SCHEDULED CMESSAGE AT "<<size() << " "<<startTime<<endl;
+        //}
+        //sendPacket();
+        status_ = EVENT_IDLE;
+    }
 }
 
 void UDPSchedular::processStart() {

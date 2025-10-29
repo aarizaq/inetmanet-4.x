@@ -139,6 +139,58 @@ void UDPApplication::setMyID()
     }
 }
 
+void UDPApplication::processStart()
+{
+    socket.setOutputGate(gate("socketOut"));
+    const char *localAddress = par("localAddress");
+    socket.bind(*localAddress ? L3AddressResolver().resolve(localAddress) : L3Address(), localPort);
+    setSocketOptions();
+
+    const char *destAddrs = par("destAddresses");
+    cStringTokenizer tokenizer(destAddrs);
+    const char *token;
+
+
+    while ((token = tokenizer.nextToken()) != nullptr) {
+        if (std::strcmp(token,"Schedular") == 0) {
+            // first check if exist
+            cModule *mod = cSimulation::getActiveSimulation()->findModuleByPath("Schedular");
+            if (!mod)
+                continue;
+        }
+
+        destAddressStr.push_back(token);
+        L3Address result;
+        L3AddressResolver().tryResolve(token, result);
+        if (result.isUnspecified())
+            EV_ERROR << "cannot resolve destination address: " << token << endl;
+        destAddresses.push_back(result);
+    }
+
+    if (!destAddresses.empty()) {
+        selfMsg->setKind(SEND);
+        processSend();
+    }
+    else {
+        if (stopTime >= CLOCKTIME_ZERO) {
+            selfMsg->setKind(STOP);
+            scheduleClockEventAt(stopTime, selfMsg);
+        }
+    }
+
+
+    if (destAddresses.empty())
+    {
+        EV_INFO<<this->getFullName()<<"DESTINATION ADDRESS IS EMPTY "<<endl;;
+        return;
+    }
+    else
+    {
+        DisplayListofDestIP();
+    }
+}
+
+
 void UDPApplication::finish()
 {
     recordScalar("packets sent", numSent);
@@ -287,20 +339,6 @@ void UDPApplication::sendPacket()
     numSent++;
 }
 
-
-
-void UDPApplication::processStart() {
-    UdpBasicApp::processStart();
-    if (destAddresses.empty())
-    {
-        EV_INFO<<this->getFullName()<<"DESTINATION ADDRESS IS EMPTY "<<endl;;
-        return;
-    }
-    else
-    {
-        DisplayListofDestIP();
-    }
-}
 
 void UDPApplication::handleMessageWhenUp(cMessage *msg) {
     if (hasGUI()) {
