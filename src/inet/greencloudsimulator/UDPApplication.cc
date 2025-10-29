@@ -60,55 +60,56 @@ void UDPApplication::initialize(int stage)
 
     // because of L3AddressResolver, we need to wait until interfaces are registered,
     // address auto-assignment takes place etc.
-    if (stage != 3)
-        return;
+    if (stage == INITSTAGE_TRANSPORT_LAYER) {
 
-//    filepointer.open("eConsumedServer11.csv");
-  //  delayptr.open("1Mbps-8nodes.csv");
-    //mipsCounter =0;
-    counter = 0;
-    numSent = 0;
-    numReceived = 0;
-    WATCH(numSent);
-    WATCH(numReceived);
-    sentPkSignal = registerSignal("sentPk");
-    rcvdPkSignal = registerSignal("rcvdPk");
-    esignal = registerSignal("arrival");
 
-    //const char *destAddrs = par("destAddresses");
-    //const char *destAddrs = "192.168.0.3";
-    const char *destAddrs = "Schedular";
+        //    filepointer.open("eConsumedServer11.csv");
+        //  delayptr.open("1Mbps-8nodes.csv");
+        //mipsCounter =0;
+        counter = 0;
+        numSent = 0;
+        numReceived = 0;
+        WATCH(numSent);
+        WATCH(numReceived);
+        sentPkSignal = registerSignal("sentPk");
+        rcvdPkSignal = registerSignal("rcvdPk");
+        esignal = registerSignal("arrival");
 
-    this->myAddr = L3AddressResolver().resolve(this->getParentModule()->getFullPath().c_str());
-    EV<<"My ADDRESS IS "<<this->myAddr<<endl;
-    cStringTokenizer tokenizer(destAddrs);
-    setMyID();
-    //ev<<"Id "<<this->myId<<" IP: "<<myAddr<<endl;
-    nominal_mips_ = 10000;
-    eNominalrate_ = 130.0;
-    currentLoad_ = 0;
-    eConsumed_ = 0.0;          /* total W of energy consumed */
-    eNominalrate_ = 130.0;           /* nominal consumption rate at full load at max CPU frequency */
-    eCurrentConsumption_ = 0.0;        /* current consumption rate */
-    eDVFS_enabled_ = true;
-    eDNS_enabled_ = true;
+        //const char *destAddrs = par("destAddresses");
+        //const char *destAddrs = "192.168.0.3";
+        const char *destAddrs = "Schedular";
 
-    //if(this->getIndex()==0)
-    //{
-    setMyID();
-    //if(this->myId=="TskGen[0]")
-    //{
+        this->myAddr = L3AddressResolver().resolve(this->getParentModule()->getFullPath().c_str());
+        EV<<"My ADDRESS IS "<<this->myAddr<<endl;
+        cStringTokenizer tokenizer(destAddrs);
+        setMyID();
+        //ev<<"Id "<<this->myId<<" IP: "<<myAddr<<endl;
+        nominal_mips_ = 10000;
+        eNominalrate_ = 130.0;
+        currentLoad_ = 0;
+        eConsumed_ = 0.0;          /* total W of energy consumed */
+        eNominalrate_ = 130.0;           /* nominal consumption rate at full load at max CPU frequency */
+        eCurrentConsumption_ = 0.0;        /* current consumption rate */
+        eDVFS_enabled_ = true;
+        eDNS_enabled_ = true;
+
+        //if(this->getIndex()==0)
+        //{
+        setMyID();
+        //if(this->myId=="TskGen[0]")
+        //{
         EV_INFO<<"Scheduling INIT  tsk"<<endl;
         //scheduleAt(startTime, timerMsg);
-    //}
+        //}
         filepointer<< this->getFullPath()<<"\n";
-    EV_INFO<<"********************"<<endl;
-    EV_INFO<<this->getFullPath()<<" My id "<<this->myId<<endl;
-    EV_INFO<<"********************"<<endl;
-//     EV_INFO<<this->getFullName() << "........$$$$$ SCHEDULED CMESSAGE AT "<<size() << " "<<startTime<<endl;
-    //}
-    //sendPacket();
-    status_ = EVENT_IDLE;
+        EV_INFO<<"********************"<<endl;
+        EV_INFO<<this->getFullPath()<<" My id "<<this->myId<<endl;
+        EV_INFO<<"********************"<<endl;
+        //     EV_INFO<<this->getFullName() << "........$$$$$ SCHEDULED CMESSAGE AT "<<size() << " "<<startTime<<endl;
+        //}
+        //sendPacket();
+        status_ = EVENT_IDLE;
+    }
 }
  UDPApplication::UDPApplication()
  {
