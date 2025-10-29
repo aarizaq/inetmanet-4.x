@@ -238,7 +238,8 @@ void AbstractDCManager::processSelfMessage (cMessage *msg){
             cancelAndDelete(msg);
 
             // Delete user generator
-            delete(userGenerator);
+            userGenerator->deleteModule();
+            //delete(userGenerator);
 
         }
 
@@ -247,6 +248,7 @@ void AbstractDCManager::processSelfMessage (cMessage *msg){
               //Shutdown all the compute nodes!
            delete(nodesMap);
            delete(storage_nodesMap);
+
            cancelAndDelete(msg);
 
            endSimulation();

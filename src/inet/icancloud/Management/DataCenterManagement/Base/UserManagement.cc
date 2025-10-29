@@ -137,7 +137,8 @@ void UserManagement::deleteUser (int userId){
             userFound = user->getUserId();
             if (userFound ==  userId){
                 userList.erase(userIt);
-                delete(user);
+                //delete(user);
+                user->deleteModule();
                 found = true;
             }
         }
