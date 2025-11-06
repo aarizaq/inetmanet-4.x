@@ -7,7 +7,7 @@
 package inet.examples.qlearning;
 
 import inet.networklayer.configurator.ipv4.Ipv4NetworkConfigurator;
-import inet.node.inet.AdhocHost;
+import inet.node.qlearning.QLearningRouter;
 import inet.physicallayer.wireless.common.contract.packetlevel.IRadioMedium;
 import inet.visualizer.contract.IIntegratedVisualizer;
 
@@ -34,7 +34,7 @@ network QLearningNetwork
             @display("p=50,150");
         }
         
-        host[numHosts]: AdhocHost {
+        host[numHosts]: QLearningRouter {
             @display("p=300,300");
         }
 }
@@ -56,15 +56,15 @@ network SimpleQLearning
             @display("p=50,100");
         }
         
-        sender: AdhocHost {
+        sender: QLearningRouter {
             @display("p=100,200");
         }
         
-        relay: AdhocHost {
+        relay: QLearningRouter {
             @display("p=300,200");
         }
         
-        receiver: AdhocHost {
+        receiver: QLearningRouter {
             @display("p=500,200");
         }
 }
