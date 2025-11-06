@@ -225,13 +225,28 @@ void QLearn::checkNeighbors()
 
 void QLearn::processPacket(Packet *packet)
 {
-    auto qlearnPacket = packet->peekAtFront<QLearningHello>();
-    
-    if (qlearnPacket->getPacketType() == QLEARN_HELLO) {
-        handleHelloPacket(packet);
+    // Try to peek as Hello packet first to determine type
+    try {
+        auto hello = packet->peekAtFront<QLearningHello>();
+        if (hello->getPacketType() == QLEARN_HELLO) {
+            handleHelloPacket(packet);
+            delete packet;
+            return;
+        }
+    } catch (...) {
+        // Not a Hello packet, try Update
     }
-    else if (qlearnPacket->getPacketType() == QLEARN_UPDATE) {
-        handleUpdatePacket(packet);
+    
+    try {
+        auto update = packet->peekAtFront<QLearningUpdate>();
+        if (update->getPacketType() == QLEARN_UPDATE) {
+            handleUpdatePacket(packet);
+            delete packet;
+            return;
+        }
+    } catch (...) {
+        // Unknown packet type
+        EV_WARN << "Unknown Q-Learning packet type, dropping" << endl;
     }
     
     delete packet;

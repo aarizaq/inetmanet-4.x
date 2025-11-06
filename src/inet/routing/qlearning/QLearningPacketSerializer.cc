@@ -52,7 +52,7 @@ const Ptr<Chunk> QLearningUpdateSerializer::deserialize(MemoryInputStream& strea
     update->setDestAddr(stream.readIpv4Address());
     update->setQValue(stream.readDouble());
     update->setHopCount(stream.readUint32Be());
-    update->setChunkLength(B(25));  // 1 + 4 + 4 + 8 + 4 + 4 = 25 bytes
+    update->setChunkLength(B(21));  // 1 + 4 + 4 + 8 + 4 = 21 bytes
     return update;
 }
 
