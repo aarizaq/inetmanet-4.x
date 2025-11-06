@@ -176,7 +176,7 @@ void QLearn::sendHelloMessage()
     hello->setSourceAddr(selfAddr.toIpv4());
     hello->setSequenceNumber(sequenceNumber++);
     hello->setQValue(0.0);
-    hello->setChunkLength(B(32));
+    hello->setChunkLength(B(17));  // 1 + 4 + 4 + 8 = 17 bytes
 
     auto packet = new Packet("QLearningHello");
     packet->insertAtBack(hello);

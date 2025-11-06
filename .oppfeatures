@@ -1238,6 +1238,37 @@
         linkerFlags = ""
         />
     <feature
+        id = "QLearning"
+        name = "Q-Learning routing"
+        description = "Q-Learning reinforcement learning based routing protocol."
+        initiallyEnabled = "true"
+        requires = "Ipv4 Udp"
+        recommended = "Ieee80211"
+        labels = "routing"
+        nedPackages = "
+                       inet.node.qlearning
+                       inet.routing.qlearning
+                      "
+        extraSourceFolders = ""
+        compileFlags = "-DINET_WITH_QLEARNING"
+        linkerFlags = ""
+        />
+    <feature
+        id = "QLearningExamples"
+        name = "Q-Learning routing examples"
+        description = "Examples for Q-Learning routing."
+        initiallyEnabled = "true"
+        requires = "AckingMac GenericRadio Ipv4 Loopback Mobility PhysicalLayerWirelessCommon PingApplication QLearning Queueing Udp"
+        recommended = ""
+        labels = "routing"
+        nedPackages = "
+                       inet.examples.qlearning
+                      "
+        extraSourceFolders = ""
+        compileFlags = ""
+        linkerFlags = ""
+        />
+    <feature
         id = "Power"
         name = "Power"
         description = "Provides energy generator, consumer and storage models such as batteries."
