@@ -181,17 +181,17 @@ std::map<L3Address, NeighborInfo> neighbors;
 
 ### Packet Types
 1. **QLEARN_HELLO** (17 bytes): Neighbor discovery
+   - Packet type (1 byte)
    - Source address (4 bytes)
    - Sequence number (4 bytes)
    - Q-value (8 bytes)
-   - Packet type (1 byte)
 
-2. **QLEARN_UPDATE** (25 bytes): Q-value information
+2. **QLEARN_UPDATE** (21 bytes): Q-value information
+   - Packet type (1 byte)
    - Source address (4 bytes)
    - Destination address (4 bytes)
    - Q-value (8 bytes)
    - Hop count (4 bytes)
-   - Packet type (1 byte)
 
 ## Advantages
 
