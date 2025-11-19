@@ -23,7 +23,14 @@ from inet.test.fingerprint import *
 from inet.test.simulation import *
 
 _logger = logging.getLogger(__name__)
-_append_args = ["--**.param-recording=false", "--output-scalar-file=${resultdir}/${inifile}-${configname}-#${repetition}.sca", "--output-vector-file=${resultdir}/${inifile}-${configname}-#${repetition}.vec"]
+_append_args = [
+    "--record-eventlog=false",
+    "--output-scalar-precision=17",
+    "--output-vector-precision=17",
+    "--**.param-recording=false",
+    "--output-scalar-file=${resultdir}/${inifile}-${configname}-#${repetition}.sca",
+    "--output-vector-file=${resultdir}/${inifile}-${configname}-#${repetition}.vec"
+]
 
 def _read_scalar_result_file(file_name):
     df = read_result_files(file_name, include_fields_as_scalars=True)
@@ -79,10 +86,10 @@ class StatisticalTestTask(SimulationTestTask):
         working_directory = simulation_config.working_directory
         current_scalar_result_file_name = simulation_project.get_full_path(os.path.join(working_directory, "results", self.get_result_file_name("sca")))
         current_vector_result_file_name = simulation_project.get_full_path(os.path.join(working_directory, "results", self.get_result_file_name("vec")))
-        if os.path.exists(current_vector_result_file_name):
-            run_command_with_logging(["opp_scavetool", "x", "--type", "sth", "-w", current_scalar_result_file_name, current_vector_result_file_name, "-o", current_scalar_result_file_name])
-            os.remove(current_vector_result_file_name)
         current_index_result_file_name = simulation_project.get_full_path(os.path.join(working_directory, "results", self.get_result_file_name("vci")))
+        if os.path.exists(current_vector_result_file_name):
+            run_command_with_logging(["opp_scavetool", "x", "--precision=17", "--type", "sth", "-w", current_scalar_result_file_name, current_vector_result_file_name, "-o", current_scalar_result_file_name])
+            os.remove(current_vector_result_file_name)
         if os.path.exists(current_index_result_file_name):
             os.remove(current_index_result_file_name)
         _remove_attr_lines(current_scalar_result_file_name)
@@ -111,9 +118,11 @@ class StatisticalTestTask(SimulationTestTask):
                     df["relative_error"] = df.apply(lambda row: row["absolute_error"] / abs(row["value_stored"]) if row["value_stored"] != 0 else (float("inf") if row["value_current"] != 0 else 0), axis=1)
                     df = df[df.apply(lambda row: matches_filter(row["name"], result_name_filter, exclude_result_name_filter, full_match) and \
                                                  matches_filter(row["module"], result_module_filter, exclude_result_module_filter, full_match), axis=1)]
+                    if df.empty:
+                        return self.task_result_class(task=self, simulation_task_result=simulation_task_result, result="PASS", reason="All differences filtered out")
                     sorted_df = df.sort_values(by="relative_error", ascending=False)
                     scalar_result_csv_file_name = re.sub(r".sca$", ".csv", stored_scalar_result_file_name)
-                    sorted_df.to_csv(scalar_result_csv_file_name, float_format="%.15g")
+                    sorted_df.to_csv(scalar_result_csv_file_name, float_format="%.17g")
                     id = df["relative_error"].idxmax()
                     if math.isnan(id):
                         id = next(iter(df.index), None)
@@ -192,10 +201,10 @@ class StatisticalResultsUpdateTask(SimulationUpdateTask):
         working_directory = simulation_config.working_directory
         current_scalar_result_file_name = simulation_project.get_full_path(os.path.join(working_directory, "results", self.get_result_file_name("sca")))
         current_vector_result_file_name = simulation_project.get_full_path(os.path.join(working_directory, "results", self.get_result_file_name("vec")))
-        if os.path.exists(current_vector_result_file_name):
-            run_command_with_logging(["opp_scavetool", "x", "--type", "sth", "-w", current_scalar_result_file_name, current_vector_result_file_name, "-o", current_scalar_result_file_name])
-            os.remove(current_vector_result_file_name)
         current_index_result_file_name = simulation_project.get_full_path(os.path.join(working_directory, "results", self.get_result_file_name("vci")))
+        if os.path.exists(current_vector_result_file_name):
+            run_command_with_logging(["opp_scavetool", "x", "--precision=17", "--type", "sth", "-w", current_scalar_result_file_name, current_vector_result_file_name, "-o", current_scalar_result_file_name])
+            os.remove(current_vector_result_file_name)
         if os.path.exists(current_index_result_file_name):
             os.remove(current_index_result_file_name)
         _remove_attr_lines(current_scalar_result_file_name)
