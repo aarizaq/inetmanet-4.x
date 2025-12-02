@@ -69,7 +69,8 @@
 /showcases/tsn/framepreemption/,     -f omnetpp.ini -c RealisticPriorityQueueing -r 0, 1s,      716e-e1aa/tplx;e9b6-4788/~tNl;c8f5-2204/~tND;b7b0-177b/tyf, PASS,
 /showcases/tsn/framepreemption/,     -f omnetpp.ini -c RealisticFramePreemption -r 0, 1s,       2fca-eca2/tplx;aa7f-8964/~tNl;9672-3073/~tND;c51f-e3ac/tyf, PASS,
 
-/showcases/tsn/framereplication/automaticfailureprotection/, -f omnetpp.ini -c General -r 0, 0.1s, 2e3e-b280/tplx;34d5-1f17/~tNl;1993-b291/~tND;fcc4-be5c/tyf, PASS,
+/showcases/tsn/framereplication/automaticfailureprotection/, -f omnetpp.ini -c NoFrameReplication -r 0, 0.1s, 9347-e1c6/tplx;af38-8d88/~tNl;4813-fd70/~tND;fcc4-be5c/tyf, PASS,
+/showcases/tsn/framereplication/automaticfailureprotection/, -f omnetpp.ini -c FrameReplication -r 0, 0.1s, a106-77b8/tplx;d07e-b2bf/~tNl;fe33-32ed/~tND;fcc4-be5c/tyf, PASS,
 /showcases/tsn/framereplication/automaticmultipathconfiguration/, -f omnetpp.ini -c General -r 0, 0.1s, f13d-494b/tplx;2a99-604c/~tNl;b482-a229/~tND;e73f-c8cc/tyf, PASS,
 /showcases/tsn/framereplication/manualconfiguration/, -f omnetpp.ini -c General -r 0, 0.1s,       5894-8d2a/tplx;a6dc-d131/~tNl;799e-a101/~tND;1307-839e/tyf, PASS,
 /showcases/tsn/framereplication/multicastfailureprotection/, -f omnetpp.ini -c General -r 0, 0.1s, c1d1-d561/tplx;53a4-dd47/~tNl;7c41-1acd/~tND;0a42-9926/tyf, PASS,
@@ -96,7 +97,8 @@
 /showcases/tsn/trafficshaping/creditbasedshaper/, -f omnetpp.ini -c General -r 0,   1s,         78c6-1385/tplx;fbd9-ab64/~tNl;731b-0ed0/~tND;a73f-67ff/tyf, PASS,
 /showcases/tsn/trafficshaping/cbsandats/, -f omnetpp.ini -c General -r 0,           1s,         7ee9-d3c7/tplx;825c-4c52/~tNl;41dd-69a0/~tND;f755-ed5c/tyf, PASS,
 /showcases/tsn/trafficshaping/cbsandtas/, -f omnetpp.ini -c General -r 0,           1s,         ac22-8b54/tplx;d1ed-8739/~tNl;5406-a1a6/~tND;5c0b-614f/tyf, PASS,
-/showcases/tsn/trafficshaping/timeawareshaper/, -f omnetpp.ini -c General -r 0,     1s,         a3f3-82c6/tplx;ae6c-571a/~tNl;4bd6-0bf1/~tND;5829-68ae/tyf, PASS,
+/showcases/tsn/trafficshaping/timeawareshaper/, -f omnetpp.ini -c NoTrafficShaping -r 0,     1s,         0f94-d2be/tplx;f5e2-db52/~tNl;ee32-60f0/~tND;5829-68ae/tyf, PASS,
+/showcases/tsn/trafficshaping/timeawareshaper/, -f omnetpp.ini -c TimeAwareShaping -r 0,     1s,         8bb7-9bf9/tplx;efed-d58c/~tNl;5cd6-e3ea/~tND;5829-68ae/tyf, PASS,
 /showcases/tsn/trafficshaping/underthehood/, -f omnetpp.ini -c General -r 0,        1s,         f5ab-befe/tplx;0000-0000/~tNl;0000-0000/~tND;1658-2fd5/tyf, PASS,
 
 # /showcases/visualizer/canvas/advanced/,     -f omnetpp.ini -c IncludingMultipleVisualizerModules -r 0, 100s, 1b92-4be3/tplx;0000-0000/~tNl;0000-0000/~tND, PASS,
