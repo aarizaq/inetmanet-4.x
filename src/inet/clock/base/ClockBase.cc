@@ -18,7 +18,8 @@ void ClockBase::initialize(int stage)
     if (stage == INITSTAGE_LOCAL) {
         emitClockTimeInterval = par("emitClockTimeInterval");
         if (emitClockTimeInterval != 0) {
-            timer = new cMessage();
+            timer = new cMessage("ClockTimeChangedTimer");
+            timer->setSchedulingPriority(par("clockTimeChangeEventSchedulingPriority"));
             scheduleAt(simTime(), timer);
         }
     }
@@ -43,40 +44,103 @@ void ClockBase::finish()
     emit(timeChangedSignal, getClockTime().asSimTime());
 }
 
+void ClockBase::checkScheduledClockEvent(const ClockEvent *event) const
+{
+    DEBUG_ENTER();
+    // NOTE: IClock interface 3. invariant
+    DEBUG_CMP(event->getArrivalClockTime(), >=, getClockTime());
+    if (event->isScheduled()) {
+        DEBUG_CMP(event->getArrivalTime(), >=, simTime());
+        // NOTE: IClock interface 4. invariant
+        DEBUG_CMP(event->getArrivalTime(), ==, computeScheduleTime(event->getArrivalClockTime()));
+        // NOTE: IClock interface 5. invariant
+//        DEBUG_CMP(event->getArrivalClockTime(), >=, computeClockTimeFromSimTime(event->getArrivalTime(), false));
+//        DEBUG_CMP(event->getArrivalClockTime(), <=, computeClockTimeFromSimTime(event->getArrivalTime(), true));
+    }
+    DEBUG_LEAVE();
+}
+
+cSimpleModule *ClockBase::getTargetModule() const
+{
+    cSimpleModule *target = getSimulation()->getContextSimpleModule();
+    if (target == nullptr)
+        throw cRuntimeError("scheduleAt()/cancelEvent() must be called with a simple module in context");
+    return target;
+}
 
 clocktime_t ClockBase::getClockTime() const
 {
     return clockEventTime != -1 ? clockEventTime : computeClockTimeFromSimTime(simTime());
 }
 
+simtime_t ClockBase::computeScheduleTime(clocktime_t clockTime) const
+{
+    DEBUG_ENTER(clockTime);
+    simtime_t currentSimulationTime = simTime();
+    simtime_t lowerSimulationTime = computeSimTimeFromClockTime(clockTime, true);
+    DEBUG_OUT << DEBUG_FIELD(lowerSimulationTime) << std::endl;
+    simtime_t result;
+    if (lowerSimulationTime >= currentSimulationTime)
+        result = lowerSimulationTime;
+    else {
+        simtime_t upperSimulationTime = computeSimTimeFromClockTime(clockTime, false);
+        DEBUG_OUT << DEBUG_FIELD(upperSimulationTime) << std::endl;
+        if (currentSimulationTime < upperSimulationTime)
+            result = currentSimulationTime;
+        else
+            result = lowerSimulationTime; // NOTE: upperSimulationTime is exclusive
+    }
+    DEBUG_LEAVE(result);
+    return result;
+}
+
+void ClockBase::scheduleTargetModuleClockEventAt(simtime_t time, ClockEvent *msg)
+{
+    cSimpleModule *targetModule = getTargetModule();
+    targetModule->scheduleAt(time, msg);
+}
+
+void ClockBase::scheduleTargetModuleClockEventAfter(simtime_t time, ClockEvent *msg)
+{
+    cSimpleModule *targetModule = getTargetModule();
+    targetModule->scheduleAfter(time, msg);
+}
+
+ClockEvent *ClockBase::cancelTargetModuleClockEvent(ClockEvent *msg)
+{
+    cSimpleModule *targetModule = getTargetModule();
+    targetModule->cancelEvent(msg);
+    return msg;
+}
+
 void ClockBase::scheduleClockEventAt(clocktime_t t, ClockEvent *msg)
 {
     if (t < getClockTime())
         throw cRuntimeError("Cannot schedule clock event in the past");
-    cSimpleModule *targetModule = getTargetModule();
     msg->setClock(this);
     msg->setRelative(false);
     msg->setArrivalClockTime(t);
-    targetModule->scheduleAt(computeSimTimeFromClockTime(t), msg);
+    scheduleTargetModuleClockEventAt(computeScheduleTime(t), msg);
+    checkScheduledClockEvent(msg);
 }
 
 void ClockBase::scheduleClockEventAfter(clocktime_t clockTimeDelay, ClockEvent *msg)
 {
     if (clockTimeDelay < 0)
         throw cRuntimeError("Cannot schedule clock event with negative delay");
-    cSimpleModule *targetModule = getTargetModule();
     msg->setClock(this);
     msg->setRelative(true);
     clocktime_t nowClock = getClockTime();
     clocktime_t arrivalClockTime = nowClock + clockTimeDelay;
     msg->setArrivalClockTime(arrivalClockTime);
-    simtime_t simTimeDelay = clockTimeDelay.isZero() ? SIMTIME_ZERO : computeSimTimeFromClockTime(arrivalClockTime) - simTime();
-    targetModule->scheduleAfter(simTimeDelay, msg);
+    simtime_t simTimeDelay = clockTimeDelay.isZero() ? SIMTIME_ZERO : computeScheduleTime(arrivalClockTime) - simTime();
+    scheduleTargetModuleClockEventAfter(simTimeDelay, msg);
+    checkScheduledClockEvent(msg);
 }
 
 ClockEvent *ClockBase::cancelClockEvent(ClockEvent *msg)
 {
-    getTargetModule()->cancelEvent(msg);
+    cancelTargetModuleClockEvent(msg);
     msg->setClock(nullptr);
     return msg;
 }

@@ -11,27 +11,14 @@ namespace inet {
 
 Define_Module(IdealClock);
 
-void IdealClock::initialize(int stage)
+clocktime_t IdealClock::computeClockTimeFromSimTime(simtime_t simulationTime, bool lowerBound) const
 {
-    ClockBase::initialize(stage);
-    if (stage == INITSTAGE_LOCAL)
-        emit(timeChangedSignal, simTime());
+    return SIMTIME_AS_CLOCKTIME(lowerBound ? simulationTime : simulationTime + SimTime::fromRaw(1));
 }
 
-void IdealClock::finish()
+simtime_t IdealClock::computeSimTimeFromClockTime(clocktime_t clockTime, bool lowerBound) const
 {
-    ClockBase::finish();
-    emit(timeChangedSignal, simTime());
-}
-
-clocktime_t IdealClock::computeClockTimeFromSimTime(simtime_t t) const
-{
-    return ClockTime::from(t);
-}
-
-simtime_t IdealClock::computeSimTimeFromClockTime(clocktime_t clock) const
-{
-    return clock.asSimTime();
+    return CLOCKTIME_AS_SIMTIME(lowerBound ? clockTime : clockTime + ClockTime::fromRaw(1));
 }
 
 } // namespace inet

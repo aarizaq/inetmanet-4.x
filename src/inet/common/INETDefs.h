@@ -29,6 +29,7 @@
 
 namespace inet {
 using namespace omnetpp;
+using omnetpp::operator<<;
 } // namespace inet
 
 #if OMNETPP_VERSION < 0x0600 || OMNETPP_BUILDNUM < 1531
@@ -47,6 +48,14 @@ using namespace omnetpp;
 #endif // if defined(INET_EXPORT)
 
 #include "inet/common/InitStages.h"
+
+#ifndef SIMTIME_RAW_T_DEFINED
+#define SIMTIME_RAW_T_DEFINED
+
+#include <cstdint>
+using simtime_raw_t = int64_t;
+
+#endif
 
 // main namespace of INET framework
 namespace inet {

@@ -21,6 +21,7 @@ void RandomDriftOscillator::initialize(int stage)
     DriftingOscillatorBase::initialize(stage);
     if (stage == INITSTAGE_LOCAL) {
         changeTimer = new cMessage("ChangeTimer");
+        changeTimer->setSchedulingPriority(par("driftChangeEventSchedulingPriority"));
         driftRateChangeLowerLimit = ppm(par("driftRateChangeLowerLimit"));
         driftRateChangeUpperLimit = ppm(par("driftRateChangeUpperLimit"));
         scheduleAfter(changeIntervalParameter->doubleValue(), changeTimer);
@@ -37,7 +38,7 @@ void RandomDriftOscillator::handleMessage(cMessage *message)
         scheduleAfter(changeIntervalParameter->doubleValue(), changeTimer);
     }
     else
-        throw cRuntimeError("Unknown message");
+        DriftingOscillatorBase::handleMessage(message);
 }
 
 } // namespace inet

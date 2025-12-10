@@ -11,6 +11,7 @@
 #include "inet/clock/common/ClockTime.h"
 #include "inet/clock/common/ClockEvent.h"
 #include "inet/clock/contract/IClock.h"
+#include "inet/common/DebugDefs.h"
 #include "inet/common/ModuleRefByPar.h"
 #include "inet/common/SimpleModule.h"
 
@@ -34,12 +35,15 @@ class INET_API ClockBase : public SimpleModule, public IClock
     virtual void handleMessage(cMessage *msg) override;
     virtual void finish() override;
 
-    cSimpleModule *getTargetModule() const {
-        cSimpleModule *target = getSimulation()->getContextSimpleModule();
-        if (target == nullptr)
-            throw cRuntimeError("scheduleAt()/cancelEvent() must be called with a simple module in context");
-        return target;
-    }
+    virtual void checkScheduledClockEvent(const ClockEvent *event) const;
+
+    cSimpleModule* getTargetModule() const;
+
+    virtual void scheduleTargetModuleClockEventAt(simtime_t time, ClockEvent *event);
+    virtual void scheduleTargetModuleClockEventAfter(simtime_t time, ClockEvent *event);
+    virtual ClockEvent *cancelTargetModuleClockEvent(ClockEvent *event);
+
+    virtual simtime_t computeScheduleTime(clocktime_t time) const;
 
   public:
     virtual clocktime_t getClockTime() const override;
@@ -48,6 +52,7 @@ class INET_API ClockBase : public SimpleModule, public IClock
     virtual void scheduleClockEventAfter(clocktime_t time, ClockEvent *event) override;
     virtual ClockEvent *cancelClockEvent(ClockEvent *event) override;
     virtual void handleClockEvent(ClockEvent *event) override;
+    virtual bool isScheduledClockEvent(ClockEvent *event) const override { return event->isScheduled(); }
 
     virtual std::string resolveDirective(char directive) const override;
 };

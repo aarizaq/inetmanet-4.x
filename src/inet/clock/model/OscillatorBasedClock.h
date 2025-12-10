@@ -36,8 +36,8 @@ class INET_API OscillatorBasedClock : public ClockBase, public cListener
     virtual const IOscillator *getOscillator() const { return oscillator; }
     virtual ppm getOscillatorCompensation() const { return ppm(0); }
 
-    virtual clocktime_t computeClockTimeFromSimTime(simtime_t t) const override;
-    virtual simtime_t computeSimTimeFromClockTime(clocktime_t t) const override;
+    virtual clocktime_t computeClockTimeFromSimTime(simtime_t t, bool lowerBound = false) const override;
+    virtual simtime_t computeSimTimeFromClockTime(clocktime_t t, bool lowerBound = true) const override;
 
     virtual void scheduleClockEventAt(clocktime_t t, ClockEvent *event) override;
     virtual void scheduleClockEventAfter(clocktime_t delay, ClockEvent *event) override;

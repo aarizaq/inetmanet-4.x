@@ -18,6 +18,7 @@ void SettableClock::initialize(int stage)
 {
     OscillatorBasedClock::initialize(stage);
     if (stage == INITSTAGE_LOCAL) {
+        oscillatorCompensation = ppm(par("initialOscillatorCompensation"));
         const char *text = par("defaultOverdueClockEventHandlingMode");
         if (!strcmp(text, "execute"))
             defaultOverdueClockEventHandlingMode = EXECUTE;
@@ -67,7 +68,7 @@ void SettableClock::setClockTime(clocktime_t newClockTime, ppm oscillatorCompens
                 constantDriftOscillator->setTickOffset(0);
         }
         simtime_t currentSimTime = simTime();
-        EV_DEBUG << "Setting clock time from " << oldClockTime << " to " << newClockTime << " at simtime " << currentSimTime << ".\n";
+        EV_INFO << "Setting clock time from " << oldClockTime << " to " << newClockTime << " at simtime " << currentSimTime << ".\n";
         originSimulationTime = simTime();
         originClockTime = newClockTime;
         this->oscillatorCompensation = oscillatorCompensation;
