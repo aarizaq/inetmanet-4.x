@@ -7,14 +7,15 @@
 #ifndef __INET_NUMBERNEAR1_H
 #define __INET_NUMBERNEAR1_H
 
-#include <cstdint>
-#include <type_traits>
-#include <limits>
 #include <cassert>
 #include <cmath>
+#include <cstdint>
+#include <cstring>
+#include <limits>
 #include <ostream>
 #include <sstream>
 #include <string>
+#include <type_traits>
 
 #include "inet/common/INETDefs.h"
 
@@ -53,29 +54,91 @@ struct INET_API NumberNear1 {
     static constexpr NumberNear1 one() noexcept { return NumberNear1(S64(0)); }
     static constexpr NumberNear1 two() noexcept { return NumberNear1(std::numeric_limits<S64>::min()); }
 
-    static NumberNear1 fromDouble(long double x) {
-        if (x < 0.5L || x > 2.0L)
-            throw cRuntimeError("Invalid argument: x = %Lg (must be in the range [0.5, 2.0])", x);
-        long double e = 1.0L - x;
-        long double scaled = e * (long double) (1ULL << 63);
-        S64 e_q63 = (S64) std::llround(scaled);
-        if (e_q63 > (S64(1) << 62))
-            e_q63 = (S64(1) << 62);
-        if (e_q63 < std::numeric_limits<S64>::min())
-            e_q63 = std::numeric_limits<S64>::min();
-        return NumberNear1(e_q63);
+    static NumberNear1 fromIntegerRatio(U128 num, U128 den)
+    {
+        assert(den != 0);
+
+        // Enforce ratio ∈ [0.5, 2] using integers
+        // 0.5 <= num/den  <=>  2*num >= den
+        // num/den <= 2    <=>  num <= 2*den
+        assert((num << 1) >= den);
+        assert(num <= (den << 1));
+
+        // diff = den - num   (signed)
+        const S128 diff = (S128)den - (S128)num;
+
+        // e_q63 = round( diff * 2^63 / den ), ties away from 0
+        const bool neg = (diff < 0);
+        const U128 a = neg ? U128(-(diff + 1)) + 1 : U128(diff); // abs(diff)
+
+        // numerator fits: |diff| <= den
+        const U128 num_q63 = a << 63;
+
+        // round-to-nearest, ties away from 0
+        const U128 qmag = (num_q63 + U128(den >> 1)) / den;
+        const S128 q = neg ? -S128(qmag) : S128(qmag);
+
+        // Guaranteed by invariants
+        assert(q >= (S128)std::numeric_limits<S64>::min()); // -2^63
+        assert(q <= (S128(S64(1)) << 62));                  // +2^62
+
+        return NumberNear1((S64)q);
     }
 
-    static NumberNear1 fromPpm(long double ppm) {
-        if (ppm < -500000.0 || ppm > 1000000.0)
-            throw cRuntimeError("Invalid argument: ppm = %Lg (must be in the range [-500000, 1000000] ppm)", ppm);
+    static NumberNear1 fromRatio(double numerator, double denominator)
+    {
+        if (!std::isfinite(numerator) || !std::isfinite(denominator))
+            throw cRuntimeError("Invalid argument: numerator/denominator must be finite");
+        if (denominator <= 0.0)
+            throw cRuntimeError("Invalid argument: denominator must be > 0");
+        if (numerator <= 0.0)
+            throw cRuntimeError("Invalid argument: numerator must be > 0");
 
-        // e_q63 = round( -(ppm) * 2^63 / 1e6 )
-        const long double scaled = -ppm * ((long double)(1ULL << 63) / 1'000'000.0L);
+        auto decompose_pos_double = [](double v, U64& m, int& e) {
+            U64 bits;
+            std::memcpy(&bits, &v, sizeof(bits));
+            const U64 frac = bits & ((U64(1) << 52) - 1);
+            const int exp  = int((bits >> 52) & 0x7FF);
+            if (exp == 0) {
+                m = frac;
+                e = -1074;
+            }
+            else {
+                m = (U64(1) << 52) | frac;
+                e = exp - 1023 - 52;
+            }
+        };
 
-        // Clamp to valid raw range: [-2^63, +2^62]
-        const long double min_raw = (long double)std::numeric_limits<S64>::min();
-        const long double max_raw = (long double)(S64(1) << 62);
+        U64 Mn0, Md0;
+        int En, Ed;
+        decompose_pos_double(numerator,   Mn0, En);
+        decompose_pos_double(denominator, Md0, Ed);
+
+        constexpr int SHIFT = 10;
+        U128 Mn = U128(Mn0) << SHIFT;
+        U128 Md = U128(Md0) << SHIFT;
+
+        const int delta = En - Ed;
+        if (delta < -1 || delta > 1)
+            throw cRuntimeError("Invalid argument: ratio must be in [0.5, 2.0]");
+
+        if (delta > 0)      Mn <<= delta;
+        else if (delta < 0) Md <<= -delta;
+
+        // Validate ratio is in [0.5, 2] using integers
+        if ((Mn << 1) < Md || Mn > (Md << 1))
+            throw cRuntimeError("Invalid argument: ratio must be in [0.5, 2.0]");
+
+        return fromIntegerRatio(Mn, Md);
+    }
+
+    static NumberNear1 fromDifferenceTo1(double d) {
+        if (d < -0.5 || d > 1.0)
+            throw cRuntimeError("Invalid argument: d = %g (must be in the range [-0.5, 1.0])", d);
+
+        const double scaled = -d * (double)(1ULL << 63);
+        const double min_raw = (double)std::numeric_limits<S64>::min();
+        const double max_raw = (double)(S64(1) << 62);
 
         S64 e_q63;
         if (scaled <= min_raw)
@@ -83,9 +146,33 @@ struct INET_API NumberNear1 {
         else if (scaled >= max_raw)
             e_q63 = (S64(1) << 62);
         else
-            e_q63 = (S64)std::llround(scaled);  // rounds to nearest
+            e_q63 = (S64)std::llround(scaled);  // nearest, ties away from 0
 
         return NumberNear1(e_q63);
+    }
+
+    static NumberNear1 fromDouble(double v) {
+        if (v < 0.5 || v > 2.0)
+            throw cRuntimeError("Invalid argument: x = %g (must be in the range [0.5, 2.0])", v);
+        return fromDifferenceTo1(v - 1.0);
+    }
+
+    static NumberNear1 fromPpm(double ppm) {
+        if (ppm < -500000.0 || ppm > 1000000.0)
+            throw cRuntimeError("Invalid argument: ppm = %g (must be in the range [-500000, 1000000] ppm)", ppm);
+        return fromDifferenceTo1(ppm / 1000000.0);
+    }
+
+    double toDifferenceFrom1() const noexcept {
+        return -((double)e_q63 / (double)(1ULL << 63));
+    }
+
+    double toDouble() const noexcept {
+        return 1.0 - (double)e_q63 / (double)(1ULL << 63);
+    }
+
+    double toPpm() const noexcept {
+        return toDifferenceFrom1() * 1'000'000.0;
     }
 
     NumberNear1 operator*(const NumberNear1& rhs) const {
@@ -94,6 +181,11 @@ struct INET_API NumberNear1 {
         t += (t >= 0) ? ((S128)1 << 62) : -((S128)1 << 62);     // round-to-nearest, ties away from 0
         S64 cross = (S64)(t / ((S128)1 << 63));                 // back to Q1.63 (portable)
         S128 sum = (S128)e_q63 + rhs.e_q63 - cross;             // r3 in Q1.63
+
+        // Validate result is in valid range: e ∈ [-1, 0.5] ⇒ e_q63 ∈ [-2^63, +2^62]
+        assert(sum >= (S128)std::numeric_limits<S64>::min());
+        assert(sum <= (S128(S64(1)) << 62));
+
         return NumberNear1((S64)sum);
     }
 
@@ -179,15 +271,6 @@ struct INET_API NumberNear1 {
             return (I)(-(S128) mag);
         }
         return div_ceil(t, -e_q63);
-    }
-
-    double toDouble() const noexcept {
-        long double e = (long double) e_q63 / (long double) (1ULL << 63);
-        return (double) (1.0L - e);
-    }
-
-    double diffFrom1() const noexcept {
-        return (double) (-((long double) e_q63 / (long double) (1ULL << 63)));
     }
 
     std::string str() const {
@@ -424,7 +507,11 @@ struct INET_API NumberNear1 {
                 return neg ? (I)(-((S128) 1 << 127)) : (I)(((S128) 1 << 127) - 1);
         }
 
-        const U128 mag = ((U128) q1 << 64) | (U128) q0;
+        U128 mag = ((U128) q1 << 64) | (U128) q0;
+
+        if (neg && rem != 0)
+            mag += 1;
+
         const S128 y = neg ? -(S128) mag : (S128) mag;
 
         if constexpr (std::is_same<I, S64>::value) {
@@ -523,10 +610,10 @@ inline std::ostream& operator<<(std::ostream &os, const NumberNear1<I> &s) {
     std::streamsize old_prec = os.precision();
     char old_fill = os.fill();
 
-    const long double e_ld = static_cast<long double>(s.raw()) / static_cast<long double>(1ULL << 63);
-    const long double x_ld = 1.0L - e_ld;
-    const long double ppm = (-e_ld) * 1'000'000.0L;
-    const long double ppb = (-e_ld) * 1'000'000'000.0L;
+    const double e_ld = static_cast<double>(s.raw()) / static_cast<double>(1ULL << 63);
+    const double x_ld = 1.0 - e_ld;
+    const double ppm = (-e_ld) * 1'000'000.0L;
+    const double ppb = (-e_ld) * 1'000'000'000.0L;
 
     os.setf(std::ios::fixed, std::ios::floatfield);
     os.precision(18);
