@@ -4519,8 +4519,6 @@ except results.ResultQueryError as e:
 if df.empty:
     raise chart.ChartScriptError("The result filter returned no data.")
 
-print(df)
-
 master_clock_row = df[df['module'] == 'ClockDriftShowcase.switch1.clock']
 master_clock_vectime = master_clock_row['vectime'].iloc[0]
 master_clock_vecvalue = master_clock_row['vecvalue'].iloc[0]
@@ -5284,8 +5282,6 @@ except results.ResultQueryError as e:
 
 if df.empty:
     raise chart.ChartScriptError("The result filter returned no data.")
-
-print(df)
 
 master_clock_row = df[df['module'] == 'ClockDriftShowcase.switch1.clock']
 master_clock_vectime = master_clock_row['vectime'].iloc[0]
@@ -8274,7 +8270,7 @@ utils.export_data_if_needed(df, props)
             <property name="sorting" value="true"/>
             <property name="legend_format" value=""/>
             <property name="secondary_ordering_regex_list" value=""/>
-            <property name="yaxis_unit" value=""/>
+            <property name="yaxis_unit" value="ns"/>
             <property name="xaxis_unit" value=""/>
         </chart>
         <chart createdWith="" icon="icons/full/obj/linechart.png" id="613552478" name="Random drift rate, gPTP time synchronization, compared to master clock, zoomed" resultTypes="" template="linechart_native" type="LINE">
@@ -9038,7 +9034,7 @@ utils.export_data_if_needed(df, props)
             <property name="sorting" value="true"/>
             <property name="legend_format" value=""/>
             <property name="secondary_ordering_regex_list" value=""/>
-            <property name="yaxis_unit" value=""/>
+            <property name="yaxis_unit" value="ns"/>
             <property name="xaxis_unit" value=""/>
         </chart>
         <chart createdWith="" icon="icons/full/obj/linechart.png" id="1036285058" name="gPTP time synchronization, sync accuracy" resultTypes="" template="linechart_native" type="LINE">

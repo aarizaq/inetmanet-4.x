@@ -148,8 +148,7 @@ void SctpAssociation::process_SEND(SctpEventCode& event, SctpCommandReq *sctpCom
     int sendBytes = applicationData->getChunkLength().get<B>();
     EV_INFO << "got msg of length " << applicationData->getChunkLength() << " sendBytes=" << sendBytes << endl;
 
-    auto iter = sctpMain->assocStatMap.find(assocId);
-    iter->second.sentBytes += sendBytes;
+    assocStat.sentBytes += sendBytes;
 
     // ------ Prepare SctpDataMsg -----------------------------------------
     const uint32_t streamId = sendCommand->getSid();
@@ -275,7 +274,8 @@ void SctpAssociation::process_SEND(SctpEventCode& event, SctpCommandReq *sctpCom
         datMsg->setOrdered(true);
         stream->getStreamQ()->insert(datMsg);
 
-        sendQueue->record(stream->getStreamQ()->getLength());
+        SctpStreamStatistic streamDetail(streamId);
+        emit(sendQueueSignal, (unsigned long)stream->getStreamQ()->getLength(), &streamDetail);
     }
     EV_INFO << "Size of send queue " << stream->getStreamQ()->getLength() << endl;
     // ------ Send buffer full? -------------------------------------------
@@ -450,4 +450,3 @@ void SctpAssociation::process_STATUS(SctpEventCode& event, SctpCommandReq *sctpC
 
 } // namespace sctp
 } // namespace inet
-

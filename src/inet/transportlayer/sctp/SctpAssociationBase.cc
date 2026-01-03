@@ -22,11 +22,72 @@
 namespace inet {
 namespace sctp {
 
+// ====== Register Signal IDs ================================================
+// Path-specific signals
+simsignal_t SctpAssociation::pathRtoSignal = registerSignal("pathRto");
+simsignal_t SctpAssociation::pathRttSignal = registerSignal("pathRtt");
+simsignal_t SctpAssociation::pathSsthreshSignal = registerSignal("pathSsthresh");
+simsignal_t SctpAssociation::pathCwndSignal = registerSignal("pathCwnd");
+simsignal_t SctpAssociation::pathBandwidthSignal = registerSignal("pathBandwidth");
+simsignal_t SctpAssociation::pathOutstandingBytesSignal = registerSignal("pathOutstandingBytes");
+simsignal_t SctpAssociation::pathQueuedSentBytesSignal = registerSignal("pathQueuedSentBytes");
+simsignal_t SctpAssociation::pathSenderBlockingFractionSignal = registerSignal("pathSenderBlockingFraction");
+simsignal_t SctpAssociation::pathReceiverBlockingFractionSignal = registerSignal("pathReceiverBlockingFraction");
+simsignal_t SctpAssociation::pathTsnSentSignal = registerSignal("pathTsnSent");
+simsignal_t SctpAssociation::pathTsnReceivedSignal = registerSignal("pathTsnReceived");
+simsignal_t SctpAssociation::pathHeartbeatSentSignal = registerSignal("pathHeartbeatSent");
+simsignal_t SctpAssociation::pathHeartbeatAckSentSignal = registerSignal("pathHeartbeatAckSent");
+simsignal_t SctpAssociation::pathHeartbeatReceivedSignal = registerSignal("pathHeartbeatReceived");
+simsignal_t SctpAssociation::pathHeartbeatAckReceivedSignal = registerSignal("pathHeartbeatAckReceived");
+simsignal_t SctpAssociation::pathGapAckedChunksInLastSACKSignal = registerSignal("pathGapAckedChunksInLastSACK");
+simsignal_t SctpAssociation::pathGapNRAckedChunksInLastSACKSignal = registerSignal("pathGapNRAckedChunksInLastSACK");
+simsignal_t SctpAssociation::pathGapUnackedChunksInLastSACKSignal = registerSignal("pathGapUnackedChunksInLastSACK");
+simsignal_t SctpAssociation::pathPartialBytesAckedSignal = registerSignal("pathPartialBytesAcked");
+simsignal_t SctpAssociation::pathFastRecoveryStateSignal = registerSignal("pathFastRecoveryState");
+simsignal_t SctpAssociation::pathTsnFastRTXSignal = registerSignal("pathTsnFastRTX");
+simsignal_t SctpAssociation::pathTsnTimerBasedRTXSignal = registerSignal("pathTsnTimerBasedRTX");
+simsignal_t SctpAssociation::pathTsnAckedCumAckSignal = registerSignal("pathTsnAckedCumAck");
+simsignal_t SctpAssociation::pathTsnAckedGapAckSignal = registerSignal("pathTsnAckedGapAck");
+simsignal_t SctpAssociation::pathPseudoCumAckSignal = registerSignal("pathPseudoCumAck");
+simsignal_t SctpAssociation::pathRTXPseudoCumAckSignal = registerSignal("pathRTXPseudoCumAck");
+simsignal_t SctpAssociation::pathBlockingTsnsMovedSignal = registerSignal("pathBlockingTsnsMoved");
+
+// Stream-specific signals
+simsignal_t SctpAssociation::streamThroughputSignal = registerSignal("streamThroughput");
+
+// Association-level signals
+simsignal_t SctpAssociation::advRwndSignal = registerSignal("advRwnd");
+simsignal_t SctpAssociation::cumTsnAckSignal = registerSignal("cumTsnAck");
+simsignal_t SctpAssociation::sendQueueSignal = registerSignal("sendQueue");
+simsignal_t SctpAssociation::numGapBlocksSignal = registerSignal("numGapBlocks");
+simsignal_t SctpAssociation::outstandingBytesSignal = registerSignal("outstandingBytes");
+simsignal_t SctpAssociation::queuedReceivedBytesSignal = registerSignal("queuedReceivedBytes");
+simsignal_t SctpAssociation::queuedSentBytesSignal = registerSignal("queuedSentBytes");
+simsignal_t SctpAssociation::totalSsthreshSignal = registerSignal("totalSsthresh");
+simsignal_t SctpAssociation::totalCwndSignal = registerSignal("totalCwnd");
+simsignal_t SctpAssociation::totalBandwidthSignal = registerSignal("totalBandwidth");
+simsignal_t SctpAssociation::revokableGapBlocksInLastSACKSignal = registerSignal("revokableGapBlocksInLastSACK");
+simsignal_t SctpAssociation::nonRevokableGapBlocksInLastSACKSignal = registerSignal("nonRevokableGapBlocksInLastSACK");
+simsignal_t SctpAssociation::arwndInLastSACKSignal = registerSignal("arwndInLastSACK");
+simsignal_t SctpAssociation::peerRwndSignal = registerSignal("peerRwnd");
+simsignal_t SctpAssociation::numTotalGapBlocksStoredSignal = registerSignal("numTotalGapBlocksStored");
+simsignal_t SctpAssociation::numRevokableGapBlocksStoredSignal = registerSignal("numRevokableGapBlocksStored");
+simsignal_t SctpAssociation::numNonRevokableGapBlocksStoredSignal = registerSignal("numNonRevokableGapBlocksStored");
+simsignal_t SctpAssociation::numDuplicatesStoredSignal = registerSignal("numDuplicatesStored");
+simsignal_t SctpAssociation::numRevokableGapBlocksSentSignal = registerSignal("numRevokableGapBlocksSent");
+simsignal_t SctpAssociation::numNonRevokableGapBlocksSentSignal = registerSignal("numNonRevokableGapBlocksSent");
+simsignal_t SctpAssociation::numDuplicatesSentSignal = registerSignal("numDuplicatesSent");
+simsignal_t SctpAssociation::sackLengthSentSignal = registerSignal("sackLengthSent");
+simsignal_t SctpAssociation::advMsgRwndSignal = registerSignal("advMsgRwnd");
+simsignal_t SctpAssociation::endToEndDelaySignal = registerSignal("endToEndDelay");
+simsignal_t SctpAssociation::assocThroughputSignal = registerSignal("assocThroughput");
+
 SctpPathVariables::SctpPathVariables(const L3Address& addr, SctpAssociation *assoc, const IRoutingTable *rt)
 {
     // ====== Path Variable Initialization ===================================
     association = assoc;
     remoteAddress = addr;
+    setName(addr.str().c_str());  // Set name for signal demux - path can be used as detail object!
     activePath = true;
     confirmed = false;
     primaryPathCandidate = false;
@@ -154,105 +215,12 @@ SctpPathVariables::SctpPathVariables(const L3Address& addr, SctpAssociation *ass
     AsconfTimer->setControlInfo(pinfo->dup());
     BlockingTimer->setControlInfo(pinfo->dup());
 
-    snprintf(str, sizeof(str), "RTO %d:%s", assoc->assocId, addr.str().c_str());
-    statisticsPathRTO = new cOutVector(str);
-    snprintf(str, sizeof(str), "RTT %d:%s", assoc->assocId, addr.str().c_str());
-    statisticsPathRTT = new cOutVector(str);
-
-    snprintf(str, sizeof(str), "Slow Start Threshold %d:%s", assoc->assocId, addr.str().c_str());
-    statisticsPathSSthresh = new cOutVector(str);
-    snprintf(str, sizeof(str), "Congestion Window %d:%s", assoc->assocId, addr.str().c_str());
-    statisticsPathCwnd = new cOutVector(str);
-    snprintf(str, sizeof(str), "Bandwidth %d:%s", assoc->assocId, addr.str().c_str());
-    statisticsPathBandwidth = new cOutVector(str);
-
-    snprintf(str, sizeof(str), "TSN Sent %d:%s", assoc->assocId, addr.str().c_str());
-    vectorPathSentTsn = new cOutVector(str);
-    snprintf(str, sizeof(str), "TSN Received %d:%s", assoc->assocId, addr.str().c_str());
-    vectorPathReceivedTsn = new cOutVector(str);
-
-    snprintf(str, sizeof(str), "HB Sent %d:%s", assoc->assocId, addr.str().c_str());
-    vectorPathHb = new cOutVector(str);
-    snprintf(str, sizeof(str), "HB ACK Sent %d:%s", assoc->assocId, addr.str().c_str());
-    vectorPathHbAck = new cOutVector(str);
-    snprintf(str, sizeof(str), "HB Received %d:%s", assoc->assocId, addr.str().c_str());
-    vectorPathRcvdHb = new cOutVector(str);
-    snprintf(str, sizeof(str), "HB ACK Received %d:%s", assoc->assocId, addr.str().c_str());
-    vectorPathRcvdHbAck = new cOutVector(str);
-
-    snprintf(str, sizeof(str), "Queued Sent Bytes %d:%s", assoc->assocId, addr.str().c_str());
-    statisticsPathQueuedSentBytes = new cOutVector(str);
-    snprintf(str, sizeof(str), "Outstanding Bytes %d:%s", assoc->assocId, addr.str().c_str());
-    statisticsPathOutstandingBytes = new cOutVector(str);
-    snprintf(str, sizeof(str), "Sender Blocking Fraction %d:%s", assoc->assocId, addr.str().c_str());
-    statisticsPathSenderBlockingFraction = new cOutVector(str);
-    snprintf(str, sizeof(str), "Receiver Blocking Fraction %d:%s", assoc->assocId, addr.str().c_str());
-    statisticsPathReceiverBlockingFraction = new cOutVector(str);
-    snprintf(str, sizeof(str), "Number of Gap Acked Chunks in Last SACK %d:%s", assoc->assocId, addr.str().c_str());
-    statisticsPathGapAckedChunksInLastSACK = new cOutVector(str);
-    snprintf(str, sizeof(str), "Number of Non-Revokable Gap Acked Chunks in Last SACK %d:%s", assoc->assocId, addr.str().c_str());
-    statisticsPathGapNRAckedChunksInLastSACK = new cOutVector(str);
-    snprintf(str, sizeof(str), "Number of Gap Missed Chunks in Last SACK %d:%s", assoc->assocId, addr.str().c_str());
-    statisticsPathGapUnackedChunksInLastSACK = new cOutVector(str);
-
-    snprintf(str, sizeof(str), "Partial Bytes Acked %d:%s", assoc->assocId, addr.str().c_str());
-    vectorPathPbAcked = new cOutVector(str);
-
-    snprintf(str, sizeof(str), "Fast Recovery State %d:%s", assoc->assocId, addr.str().c_str());
-    vectorPathFastRecoveryState = new cOutVector(str);
-    vectorPathFastRecoveryState->record(0);
-
-    snprintf(str, sizeof(str), "TSN Sent Fast RTX %d:%s", assoc->assocId, addr.str().c_str());
-    vectorPathTsnFastRTX = new cOutVector(str);
-    snprintf(str, sizeof(str), "TSN Sent Timer-Based RTX %d:%s", assoc->assocId, addr.str().c_str());
-    vectorPathTsnTimerBased = new cOutVector(str);
-    snprintf(str, sizeof(str), "TSN Acked CumAck %d:%s", assoc->assocId, addr.str().c_str());
-    vectorPathAckedTsnCumAck = new cOutVector(str);
-    snprintf(str, sizeof(str), "TSN Acked GapAck %d:%s", assoc->assocId, addr.str().c_str());
-    vectorPathAckedTsnGapAck = new cOutVector(str);
-
-    snprintf(str, sizeof(str), "TSN PseudoCumAck %d:%s", assoc->assocId, addr.str().c_str());
-    vectorPathPseudoCumAck = new cOutVector(str);
-    snprintf(str, sizeof(str), "TSN RTXPseudoCumAck %d:%s", assoc->assocId, addr.str().c_str());
-    vectorPathRTXPseudoCumAck = new cOutVector(str);
-    snprintf(str, sizeof(str), "Blocking TSNs Moved %d:%s", assoc->assocId, addr.str().c_str());
-    vectorPathBlockingTsnsMoved = new cOutVector(str);
+    // Note: Statistics now use signal-based recording (emit) instead of cOutVector
 }
 
 SctpPathVariables::~SctpPathVariables()
 {
-    delete statisticsPathSSthresh;
-    delete statisticsPathCwnd;
-    delete statisticsPathBandwidth;
-    delete statisticsPathRTO;
-    delete statisticsPathRTT;
-
-    delete vectorPathSentTsn;
-    delete vectorPathReceivedTsn;
-    delete vectorPathHb;
-    delete vectorPathRcvdHb;
-    delete vectorPathHbAck;
-    delete vectorPathRcvdHbAck;
-
-    delete statisticsPathQueuedSentBytes;
-    delete statisticsPathOutstandingBytes;
-    delete statisticsPathGapAckedChunksInLastSACK;
-    delete statisticsPathGapNRAckedChunksInLastSACK;
-    delete statisticsPathGapUnackedChunksInLastSACK;
-    delete statisticsPathSenderBlockingFraction;
-    delete statisticsPathReceiverBlockingFraction;
-
-    delete vectorPathPbAcked;
-    delete vectorPathFastRecoveryState;
-
-    delete vectorPathTsnFastRTX;
-    delete vectorPathTsnTimerBased;
-    delete vectorPathAckedTsnCumAck;
-    delete vectorPathAckedTsnGapAck;
-
-    delete vectorPathPseudoCumAck;
-    delete vectorPathRTXPseudoCumAck;
-    delete vectorPathBlockingTsnsMoved;
+    // Note: Statistics now use signal-based recording, no cOutVector cleanup needed
 }
 
 const L3Address SctpDataVariables::zeroAddress = L3Address();
@@ -552,14 +520,13 @@ uint16_t SctpStateVariables::getNumRequestsNotPerformed()
 // FSM framework, SCTP FSM
 //
 
-SctpAssociation::SctpAssociation(Sctp *_module, int32_t _appGateIndex, int32_t _assocId, IRoutingTable *_rt, IInterfaceTable *_ift)
+SctpAssociation::SctpAssociation()
 {
-    // ====== Initialize variables ===========================================
-    rt = _rt;
-    ift = _ift;
-    sctpMain = _module;
-    appGateIndex = _appGateIndex;
-    assocId = _assocId;
+    rt = nullptr;
+    ift = nullptr;
+    sctpMain = nullptr;
+    appGateIndex = -1;
+    assocId = -1;
     listeningAssocId = -1;
     fd = -1;
     listening = false;
@@ -577,10 +544,6 @@ SctpAssociation::SctpAssociation(Sctp *_module, int32_t _appGateIndex, int32_t _
     sctpAlgorithm = nullptr;
     state = nullptr;
     sackPeriod = SACK_DELAY;
-
-    cumTsnAck = nullptr;
-    sendQueue = nullptr;
-    numGapBlocks = nullptr;
 
     qCounter.roomSumSendStreams = 0;
     qCounter.bookedSumSendStreams = 0;
@@ -607,7 +570,22 @@ SctpAssociation::SctpAssociation(Sctp *_module, int32_t _appGateIndex, int32_t _
     ssFunctions.ssAddOutStreams = nullptr;
     ssFunctions.ssGetNextSid = nullptr;
     ssFunctions.ssUsableStreams = nullptr;
+}
 
+void SctpAssociation::initAssociation(Sctp *_module, int32_t _appGateIndex, int32_t _assocId, IRoutingTable *_rt, IInterfaceTable *_ift)
+{
+    Enter_Method_Silent();
+
+    // ====== Initialize variables ===========================================
+    rt = _rt;
+    ift = _ift;
+    sctpMain = _module;
+    appGateIndex = _appGateIndex;
+    assocId = _assocId;
+
+    EV_INFO << "SctpAssociation::initAssociation(): assocId=" << assocId << endl;
+
+    // Empty constructor for SimpleModule
     EV_INFO << "SctpAssociationBase::SctpAssociation(): new assocId="
             << assocId << endl;
 
@@ -624,13 +602,13 @@ SctpAssociation::SctpAssociation(Sctp *_module, int32_t _appGateIndex, int32_t _
 
     // ====== Timers =========================================================
     char timerName[128];
-    snprintf(timerName, sizeof(timerName), "T1_INIT of Association %d", assocId);
+    snprintf(timerName, sizeof(timerName), "T1_INIT of assoc %d", assocId);
     T1_InitTimer = new cMessage(timerName);
-    snprintf(timerName, sizeof(timerName), "T2_SHUTDOWN of Association %d", assocId);
+    snprintf(timerName, sizeof(timerName), "T2_SHUTDOWN of assoc %d", assocId);
     T2_ShutdownTimer = new cMessage(timerName);
-    snprintf(timerName, sizeof(timerName), "T5_SHUTDOWN_GUARD of Association %d", assocId);
+    snprintf(timerName, sizeof(timerName), "T5_SHUTDOWN_GUARD of assoc %d", assocId);
     T5_ShutdownGuardTimer = new cMessage(timerName);
-    snprintf(timerName, sizeof(timerName), "SACK_TIMER of Association %d", assocId);
+    snprintf(timerName, sizeof(timerName), "SACK_TIMER of assoc %d", assocId);
     SackTimer = new cMessage(timerName);
 
     StartTesting = nullptr;
@@ -651,51 +629,7 @@ SctpAssociation::SctpAssociation(Sctp *_module, int32_t _appGateIndex, int32_t _
     SackTimer->setControlInfo(pinfo->dup());
     T5_ShutdownGuardTimer->setControlInfo(pinfo->dup());
 
-    // ====== Output vectors =================================================
-    char vectorName[128];
-    snprintf(vectorName, sizeof(vectorName), "Advertised Receiver Window %d", assocId);
-    advRwnd = new cOutVector(vectorName);
-
-    snprintf(vectorName, sizeof(vectorName), "Slow Start Threshold %d:Total", assocId);
-    statisticsTotalSSthresh = new cOutVector(vectorName);
-    snprintf(vectorName, sizeof(vectorName), "Congestion Window %d:Total", assocId);
-    statisticsTotalCwnd = new cOutVector(vectorName);
-    snprintf(vectorName, sizeof(vectorName), "Bandwidth %d:Total", assocId);
-    statisticsTotalBandwidth = new cOutVector(vectorName);
-    snprintf(vectorName, sizeof(vectorName), "Queued Received Bytes %d:Total", assocId);
-    statisticsQueuedReceivedBytes = new cOutVector(vectorName);
-    snprintf(vectorName, sizeof(vectorName), "Queued Sent Bytes %d:Total", assocId);
-    statisticsQueuedSentBytes = new cOutVector(vectorName);
-    snprintf(vectorName, sizeof(vectorName), "Outstanding Bytes %d:Total", assocId);
-    statisticsOutstandingBytes = new cOutVector(vectorName);
-
-    snprintf(vectorName, sizeof(vectorName), "Number of Revokable Gap Blocks in SACK %d", assocId);
-    statisticsRevokableGapBlocksInLastSACK = new cOutVector(vectorName);
-    snprintf(vectorName, sizeof(vectorName), "Number of Non-Revokable Gap Blocks in SACK %d", assocId);
-    statisticsNonRevokableGapBlocksInLastSACK = new cOutVector(vectorName);
-
-    snprintf(vectorName, sizeof(vectorName), "Number of Total Gap Blocks Stored %d", assocId);
-    statisticsNumTotalGapBlocksStored = new cOutVector(vectorName);
-    snprintf(vectorName, sizeof(vectorName), "Number of Revokable Gap Blocks Stored %d", assocId);
-    statisticsNumRevokableGapBlocksStored = new cOutVector(vectorName);
-    snprintf(vectorName, sizeof(vectorName), "Number of Non-Revokable Gap Blocks Stored %d", assocId);
-    statisticsNumNonRevokableGapBlocksStored = new cOutVector(vectorName);
-    snprintf(vectorName, sizeof(vectorName), "Number of Duplicate TSNs Stored %d", assocId);
-    statisticsNumDuplicatesStored = new cOutVector(vectorName);
-
-    snprintf(vectorName, sizeof(vectorName), "Number of Revokable Gap Blocks Sent %d", assocId);
-    statisticsNumRevokableGapBlocksSent = new cOutVector(vectorName);
-    snprintf(vectorName, sizeof(vectorName), "Number of Non-Revokable Gap Blocks Sent %d", assocId);
-    statisticsNumNonRevokableGapBlocksSent = new cOutVector(vectorName);
-    snprintf(vectorName, sizeof(vectorName), "Number of Duplicate TSNs Sent %d", assocId);
-    statisticsNumDuplicatesSent = new cOutVector(vectorName);
-    snprintf(vectorName, sizeof(vectorName), "Length of SACK Sent %d", assocId);
-    statisticsSACKLengthSent = new cOutVector(vectorName);
-
-    snprintf(vectorName, sizeof(vectorName), "Arwnd in Last SACK %d", assocId);
-    statisticsArwndInLastSACK = new cOutVector(vectorName);
-    snprintf(vectorName, sizeof(vectorName), "Peer Rwnd %d", assocId);
-    statisticsPeerRwnd = new cOutVector(vectorName);
+    // Note: Statistics now use signal-based recording (emit) instead of cOutVector
 
     // ====== Extensions =====================================================
     StartAddIP = new cMessage("addIP");
@@ -707,15 +641,6 @@ SctpAssociation::SctpAssociation(Sctp *_module, int32_t _appGateIndex, int32_t _
     FairStopTimer = new cMessage("fairStop");
     FairStopTimer->setContextPointer(this);
     FairStopTimer->setControlInfo(pinfo->dup());
-    snprintf(vectorName, sizeof(vectorName), "Advertised Message Receiver Window of Association %d", assocId);
-    advMsgRwnd = new cOutVector(vectorName);
-    snprintf(vectorName, sizeof(vectorName), "End to End Delay of Association %d", assocId);
-    EndToEndDelay = new cOutVector(vectorName);
-
-    // ====== Assoc throughput ===============================================
-    snprintf(vectorName, sizeof(vectorName), "Throughput of Association %d", assocId);
-    assocThroughputVector = new cOutVector(vectorName);
-    assocThroughputVector->record(0.0);
 
     // ====== CMT Delayed Ack ================================================
     dacPacketsRcvd = 0;
@@ -814,62 +739,62 @@ SctpAssociation::SctpAssociation(Sctp *_module, int32_t _appGateIndex, int32_t _
     }
 }
 
+void SctpAssociation::initialize()
+{
+    // Module initialization - currently empty as timers remain in Sctp module
+}
+
+void SctpAssociation::handleMessage(cMessage *msg)
+{
+    EV_INFO << "\n\nSctpAssociation handleMessage at " << getFullPath() << "\n";
+
+    if (msg->isSelfMessage()) {
+        EV_DEBUG << "selfMessage\n";
+
+        SctpAssociation *assoc = (SctpAssociation *)msg->getContextPointer();
+        ASSERT(assoc == this);
+        if (assoc) {
+            bool ret = assoc->processTimer(msg);
+
+            if (!ret)
+                sctpMain->removeAssociation(assoc);
+        }
+    }
+    else {
+        // This should not happen - only self messages (timers) should arrive here
+        throw cRuntimeError("SctpAssociation::handleMessage() received non-self message");
+    }
+}
+
 SctpAssociation::~SctpAssociation()
 {
     EV_TRACE << "Destructor SctpAssociation " << assocId << endl;
 
-    delete T1_InitTimer;
-    delete T2_ShutdownTimer;
-    delete T5_ShutdownGuardTimer;
-    delete SackTimer;
+    // Cancel and delete association-level timers
+    cancelAndDelete(T1_InitTimer);
+    cancelAndDelete(T2_ShutdownTimer);
+    cancelAndDelete(T5_ShutdownGuardTimer);
+    cancelAndDelete(SackTimer);
 
-    delete advRwnd;
-    delete cumTsnAck;
-    delete numGapBlocks;
-    delete sendQueue;
-
-    delete statisticsOutstandingBytes;
-    delete statisticsQueuedReceivedBytes;
-    delete statisticsQueuedSentBytes;
-    delete statisticsTotalSSthresh;
-    delete statisticsTotalCwnd;
-    delete statisticsTotalBandwidth;
-
-    delete statisticsRevokableGapBlocksInLastSACK;
-    delete statisticsNonRevokableGapBlocksInLastSACK;
-    delete statisticsNumTotalGapBlocksStored;
-    delete statisticsNumRevokableGapBlocksStored;
-    delete statisticsNumNonRevokableGapBlocksStored;
-    delete statisticsNumDuplicatesStored;
-    delete statisticsNumRevokableGapBlocksSent;
-    delete statisticsNumNonRevokableGapBlocksSent;
-    delete statisticsNumDuplicatesSent;
-    delete statisticsSACKLengthSent;
-
-    delete statisticsArwndInLastSACK;
-    delete statisticsPeerRwnd;
-
-    delete StartAddIP;
-    delete advMsgRwnd;
-    delete EndToEndDelay;
-
-    int i = 0;
-    while (streamThroughputVectors[i] != nullptr) {
-        delete streamThroughputVectors[i++];
-    }
-    if (assocThroughputVector != nullptr)
-        delete assocThroughputVector;
-    if (FairStartTimer)
-        delete cancelEvent(FairStartTimer);
-    if (FairStopTimer)
-        delete cancelEvent(FairStopTimer);
+    cancelAndDelete(StartAddIP);
+    cancelAndDelete(FairStartTimer);
+    cancelAndDelete(FairStopTimer);
 
     if (state->asconfOutstanding && state->asconfChunk)
         delete state->asconfChunk;
 
+    // Clean up paths (including path timers)
+    removePath();
+
+    // Clean up streams and queues
+    deleteStreams();
+    deleteQueues();
+
     delete fsm;
     delete state;
     delete sctpAlgorithm;
+
+    // Note: Statistics now use signal-based recording, no cOutVector cleanup needed
 }
 
 bool SctpAssociation::processTimer(cMessage *msg)
@@ -942,20 +867,16 @@ bool SctpAssociation::processTimer(cMessage *msg)
         sendAsconf(type);
     }
     else if (msg == FairStartTimer) {
-        auto it = sctpMain->assocStatMap.find(assocId);
-        if (it != sctpMain->assocStatMap.end()) {
-            it->second.fairStart = simTime();
-            fairTimer = true;
-        }
+        assocStat.fairStart = simTime();
+        fairTimer = true;
     }
     else if (msg == FairStopTimer) {
-        auto it = sctpMain->assocStatMap.find(assocId);
-        if (it != sctpMain->assocStatMap.end()) {
-            it->second.fairStop = simTime();
-            it->second.fairLifeTime = it->second.fairStop - it->second.fairStart;
-            it->second.fairThroughput = it->second.fairAckedBytes / it->second.fairLifeTime.dbl();
-            fairTimer = false;
+        assocStat.fairStop = simTime();
+        assocStat.fairLifeTime = assocStat.fairStop - assocStat.fairStart;
+        if (assocStat.fairLifeTime > SIMTIME_ZERO) {
+            assocStat.fairThroughput = assocStat.fairAckedBytes / assocStat.fairLifeTime.dbl();
         }
+        fairTimer = false;
     }
     else {
         sctpAlgorithm->processTimer(msg, event);
@@ -970,6 +891,8 @@ bool SctpAssociation::processSctpMessage(SctpHeader *sctpmsg,
         const L3Address& msgSrcAddr,
         const L3Address& msgDestAddr)
 {
+    Enter_Method_Silent();
+
     printAssocBrief();
     localAddr = msgDestAddr;
     localPort = sctpmsg->getDestPort();
@@ -1067,6 +990,9 @@ SctpEventCode SctpAssociation::preanalyseAppCommandEvent(int32_t commandCode)
 
 bool SctpAssociation::processAppCommand(cMessage *msg, SctpCommandReq *sctpCommand)
 {
+    Enter_Method_Silent();
+    take(msg);
+
     printAssocBrief();
 
     SctpEventCode event = preanalyseAppCommandEvent(msg->getKind());
@@ -1677,43 +1603,42 @@ void SctpAssociation::stateEntered(int32_t status)
             state->throughputInterval = sctpMain->par("throughputInterval");
             sackPeriod = sctpMain->getSackPeriod();
             sackFrequency = sctpMain->getSackFrequency();
-            Sctp::AssocStat stat;
-            stat.assocId = assocId;
-            stat.start = simTime();
-            stat.stop = 0;
-            stat.rcvdBytes = 0;
-            stat.ackedBytes = 0;
-            stat.sentBytes = 0;
-            stat.transmittedBytes = 0;
-            stat.numFastRtx = 0;
-            stat.numT3Rtx = 0;
-            stat.numDups = 0;
-            stat.numPathFailures = 0;
-            stat.numForwardTsn = 0;
-            stat.sumRGapRanges = 0;
-            stat.sumNRGapRanges = 0;
-            stat.numOverfullSACKs = 0;
-            stat.lifeTime = 0;
-            stat.throughput = 0;
-            stat.numDropsBecauseNewTsnGreaterThanHighestTsn = 0;
-            stat.numDropsBecauseNoRoomInBuffer = 0;
-            stat.numChunksReneged = 0;
-            stat.numAuthChunksSent = 0;
-            stat.numAuthChunksAccepted = 0;
-            stat.numAuthChunksRejected = 0;
-            stat.numResetRequestsSent = 0;
-            stat.numResetRequestsPerformed = 0;
+            // Initialize association statistics
+            assocStat.assocId = assocId;
+            assocStat.start = simTime();
+            assocStat.stop = SIMTIME_ZERO;
+            assocStat.rcvdBytes = 0;
+            assocStat.ackedBytes = 0;
+            assocStat.sentBytes = 0;
+            assocStat.transmittedBytes = 0;
+            assocStat.numFastRtx = 0;
+            assocStat.numT3Rtx = 0;
+            assocStat.numDups = 0;
+            assocStat.numPathFailures = 0;
+            assocStat.numForwardTsn = 0;
+            assocStat.sumRGapRanges = 0;
+            assocStat.sumNRGapRanges = 0;
+            assocStat.numOverfullSACKs = 0;
+            assocStat.lifeTime = SIMTIME_ZERO;
+            assocStat.throughput = 0.0;
+            assocStat.numDropsBecauseNewTsnGreaterThanHighestTsn = 0;
+            assocStat.numDropsBecauseNoRoomInBuffer = 0;
+            assocStat.numChunksReneged = 0;
+            assocStat.numAuthChunksSent = 0;
+            assocStat.numAuthChunksAccepted = 0;
+            assocStat.numAuthChunksRejected = 0;
+            assocStat.numResetRequestsSent = 0;
+            assocStat.numResetRequestsPerformed = 0;
             fairTimer = false;
-            stat.fairStart = 0;
-            stat.fairStop = 0;
-            stat.fairLifeTime = 0;
-            stat.fairThroughput = 0;
-            stat.fairAckedBytes = 0;
-            stat.numEndToEndMessages = 0;
-            stat.cumEndToEndDelay = 0;
-            stat.startEndToEndDelay = sctpMain->par("startEndToEndDelay");
-            stat.stopEndToEndDelay = sctpMain->par("stopEndToEndDelay");
-            sctpMain->assocStatMap[stat.assocId] = stat;
+            assocStat.fairStart = SIMTIME_ZERO;
+            assocStat.fairStop = SIMTIME_ZERO;
+            assocStat.fairLifeTime = SIMTIME_ZERO;
+            assocStat.fairThroughput = 0.0;
+            assocStat.fairAckedBytes = 0;
+            assocStat.numEndToEndMessages = 0;
+            assocStat.cumEndToEndDelay = SIMTIME_ZERO;
+            assocStat.startEndToEndDelay = sctpMain->par("startEndToEndDelay");
+            assocStat.stopEndToEndDelay = sctpMain->par("stopEndToEndDelay");
             ccModule = sctpMain->par("ccModule");
 
             switch (ccModule) {
@@ -1754,13 +1679,7 @@ void SctpAssociation::stateEntered(int32_t status)
                 sctpMain->scheduleAt(sctpMain->par("fairStop"), FairStopTimer);
                 sctpMain->recordScalar("rtoMin", sctpMain->par("rtoMin").doubleValue());
             }
-            char str[128];
-            snprintf(str, sizeof(str), "Cumulated TSN Ack of Association %d", assocId);
-            cumTsnAck = new cOutVector(str);
-            snprintf(str, sizeof(str), "Number of Gap Blocks in Last SACK of Association %d", assocId);
-            numGapBlocks = new cOutVector(str);
-            snprintf(str, sizeof(str), "SendQueue of Association %d", assocId);
-            sendQueue = new cOutVector(str);
+
             state->sendQueueLimit = sctpMain->par("sendQueueLimit");
             Sctp::VTagPair vtagPair;
             vtagPair.peerVTag = peerVTag;
@@ -1810,25 +1729,67 @@ void SctpAssociation::removePath()
             }
         }
         EV_INFO << getFullPath() << " remove path " << path->remoteAddress << endl;
-        stopTimer(path->HeartbeatTimer);
-        delete path->HeartbeatTimer;
-        stopTimer(path->HeartbeatIntervalTimer);
-        delete path->HeartbeatIntervalTimer;
-        stopTimer(path->T3_RtxTimer);
-        delete path->T3_RtxTimer;
-        stopTimer(path->CwndTimer);
-        delete path->CwndTimer;
-        stopTimer(path->ResetTimer);
-        delete path->ResetTimer;
-        stopTimer(path->AsconfTimer);
-        delete path->AsconfTimer;
-        stopTimer(path->BlockingTimer);
-        delete path->BlockingTimer;
+        cancelAndDelete(path->HeartbeatTimer);
+        cancelAndDelete(path->HeartbeatIntervalTimer);
+        cancelAndDelete(path->T3_RtxTimer);
+        cancelAndDelete(path->CwndTimer);
+        cancelAndDelete(path->ResetTimer);
+        cancelAndDelete(path->AsconfTimer);
+        cancelAndDelete(path->BlockingTimer);
         delete path;
         sctpPathMap.erase(pathIterator);
     }
 }
 
+void SctpAssociation::stopAssocTimers()
+{
+    Enter_Method_Silent();
+
+    if (T1_InitTimer) {
+        stopTimer(T1_InitTimer);
+    }
+    if (T2_ShutdownTimer) {
+        stopTimer(T2_ShutdownTimer);
+    }
+    if (T5_ShutdownGuardTimer) {
+        stopTimer(T5_ShutdownGuardTimer);
+    }
+    if (SackTimer) {
+        stopTimer(SackTimer);
+    }
+    if (StartAddIP) {
+        stopTimer(StartAddIP);
+    }
+}
+
+void SctpAssociation::finalizeStatistics()
+{
+    // Calculate final statistics
+    assocStat.stop = simTime();
+    assocStat.lifeTime = assocStat.stop - assocStat.start;
+
+    if (assocStat.lifeTime > SIMTIME_ZERO) {
+        assocStat.throughput = assocStat.ackedBytes * 8 / assocStat.lifeTime.dbl();
+    }
+
+    if (fairTimer && assocStat.fairLifeTime > SIMTIME_ZERO) {
+        assocStat.fairThroughput = assocStat.fairAckedBytes / assocStat.fairLifeTime.dbl();
+    }
+}
+
+void SctpAssociation::finish()
+{
+    // Stop all association timers
+    stopAssocTimers();
+
+    // Finalize and record statistics
+    finalizeStatistics();
+    recordScalars();
+
+    // Note: Cleanup (removePath, deleteStreams, deleteQueues) is done in the destructor
+    // to avoid double-deletion, since both finish() and the destructor are called
+    // during normal shutdown.
+}
+
 } // namespace sctp
 } // namespace inet
-

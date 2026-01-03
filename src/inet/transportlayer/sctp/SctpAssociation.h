@@ -16,6 +16,7 @@
 #include <iostream>
 #include <list>
 
+#include "inet/common/SimpleModule.h"
 #include "inet/networklayer/common/L3Address.h"
 #include "inet/networklayer/contract/IInterfaceTable.h"
 #include "inet/networklayer/contract/ipv4/Ipv4Address.h"
@@ -265,7 +266,28 @@ inline double min(const double a, const double b) { return (a < b) ? a : b; }
  */
 inline double max(const double a, const double b) { return (a < b) ? b : a; }
 
-class INET_API SctpPathVariables : public cObject
+/**
+ * Detail object for stream-specific statistics.
+ * Used with emit() to identify which stream a statistic belongs to.
+ * The demux filter uses the object name to separate statistics by stream.
+ */
+class INET_API SctpStreamStatistic : public cNamedObject
+{
+  public:
+    uint16_t streamId;
+
+    SctpStreamStatistic(uint16_t sid) : streamId(sid) {
+        char buf[32];
+        sprintf(buf, "stream-%u", sid);
+        setName(buf);  // IMPORTANT: demux filter uses this name!
+    }
+
+    virtual std::string str() const override {
+        return std::to_string(streamId);
+    }
+};
+
+class INET_API SctpPathVariables : public cNamedObject
 {
   public:
     SctpPathVariables(const L3Address& addr, SctpAssociation *assoc, const IRoutingTable *rt);
@@ -379,35 +401,6 @@ class INET_API SctpPathVariables : public cObject
     unsigned int numberOfHeartbeatsRcvd;
     unsigned int numberOfHeartbeatAcksRcvd;
     uint64_t numberOfBytesReceived;
-
-    // ====== Output Vectors ==============================================
-    cOutVector *vectorPathFastRecoveryState;
-    cOutVector *vectorPathPbAcked;
-    cOutVector *vectorPathTsnFastRTX;
-    cOutVector *vectorPathTsnTimerBased;
-    cOutVector *vectorPathAckedTsnCumAck;
-    cOutVector *vectorPathAckedTsnGapAck;
-    cOutVector *vectorPathPseudoCumAck;
-    cOutVector *vectorPathRTXPseudoCumAck;
-    cOutVector *vectorPathBlockingTsnsMoved;
-    cOutVector *vectorPathSentTsn;
-    cOutVector *vectorPathReceivedTsn;
-    cOutVector *vectorPathHb;
-    cOutVector *vectorPathRcvdHb;
-    cOutVector *vectorPathHbAck;
-    cOutVector *vectorPathRcvdHbAck;
-    cOutVector *statisticsPathRTO;
-    cOutVector *statisticsPathRTT;
-    cOutVector *statisticsPathSSthresh;
-    cOutVector *statisticsPathCwnd;
-    cOutVector *statisticsPathOutstandingBytes;
-    cOutVector *statisticsPathQueuedSentBytes;
-    cOutVector *statisticsPathSenderBlockingFraction;
-    cOutVector *statisticsPathReceiverBlockingFraction;
-    cOutVector *statisticsPathGapAckedChunksInLastSACK;
-    cOutVector *statisticsPathGapNRAckedChunksInLastSACK;
-    cOutVector *statisticsPathGapUnackedChunksInLastSACK;
-    cOutVector *statisticsPathBandwidth;
 };
 
 class INET_API SctpDataVariables : public cObject
@@ -850,10 +843,108 @@ class INET_API SctpStateVariables : public cObject
     SctpPathVariables *primaryPath;
 };
 
-class INET_API SctpAssociation : public cObject
+class INET_API SctpAssociation : public SimpleModule
 {
     friend class Sctp;
     friend class SctpPathVariables;
+
+    // ====== Association Statistics =========================================
+    struct AssociationStatistics {
+        int32_t assocId = -1;
+        simtime_t start = SIMTIME_ZERO;
+        simtime_t stop = SIMTIME_ZERO;
+        uint64_t rcvdBytes = 0;
+        uint64_t sentBytes = 0;
+        uint64_t transmittedBytes = 0;
+        uint64_t ackedBytes = 0;
+        uint32_t numFastRtx = 0;
+        uint32_t numDups = 0;
+        uint32_t numT3Rtx = 0;
+        uint32_t numPathFailures = 0;
+        uint32_t numForwardTsn = 0;
+        double throughput = 0.0;
+        simtime_t lifeTime = SIMTIME_ZERO;
+        uint32_t numOverfullSACKs = 0;
+        uint64_t sumRGapRanges = 0;
+        uint64_t sumNRGapRanges = 0;
+        uint32_t numDropsBecauseNewTsnGreaterThanHighestTsn = 0;
+        uint32_t numDropsBecauseNoRoomInBuffer = 0;
+        uint32_t numChunksReneged = 0;
+        uint32_t numAuthChunksSent = 0;
+        uint32_t numAuthChunksAccepted = 0;
+        uint32_t numAuthChunksRejected = 0;
+        uint32_t numResetRequestsSent = 0;
+        uint32_t numResetRequestsPerformed = 0;
+        simtime_t fairStart = SIMTIME_ZERO;
+        simtime_t fairStop = SIMTIME_ZERO;
+        uint64_t fairAckedBytes = 0;
+        double fairThroughput = 0.0;
+        simtime_t fairLifeTime = SIMTIME_ZERO;
+        uint64_t numEndToEndMessages = 0;
+        SimTime cumEndToEndDelay = SIMTIME_ZERO;
+        uint64_t startEndToEndDelay = 0;
+        uint64_t stopEndToEndDelay = 0;
+    };
+
+    // ====== Signal IDs for statistics (using signal-based recording) =====
+    // Path-specific signals (use SctpPathStatistic detail object)
+    static simsignal_t pathRtoSignal;
+    static simsignal_t pathRttSignal;
+    static simsignal_t pathSsthreshSignal;
+    static simsignal_t pathCwndSignal;
+    static simsignal_t pathBandwidthSignal;
+    static simsignal_t pathOutstandingBytesSignal;
+    static simsignal_t pathQueuedSentBytesSignal;
+    static simsignal_t pathSenderBlockingFractionSignal;
+    static simsignal_t pathReceiverBlockingFractionSignal;
+    static simsignal_t pathTsnSentSignal;
+    static simsignal_t pathTsnReceivedSignal;
+    static simsignal_t pathHeartbeatSentSignal;
+    static simsignal_t pathHeartbeatAckSentSignal;
+    static simsignal_t pathHeartbeatReceivedSignal;
+    static simsignal_t pathHeartbeatAckReceivedSignal;
+    static simsignal_t pathGapAckedChunksInLastSACKSignal;
+    static simsignal_t pathGapNRAckedChunksInLastSACKSignal;
+    static simsignal_t pathGapUnackedChunksInLastSACKSignal;
+    static simsignal_t pathPartialBytesAckedSignal;
+    static simsignal_t pathFastRecoveryStateSignal;
+    static simsignal_t pathTsnFastRTXSignal;
+    static simsignal_t pathTsnTimerBasedRTXSignal;
+    static simsignal_t pathTsnAckedCumAckSignal;
+    static simsignal_t pathTsnAckedGapAckSignal;
+    static simsignal_t pathPseudoCumAckSignal;
+    static simsignal_t pathRTXPseudoCumAckSignal;
+    static simsignal_t pathBlockingTsnsMovedSignal;
+
+    // Stream-specific signals (use SctpStreamStatistic detail object)
+    static simsignal_t streamThroughputSignal;
+
+    // Association-level signals (no detail object)
+    static simsignal_t advRwndSignal;
+    static simsignal_t cumTsnAckSignal;
+    static simsignal_t sendQueueSignal;
+    static simsignal_t numGapBlocksSignal;
+    static simsignal_t outstandingBytesSignal;
+    static simsignal_t queuedReceivedBytesSignal;
+    static simsignal_t queuedSentBytesSignal;
+    static simsignal_t totalSsthreshSignal;
+    static simsignal_t totalCwndSignal;
+    static simsignal_t totalBandwidthSignal;
+    static simsignal_t revokableGapBlocksInLastSACKSignal;
+    static simsignal_t nonRevokableGapBlocksInLastSACKSignal;
+    static simsignal_t arwndInLastSACKSignal;
+    static simsignal_t peerRwndSignal;
+    static simsignal_t numTotalGapBlocksStoredSignal;
+    static simsignal_t numRevokableGapBlocksStoredSignal;
+    static simsignal_t numNonRevokableGapBlocksStoredSignal;
+    static simsignal_t numDuplicatesStoredSignal;
+    static simsignal_t numRevokableGapBlocksSentSignal;
+    static simsignal_t numNonRevokableGapBlocksSentSignal;
+    static simsignal_t numDuplicatesSentSignal;
+    static simsignal_t sackLengthSentSignal;
+    static simsignal_t advMsgRwndSignal;
+    static simsignal_t endToEndDelaySignal;
+    static simsignal_t assocThroughputSignal;
 
     // map for storing the path parameters
     typedef std::map<L3Address, SctpPathVariables *> SctpPathMap;
@@ -913,11 +1004,7 @@ class INET_API SctpAssociation : public cObject
     cMessage *SackTimer;
     cMessage *StartTesting;
     cMessage *StartAddIP;
-    cOutVector *advMsgRwnd;
-    cOutVector *EndToEndDelay;
     bool fairTimer;
-    std::map<uint16_t, cOutVector *> streamThroughputVectors;
-    cOutVector *assocThroughputVector;
     cMessage *FairStartTimer;
     cMessage *FairStopTimer;
     // ------ CMT Delayed Ack (DAC) ---------------------
@@ -942,11 +1029,6 @@ class INET_API SctpAssociation : public cObject
     CCFunctions ccFunctions;
     uint16_t ccModule;
 
-    cOutVector *advRwnd;
-    cOutVector *cumTsnAck;
-    cOutVector *sendQueue;
-    cOutVector *numGapBlocks;
-
     // Variables associated with the state of this association
     SctpStateVariables *state;
     BytesToBeSent bytes;
@@ -960,37 +1042,49 @@ class INET_API SctpAssociation : public cObject
     SctpReceiveStreamMap receiveStreams;
     SctpAlgorithm *sctpAlgorithm;
 
-    // ------ Transmission Statistics -------------------------------------
-    cOutVector *statisticsOutstandingBytes;
-    cOutVector *statisticsQueuedReceivedBytes;
-    cOutVector *statisticsQueuedSentBytes;
-    cOutVector *statisticsTotalSSthresh;
-    cOutVector *statisticsTotalCwnd;
-    cOutVector *statisticsTotalBandwidth;
-    // ------ Received SACK Statistics ------------------------------------
-    cOutVector *statisticsRevokableGapBlocksInLastSACK; // Revokable GapAck blocks in last received SACK
-    cOutVector *statisticsNonRevokableGapBlocksInLastSACK; // Non-Revokable GapAck blocks in last received SACK
-    cOutVector *statisticsArwndInLastSACK;
-    cOutVector *statisticsPeerRwnd;
-    // ------ Sent SACK Statistics ----------------------------------------
-    cOutVector *statisticsNumTotalGapBlocksStored; // Number of GapAck blocks stored (NOTE: R + NR!)
-    cOutVector *statisticsNumRevokableGapBlocksStored; // Number of Revokable GapAck blocks stored
-    cOutVector *statisticsNumNonRevokableGapBlocksStored; // Number of Non-Revokable GapAck blocks stored
-    cOutVector *statisticsNumDuplicatesStored; // Number of duplicate TSNs stored
-    cOutVector *statisticsNumRevokableGapBlocksSent; // Number of Revokable GapAck blocks sent in last SACK
-    cOutVector *statisticsNumNonRevokableGapBlocksSent; // Number of Non-Revokable GapAck blocks sent in last SACK
-    cOutVector *statisticsNumDuplicatesSent; // Number of duplicate TSNs sent in last SACK
-    cOutVector *statisticsSACKLengthSent; // Length of last sent SACK
+    // ====== Association Statistics =====================================
+    AssociationStatistics assocStat;
 
   public:
     /**
+     * Get association statistics
+     */
+    const AssociationStatistics& getStatistics() const { return assocStat; }
+
+    /**
+     * Finalize and record statistics (called before association removal)
+     */
+    void finalizeStatistics();
+
+    /**
+     * Called at the end of simulation to record statistics
+     */
+    virtual void finish() override;
+
+    /**
      * Constructor.
      */
-    SctpAssociation(Sctp *mod, int32_t appGateIndex, int32_t assocId, IRoutingTable *rt, IInterfaceTable *ift);
+    SctpAssociation();
+
     /**
      * Destructor.
      */
     ~SctpAssociation();
+
+    /**
+     * Initialize the association (called after module creation).
+     */
+    void initAssociation(Sctp *mod, int32_t appGateIndex, int32_t assocId, IRoutingTable *rt, IInterfaceTable *ift);
+
+    /**
+     * Module initialization.
+     */
+    virtual void initialize() override;
+
+    /**
+     * Handle self messages (timers) - for future use when timers move to association.
+     */
+    virtual void handleMessage(cMessage *msg) override;
     /**
      * Utility: Send data from sendQueue.
      */
@@ -1039,11 +1133,17 @@ class INET_API SctpAssociation : public cObject
      * connection structure must be deleted by the caller (SCTP).
      */
     bool processAppCommand(cMessage *msg, SctpCommandReq *sctpCommand);
+
+    // utility functions:
     void removePath();
     void removePath(const L3Address& addr);
     void deleteStreams();
+    void deleteQueues();
     void stopTimer(cMessage *timer);
-    void stopTimers();
+    void stopPathTimers();
+    void stopAssocTimers();
+    void recordScalars();
+
     SctpPathVariables *getPath(const L3Address& pathId) const
     {
         SctpPathMap::const_iterator iterator = sctpPathMap.find(pathId);
@@ -1110,6 +1210,7 @@ class INET_API SctpAssociation : public cObject
      * Process incoming SCTP packets. Invoked from process_RCV_Message
      */
     bool processInitArrived(SctpInitChunk *initChunk, int32_t sport, int32_t dport);
+    bool processInitChunk(SctpInitChunk *initChunk);
     bool processInitAckArrived(SctpInitAckChunk *initAckChunk);
     bool processCookieEchoArrived(SctpCookieEchoChunk *cookieEcho, L3Address addr);
     bool processCookieAckArrived();
@@ -1184,13 +1285,7 @@ class INET_API SctpAssociation : public cObject
     /** Utility: start a timer */
     void scheduleTimeout(cMessage *msg, const simtime_t& timeout)
     {
-        sctpMain->scheduleAfter(timeout, msg);
-    }
-
-    /** Utility: cancel a timer */
-    cMessage *cancelEvent(cMessage *msg)
-    {
-        return sctpMain->cancelEvent(msg);
+        scheduleAfter(timeout, msg);
     }
 
     /** Utility: sends packet to application */
@@ -1408,8 +1503,7 @@ class INET_API SctpAssociation : public cObject
             SctpPathVariables *sackPath);
     void nonRenegablyAckChunk(SctpDataVariables *chunk,
             SctpPathVariables *sackPath,
-            simtime_t& rttEstimation,
-            Sctp::AssocStat *assocStat);
+            simtime_t& rttEstimation);
     void handleChunkReportedAsAcked(uint32_t& highestNewAck,
             simtime_t& rttEstimation,
             SctpDataVariables *myChunk,
@@ -1487,8 +1581,7 @@ class INET_API SctpAssociation : public cObject
         if ((state->auth) && (state->peerAuth) && (typeInChunkList(chunkType)) && (authAdded == false)) {
             SctpAuthenticationChunk *authChunk = createAuthChunk();
             sctpMsg->appendSctpChunks(authChunk);
-            auto it = sctpMain->assocStatMap.find(assocId);
-            it->second.numAuthChunksSent++;
+            assocStat.numAuthChunksSent++;
             return true;
         }
         return false;
@@ -1499,4 +1592,3 @@ class INET_API SctpAssociation : public cObject
 } // namespace inet
 
 #endif
-

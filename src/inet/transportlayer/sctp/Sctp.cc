@@ -152,10 +152,6 @@ Sctp::~Sctp()
         EV_DEBUG << "clear appConnMap ptr=" << &sctpAppAssocMap << "\n";
         sctpAppAssocMap.clear();
     }
-    if (!(assocStatMap.empty())) {
-        EV_DEBUG << "clear assocStatMap ptr=" << &assocStatMap << "\n";
-        assocStatMap.clear();
-    }
     if (!(sctpVTagMap.empty())) {
         sctpVTagMap.clear();
     }
@@ -172,15 +168,9 @@ void Sctp::handleMessage(cMessage *msg)
     EV_INFO << "\n\nSctpMain handleMessage at " << getFullPath() << "\n";
 
     if (msg->isSelfMessage()) {
-        EV_DEBUG << "selfMessage\n";
-
-        SctpAssociation *assoc = (SctpAssociation *)msg->getContextPointer();
-        if (assoc) {
-            bool ret = assoc->processTimer(msg);
-
-            if (!ret)
-                removeAssociation(assoc);
-        }
+        // Timers are now handled directly by SctpAssociation submodules
+        // This should not happen anymore
+        throw cRuntimeError("Sctp::handleMessage() received unexpected self message: %s", msg->getName());
     }
     else if (msg->arrivedOn("ipIn")) {
         EV_INFO << "Message from IP\n";
@@ -327,14 +317,21 @@ void Sctp::handleMessage(cMessage *msg)
                         }
                     }
                     if (assocList.size() == 0 || assoc == nullptr) {
-                        assoc = new SctpAssociation(this, appGateIndex, assocId, rt, ift);
+                        // Create SctpAssociation as a submodule
+                        auto moduleType = cModuleType::get("inet.transportlayer.sctp.SctpAssociation");
+                        char submoduleName[24];
+                        sprintf(submoduleName, "assoc-%d", assocId);
+                        auto module = check_and_cast<SctpAssociation *>(moduleType->createScheduleInit(submoduleName, this));
+                        module->initAssociation(this, appGateIndex, assocId, rt, ift);
+                        assoc = module;
 
                         AppAssocKey key;
                         key.appGateIndex = appGateIndex;
                         key.assocId = assocId;
                         sctpAppAssocMap[key] = assoc;
-                        EV_INFO << "SCTP association created for appGateIndex " << appGateIndex << " and assoc " << assocId << "\n";
+                        EV_INFO << "SCTP association created as submodule for appGateIndex " << appGateIndex << " and assoc " << assocId << "\n";
                         bool ret = assoc->processAppCommand(msg, const_cast<SctpCommandReq *>(controlInfo.get()));
+                        take(msg);
                         if (!ret) {
                             removeAssociation(assoc);
                         }
@@ -344,6 +341,7 @@ void Sctp::handleMessage(cMessage *msg)
             else {
                 EV_INFO << "assoc found\n";
                 bool ret = assoc->processAppCommand(msg, const_cast<SctpCommandReq *>(controlInfo.get()));
+                take(msg);
                 if (!ret) {
                     removeAssociation(assoc);
                 }
@@ -805,15 +803,17 @@ bool Sctp::addRemoteAddress(SctpAssociation *assoc, L3Address localAddress, L3Ad
     return true;
 }
 
-void Sctp::addForkedAssociation(SctpAssociation *assoc, SctpAssociation *newAssoc, L3Address localAddr, L3Address remoteAddr, int32_t localPort, int32_t remotePort)
+void Sctp::addForkedAssociation(SctpAssociation *workingAssoc, SctpAssociation *listenerAssoc, L3Address localAddr, L3Address remoteAddr, int32_t localPort, int32_t remotePort)
 {
     SockPair keyAssoc;
     bool found = false;
 
-    EV_INFO << "addForkedConnection assocId=" << assoc->assocId << "    newId=" << newAssoc->assocId << "\n";
+    EV_INFO << "addForkedConnection: workingAssocId=" << workingAssoc->assocId 
+            << " listenerAssocId=" << listenerAssoc->assocId << "\n";
 
+    // Find the listener's original socket pair
     for (auto& elem : sctpAssocMap) {
-        if (assoc->assocId == elem.second->assocId) {
+        if (listenerAssoc->assocId == elem.second->assocId) {
             keyAssoc = elem.first;
             found = true;
             break;
@@ -822,26 +822,29 @@ void Sctp::addForkedAssociation(SctpAssociation *assoc, SctpAssociation *newAsso
 
     ASSERT(found == true);
 
-    // update assoc's socket pair, and register newAssoc (which'll keep LISTENing)
-    updateSockPair(assoc, localAddr, remoteAddr, localPort, remotePort);
-    updateSockPair(newAssoc, keyAssoc.localAddr, keyAssoc.remoteAddr, keyAssoc.localPort, keyAssoc.remotePort);
+    // Update socket pairs:
+    // - workingAssoc gets new socket pair (specific remote addr/port)
+    // - listenerAssoc keeps the old socket pair (wildcard remote)
+    updateSockPair(workingAssoc, localAddr, remoteAddr, localPort, remotePort);
+    updateSockPair(listenerAssoc, keyAssoc.localAddr, keyAssoc.remoteAddr, keyAssoc.localPort, keyAssoc.remotePort);
 
-    // assoc will get a new assocId...
+    // workingAssoc will get a new assocId
     AppAssocKey key;
-    key.appGateIndex = assoc->appGateIndex;
-    key.assocId = assoc->assocId;
-    sctpAppAssocMap.erase(key);
-    assoc->listeningAssocId = assoc->assocId;
-    int id = SctpSocket::getNewAssocId();
-    EV_INFO << "id = " << id << endl;
-    key.assocId = assoc->assocId = id;
-    EV_INFO << "listeningAssocId set to " << assoc->listeningAssocId << " new assocId = " << assoc->assocId << endl;
-    sctpAppAssocMap[key] = assoc;
+    key.appGateIndex = workingAssoc->appGateIndex;
+    key.assocId = workingAssoc->assocId;
+    sctpAppAssocMap.erase(key);  // Remove old mapping
 
-    // ...and newAssoc will live on with the old assocId
-    key.appGateIndex = newAssoc->appGateIndex;
-    key.assocId = newAssoc->assocId;
-    sctpAppAssocMap[key] = newAssoc;
+    workingAssoc->listeningAssocId = listenerAssoc->assocId;  // Reference to listener
+    key.assocId = workingAssoc->assocId;
+    EV_INFO << "Working connection: listeningAssocId=" << workingAssoc->listeningAssocId 
+            << " new assocId=" << workingAssoc->assocId << endl;
+    sctpAppAssocMap[key] = workingAssoc;
+
+    // listenerAssoc keeps the old assocId
+    key.appGateIndex = listenerAssoc->appGateIndex;
+    key.assocId = listenerAssoc->assocId;
+    sctpAppAssocMap[key] = listenerAssoc;
+
     sizeAssocMap = sctpAssocMap.size();
     printInfoAssocMap();
 }
@@ -855,13 +858,9 @@ void Sctp::removeAssociation(SctpAssociation *assoc)
     EV_INFO << "Deleting SCTP connection " << assoc << " id= " << id << endl;
 
     printInfoAssocMap();
+
+    // Remove association from sctpAssocMap
     if (sizeAssocMap > 0) {
-        auto assocStatMapIterator = assocStatMap.find(assoc->assocId);
-        if (assocStatMapIterator != assocStatMap.end()) {
-            assocStatMapIterator->second.stop = simTime();
-            assocStatMapIterator->second.lifeTime = assocStatMapIterator->second.stop - assocStatMapIterator->second.start;
-            assocStatMapIterator->second.throughput = assocStatMapIterator->second.ackedBytes * 8 / assocStatMapIterator->second.lifeTime.dbl();
-        }
         while (!ok) {
             if (sizeAssocMap == 0) {
                 ok = true;
@@ -873,21 +872,7 @@ void Sctp::removeAssociation(SctpAssociation *assoc)
                     if (sctpAssocMapIterator->second != nullptr) {
                         SctpAssociation *myAssoc = sctpAssocMapIterator->second;
                         if (myAssoc->assocId == assoc->assocId) {
-                            if (myAssoc->T1_InitTimer) {
-                                myAssoc->stopTimer(myAssoc->T1_InitTimer);
-                            }
-                            if (myAssoc->T2_ShutdownTimer) {
-                                myAssoc->stopTimer(myAssoc->T2_ShutdownTimer);
-                            }
-                            if (myAssoc->T5_ShutdownGuardTimer) {
-                                myAssoc->stopTimer(myAssoc->T5_ShutdownGuardTimer);
-                            }
-                            if (myAssoc->SackTimer) {
-                                myAssoc->stopTimer(myAssoc->SackTimer);
-                            }
-                            if (myAssoc->StartAddIP) {
-                                myAssoc->stopTimer(myAssoc->StartAddIP);
-                            }
+                            ASSERT(myAssoc == assoc);
                             sctpAssocMap.erase(sctpAssocMapIterator);
                             sizeAssocMap--;
                             find = true;
@@ -905,67 +890,20 @@ void Sctp::removeAssociation(SctpAssociation *assoc)
             }
         }
     }
-    // Write statistics
-    char str[128];
-    for (auto pathMapIterator = assoc->sctpPathMap.begin();
-         pathMapIterator != assoc->sctpPathMap.end(); pathMapIterator++)
-    {
-        const SctpPathVariables *path = pathMapIterator->second;
-        snprintf(str, sizeof(str), "Number of Fast Retransmissions %d:%s",
-                assoc->assocId, path->remoteAddress.str().c_str());
-        recordScalar(str, path->numberOfFastRetransmissions);
-        snprintf(str, sizeof(str), "Number of Timer-Based Retransmissions %d:%s",
-                assoc->assocId, path->remoteAddress.str().c_str());
-        recordScalar(str, path->numberOfTimerBasedRetransmissions);
-        snprintf(str, sizeof(str), "Number of Heartbeats Sent %d:%s",
-                assoc->assocId, path->remoteAddress.str().c_str());
-        recordScalar(str, path->numberOfHeartbeatsSent);
-        snprintf(str, sizeof(str), "Number of Heartbeats Received %d:%s",
-                assoc->assocId, path->remoteAddress.str().c_str());
-        recordScalar(str, path->numberOfHeartbeatsRcvd);
-        snprintf(str, sizeof(str), "Number of Heartbeat ACKs Sent %d:%s",
-                assoc->assocId, path->remoteAddress.str().c_str());
-        recordScalar(str, path->numberOfHeartbeatAcksSent);
-        snprintf(str, sizeof(str), "Number of Heartbeat ACKs Received %d:%s",
-                assoc->assocId, path->remoteAddress.str().c_str());
-        recordScalar(str, path->numberOfHeartbeatAcksRcvd);
-        snprintf(str, sizeof(str), "Number of Duplicates %d:%s",
-                assoc->assocId, path->remoteAddress.str().c_str());
-        recordScalar(str, path->numberOfDuplicates);
-        snprintf(str, sizeof(str), "Number of Bytes received from %d:%s",
-                assoc->assocId, path->remoteAddress.str().c_str());
-        recordScalar(str, path->numberOfBytesReceived);
-    }
-    for (uint16_t i = 0; i < assoc->inboundStreams; i++) {
-        snprintf(str, sizeof(str), "Bytes received on stream %d of assoc %d",
-                i, assoc->assocId);
-        recordScalar(str, assoc->getState()->streamThroughput[i]);
-    }
-    recordScalar("Blocking TSNs Moved", assoc->state->blockingTsnsMoved);
 
-    assoc->removePath();
-    assoc->deleteStreams();
+    // Call finish() to finalize and record statistics before removing association
+    // The finish() method handles stopping timers and cleanup of association-internal state
+    assoc->callFinish();
 
-    // Chunks may be in the transmission and retransmission queues simultaneously.
-    // Remove entry from transmission queue if it is already in the retransmission queue.
-    for (auto i = assoc->getRetransmissionQueue()->payloadQueue.begin();
-         i != assoc->getRetransmissionQueue()->payloadQueue.end(); i++)
-    {
-        auto j = assoc->getTransmissionQueue()->payloadQueue.find(i->second->tsn);
-        if (j != assoc->getTransmissionQueue()->payloadQueue.end()) {
-            assoc->getTransmissionQueue()->payloadQueue.erase(j);
-        }
-    }
-    // Now, both queues can be safely deleted.
-    delete assoc->getRetransmissionQueue();
-    delete assoc->getTransmissionQueue();
-
+    // Remove from application association map and list
     AppAssocKey key;
     key.appGateIndex = assoc->appGateIndex;
     key.assocId = assoc->assocId;
     sctpAppAssocMap.erase(key);
     assocList.remove(assoc);
-    delete assoc;
+
+    // Delete the association module
+    assoc->deleteModule();
 }
 
 SctpAssociation *Sctp::getAssoc(int32_t assocId)
@@ -979,72 +917,38 @@ SctpAssociation *Sctp::getAssoc(int32_t assocId)
 
 void Sctp::finish()
 {
-    auto assocMapIterator = sctpAssocMap.begin();
-    while (assocMapIterator != sctpAssocMap.end()) {
-        removeAssociation(assocMapIterator->second);
-        assocMapIterator = sctpAssocMap.begin();
-    }
     EV_INFO << getFullPath() << ": finishing SCTP with "
             << sctpAssocMap.size() << " connections open." << endl;
 
-    for (AssocStatMap::const_iterator iterator = assocStatMap.begin();
-         iterator != assocStatMap.end(); iterator++)
-    {
-        const Sctp::AssocStat& assoc = iterator->second;
+    // Record global SCTP statistics
+    recordScalar("Packets Received", numPacketsReceived);
+    recordScalar("Packets Dropped", numPacketsDropped);
+    recordScalar("Number of PacketDrop Reports", numPktDropReports);
 
-        EV_DETAIL << "Association " << assoc.assocId << ": started at " << assoc.start
-                  << " and finished at " << assoc.stop << " --> lifetime: " << assoc.lifeTime << endl;
-        EV_DETAIL << "Association " << assoc.assocId << ": sent bytes=" << assoc.sentBytes
-                  << ", acked bytes=" << assoc.ackedBytes << ", throughput=" << assoc.throughput << " bit/s" << endl;
-        EV_DETAIL << "Association " << assoc.assocId << ": transmitted Bytes="
-                  << assoc.transmittedBytes << ", retransmitted Bytes=" << assoc.transmittedBytes - assoc.ackedBytes << endl;
-        EV_DETAIL << "Association " << assoc.assocId << ": number of Fast RTX="
-                  << assoc.numFastRtx << ", number of Timer-Based RTX=" << assoc.numT3Rtx
-                  << ", path failures=" << assoc.numPathFailures << ", ForwardTsns=" << assoc.numForwardTsn << endl;
-        EV_DETAIL << "AllMessages=" << numPacketsReceived << " BadMessages=" << numPacketsDropped << endl;
-
-        recordScalar("Association Lifetime", assoc.lifeTime);
-        recordScalar("Acked Bytes", assoc.ackedBytes);
-        recordScalar("Throughput [bit/s]", assoc.throughput);
-        recordScalar("Transmitted Bytes", assoc.transmittedBytes);
-        recordScalar("Fast RTX", assoc.numFastRtx);
-        recordScalar("Timer-Based RTX", assoc.numT3Rtx);
-        recordScalar("Duplicate Acks", assoc.numDups);
-        recordScalar("Packets Received", numPacketsReceived);
-        recordScalar("Packets Dropped", numPacketsDropped);
-        recordScalar("Sum of R Gap Ranges", assoc.sumRGapRanges);
-        recordScalar("Sum of NR Gap Ranges", assoc.sumNRGapRanges);
-        recordScalar("Overfull SACKs", assoc.numOverfullSACKs);
-        recordScalar("Drops Because New TSN Greater Than Highest TSN", assoc.numDropsBecauseNewTsnGreaterThanHighestTsn);
-        recordScalar("Drops Because No Room In Buffer", assoc.numDropsBecauseNoRoomInBuffer);
-        recordScalar("Chunks Reneged", assoc.numChunksReneged);
+    if (socketOptions) {
         recordScalar("sackPeriod", (simtime_t)socketOptions->sackPeriod);
-        recordScalar("Number of AUTH chunks sent", assoc.numAuthChunksSent);
-        recordScalar("Number of AUTH chunks accepted", assoc.numAuthChunksAccepted);
-        recordScalar("Number of AUTH chunks rejected", assoc.numAuthChunksRejected);
-        recordScalar("Number of StreamReset requests sent", assoc.numResetRequestsSent);
-        recordScalar("Number of StreamReset requests performed", assoc.numResetRequestsPerformed);
-        if (par("fairStart").doubleValue() > 0.0) {
-            recordScalar("fair acked bytes", assoc.fairAckedBytes);
-            recordScalar("fair start time", assoc.fairStart);
-            recordScalar("fair stop time", assoc.fairStop);
-            recordScalar("fair lifetime", assoc.fairLifeTime);
-            recordScalar("fair throughput", assoc.fairThroughput);
-        }
-        recordScalar("Number of PacketDrop Reports", numPktDropReports);
-
-        if (assoc.numEndToEndMessages > 0 && (assoc.cumEndToEndDelay / assoc.numEndToEndMessages) > 0) {
-            uint32_t msgnum = assoc.numEndToEndMessages - assoc.startEndToEndDelay;
-            if (assoc.stopEndToEndDelay > 0)
-                msgnum -= (assoc.numEndToEndMessages - assoc.stopEndToEndDelay);
-            recordScalar("Average End to End Delay", assoc.cumEndToEndDelay / msgnum);
-        }
-
-        recordScalar("RTXMethod", par("RTXMethod").intValue());
     }
+    recordScalar("RTXMethod", par("RTXMethod").intValue());
+
+    EV_DETAIL << "SCTP Module Statistics:" << endl;
+    EV_DETAIL << "  Total packets received: " << numPacketsReceived << endl;
+    EV_DETAIL << "  Total packets dropped: " << numPacketsDropped << endl;
+}
+
+void Sctp::sendToIp(cMessage *msg)
+{
+    Enter_Method_Silent();
+    take(msg);
+    send(msg, "ipOut");
+}
+
+void Sctp::sendToApp(cMessage *msg)
+{
+    Enter_Method_Silent();
+    take(msg);
+    send(msg, "appOut");
 }
 
 } // namespace sctp
 
 } // namespace inet
-
