@@ -6,6 +6,7 @@
 
 
 #include "inet/clock/base/ClockBase.h"
+#include "inet/common/IPrintableObject.h"
 #include "inet/common/ModuleRefByPar.h"
 
 namespace inet {
@@ -32,7 +33,9 @@ void ClockBase::initialize(int stage)
 void ClockBase::handleMessage(cMessage *msg)
 {
     if (msg == timer) {
-        emit(timeChangedSignal, getClockTime().asSimTime());
+        clocktime_t clockTime = getClockTime();
+        EV_DEBUG << "Handling periodic clock time reporting event" << EV_FIELD(clockTime) << EV_ENDL;
+        emit(timeChangedSignal, clockTime.asSimTime());
         scheduleAfter(emitClockTimeInterval, timer);
     }
     else
@@ -54,8 +57,8 @@ void ClockBase::checkScheduledClockEvent(const ClockEvent *event) const
         // NOTE: IClock interface 4. invariant
         DEBUG_CMP(event->getArrivalTime(), ==, computeScheduleTime(event->getArrivalClockTime()));
         // NOTE: IClock interface 5. invariant
-//        DEBUG_CMP(event->getArrivalClockTime(), >=, computeClockTimeFromSimTime(event->getArrivalTime(), false));
-//        DEBUG_CMP(event->getArrivalClockTime(), <=, computeClockTimeFromSimTime(event->getArrivalTime(), true));
+        DEBUG_CMP(event->getArrivalClockTime(), >=, computeClockTimeFromSimTime(event->getArrivalTime(), true));
+        DEBUG_CMP(event->getArrivalClockTime(), <=, computeClockTimeFromSimTime(event->getArrivalTime(), false));
     }
     DEBUG_LEAVE();
 }
@@ -70,7 +73,11 @@ cSimpleModule *ClockBase::getTargetModule() const
 
 clocktime_t ClockBase::getClockTime() const
 {
-    return clockEventTime != -1 ? clockEventTime : computeClockTimeFromSimTime(simTime());
+    clocktime_t currentClockTime = computeClockTimeFromSimTime(simTime());
+    // NOTE: IClock interface 1. invariant
+    DEBUG_CMP(currentClockTime, >=, lastClockTime);
+    lastClockTime = currentClockTime;
+    return currentClockTime;
 }
 
 simtime_t ClockBase::computeScheduleTime(clocktime_t clockTime) const
@@ -113,14 +120,16 @@ ClockEvent *ClockBase::cancelTargetModuleClockEvent(ClockEvent *msg)
     return msg;
 }
 
-void ClockBase::scheduleClockEventAt(clocktime_t t, ClockEvent *msg)
+void ClockBase::scheduleClockEventAt(clocktime_t clockTime, ClockEvent *msg)
 {
-    if (t < getClockTime())
+    if (clockTime < getClockTime())
         throw cRuntimeError("Cannot schedule clock event in the past");
     msg->setClock(this);
     msg->setRelative(false);
-    msg->setArrivalClockTime(t);
-    scheduleTargetModuleClockEventAt(computeScheduleTime(t), msg);
+    msg->setArrivalClockTime(clockTime);
+    simtime_t simulationTime = computeScheduleTime(clockTime);
+    EV_DEBUG << "Scheduling clock event at" << EV_FIELD(clockTime) << EV_FIELD(simulationTime) << EV_FIELD(msg) << EV_ENDL;
+    scheduleTargetModuleClockEventAt(simulationTime, msg);
     checkScheduledClockEvent(msg);
 }
 
@@ -133,13 +142,15 @@ void ClockBase::scheduleClockEventAfter(clocktime_t clockTimeDelay, ClockEvent *
     clocktime_t nowClock = getClockTime();
     clocktime_t arrivalClockTime = nowClock + clockTimeDelay;
     msg->setArrivalClockTime(arrivalClockTime);
-    simtime_t simTimeDelay = clockTimeDelay.isZero() ? SIMTIME_ZERO : computeScheduleTime(arrivalClockTime) - simTime();
-    scheduleTargetModuleClockEventAfter(simTimeDelay, msg);
+    simtime_t simulationTimeDelay = clockTimeDelay.isZero() ? SIMTIME_ZERO : computeScheduleTime(arrivalClockTime) - simTime();
+    EV_DEBUG << "Scheduling clock event after" << EV_FIELD(clockTimeDelay) << EV_FIELD(simulationTimeDelay) << EV_FIELD(msg) << EV_ENDL;
+    scheduleTargetModuleClockEventAfter(simulationTimeDelay, msg);
     checkScheduledClockEvent(msg);
 }
 
 ClockEvent *ClockBase::cancelClockEvent(ClockEvent *msg)
 {
+    EV_DEBUG << "Canceling clock event" << EV_FIELD(msg) << EV_ENDL;
     cancelTargetModuleClockEvent(msg);
     msg->setClock(nullptr);
     return msg;
@@ -147,10 +158,10 @@ ClockEvent *ClockBase::cancelClockEvent(ClockEvent *msg)
 
 void ClockBase::handleClockEvent(ClockEvent *msg)
 {
-    clockEventTime = msg->getArrivalClockTime();
+    clocktime_t clockTime = getClockTime();
+    EV_DEBUG << "Handling clock event" << EV_FIELD(clockTime) << EV_FIELD(msg) << EV_ENDL;
     msg->setClock(nullptr);
     msg->callBaseExecute();
-    clockEventTime = -1;
 }
 
 std::string ClockBase::resolveDirective(char directive) const
