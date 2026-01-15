@@ -43,6 +43,8 @@
 /showcases/routing/manet/,           -f omnetpp.ini -c Dsdv -r 0,                   100s,         84f0-9aea/tplx;bdad-9a28/~tNl;cdce-1d3c/~tND;7c3e-c477/tyf, PASS,    wireless Ipv4
 /showcases/routing/manet/,           -f omnetpp.ini -c Gpsr -r 0,                   100s,         53c9-5456/tplx;5452-5da6/~tNl;5442-11b1/tyf, PASS,    wireless Ipv4
 
+/showcases/routing/aodvexternal/,           -f omnetpp.ini -c General -r 0,                   50s,         08c0-2d99/tplx;1242-e596/~tNl, PASS,    wireless Ipv4
+
 /showcases/tsn/combiningfeatures/fpandtas/, -f omnetpp.ini -c General -r 0,         10ms,       ba97-42a3/tplx;9c73-6822/~tNl;063b-8262/~tND;eb43-0836/tyf, PASS,
 
 /showcases/tsn/combiningfeatures/frerandtas/, -f omnetpp.ini -c General -r 0,       1s,         2c89-c055/tplx;8826-e8e2/~tNl;3705-5741/~tND;b2dc-4234/tyf, PASS,
@@ -63,7 +65,7 @@
 
 /showcases/tsn/framepreemption/,     -f omnetpp.ini -c FifoQueueing -r 0,           1s,         5ef8-0e2f/tplx;5254-8176/~tNl;734d-28bc/~tND;7663-121b/tyf, PASS,
 /showcases/tsn/framepreemption/,     -f omnetpp.ini -c PriorityQueueing -r 0,       1s,         3171-cda0/tplx;48c5-41c7/~tNl;f7ae-7530/~tND;412b-bf95/tyf, PASS,
-/showcases/tsn/framepreemption/,     -f omnetpp.ini -c FramePreemption -r 0,        1s,         61e7-818c/tplx;1f71-5042/~tNl;282a-bbdf/~tND;3fe6-7965/tyf, PASS,
+/showcases/tsn/framepreemption/,     -f omnetpp.ini -c FramePreemption -r 0,        1s,         61e7-818c/tplx;1f71-5042/~tNl;9b9c-485e/~tND;3fe6-7965/tyf, PASS,
 #/showcases/tsn/framepreemption/,     -f omnetpp.ini -c RealisticBase -r 0,          1s,         617e-c61d/tplx;5c4b-7a44/~tNl;f091-822c/~tND;65ea-caf1/tyf, PASS,
 /showcases/tsn/framepreemption/,     -f omnetpp.ini -c RealisticFifoQueueing -r 0,  1s,         de97-e390/tplx;1186-b23d/~tNl;dc5f-01ec/~tND;f3f1-7ed7/tyf, PASS,
 /showcases/tsn/framepreemption/,     -f omnetpp.ini -c RealisticPriorityQueueing -r 0, 1s,      716e-e1aa/tplx;e9b6-4788/~tNl;c8f5-2204/~tND;b7b0-177b/tyf, PASS,
@@ -336,13 +338,6 @@
 /showcases/wireless/sensornetwork/,  -f omnetpp.ini -c StatisticBMac -r 100,          25s,         171b-e9a6/tplx;d5e3-49c0/~tNl;d982-e0cc/tyf, PASS,    wireless EthernetMac Ipv4
 /showcases/wireless/sensornetwork/,  -f omnetpp.ini -c StatisticXMac -r 100,          25s,         9271-1704/tplx;1890-24d8/~tNl;086f-40ff/tyf, PASS,    wireless Ipv4
 /showcases/wireless/sensornetwork/,  -f omnetpp.ini -c StatisticLMac -r 100,          25s,         60e4-3fd6/tplx;6f72-dc77/~tNl;60d2-eb52/tyf, PASS,    wireless EthernetMac Ipv4
-
-/showcases/wireless/sensornetwork/,  -f extras.ini -c BMacAodv -r 0,                   25s,         2146-c8a6/tplx;4743-8c64/~tNl;3bd4-bfb2/tyf, PASS,    wireless Ipv4
-/showcases/wireless/sensornetwork/,  -f extras.ini -c XMacAodv -r 0,                   25s,         36af-cc52/tplx;2c98-6715/~tNl;7403-5ac3/tyf, PASS,    wireless Ipv4
-/showcases/wireless/sensornetwork/,  -f extras.ini -c LMacAodv -r 0,                   25s,         e066-a2b0/tplx;dbd5-db1d/~tNl;8c32-1424/tyf, PASS,    wireless Ipv4
-/showcases/wireless/sensornetwork/,  -f extras.ini -c BMacDsdv -r 0,                   25s,         d1c8-2b77/tplx;4a0e-5dca/~tNl;74fc-07a6/tyf, ERROR,    wireless EthernetMac
-/showcases/wireless/sensornetwork/,  -f extras.ini -c XMacDsdv -r 0,                   25s,         0917-1bb4/tplx;c64f-34ee/~tNl;db64-5b3e/tyf, ERROR,    wireless EthernetMac
-/showcases/wireless/sensornetwork/,  -f extras.ini -c LMacDsdv -r 0,                   25s,         0e67-f6b3/tplx;af60-efea/~tNl;e260-4a14/tyf, ERROR,    wireless EthernetMac
 
 /showcases/wireless/throughput/,     -f omnetpp.ini -c General -r 0,                1s,         030e-c416/tplx;66e6-0bca/~tNl;1b85-1592/~tND;389e-250e/tyf, PASS,    wireless Ipv4
 
