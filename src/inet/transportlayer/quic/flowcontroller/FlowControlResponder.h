@@ -1,0 +1,89 @@
+//
+// Copyright (C) 2019-2024 Timo Völker, Ekaterina Volodina
+// Copyright (C) 2025 OpenSim Ltd.
+//
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+
+#ifndef INET_APPLICATIONS_QUIC_FLOWCONTROLLER_FLOWCONTROLRESPONDER_H_
+#define INET_APPLICATIONS_QUIC_FLOWCONTROLLER_FLOWCONTROLRESPONDER_H_
+
+#include "../packet/QuicFrame.h"
+#include "inet/common/packet/ChunkQueue.h"
+#include "../Statistics.h"
+
+namespace inet {
+namespace quic {
+
+class Connection;
+
+class FlowControlResponder {
+public:
+    FlowControlResponder(uint64_t initialWindowSize, uint64_t maxDataFrameThreshold, bool roundConsumedDataValue, Statistics *stats);
+    virtual ~FlowControlResponder();
+
+    virtual uint64_t getRcvwnd();
+    virtual void updateConsumedData(uint64_t dataSize);
+    virtual bool isSendMaxDataFrame();
+
+protected:
+    virtual void updateHighestRecievedOffset(uint64_t offset) = 0;
+    virtual void onDataBlockedFrameReceived(uint64_t dataLimit) = 0;
+    virtual QuicFrame *generateMaxDataFrame() = 0;
+    virtual QuicFrame *onMaxDataFrameLost() = 0;
+
+    uint64_t maxReceiveOffset = 0;
+    uint64_t highestRecievedOffset = 0;
+    uint64_t consumedData = 0;
+    uint64_t lastConsumedData = 0;
+    uint64_t maxRcvwnd = 0;
+    uint64_t lastMaxRcvOffset = 0;
+    uint64_t maxDataFrameThreshold;
+
+    //Statistic
+    uint64_t rcvBlockFrameCount = 0;
+    uint64_t generatedMaxDataFrameCount = 0;
+    uint64_t maxDataFrameLostCount = 0;
+
+    Statistics *stats;
+    simsignal_t rcvBlockFrameCountStat;
+    simsignal_t genMaxDataFrameCountStat;
+    simsignal_t maxDataFrameOffsetStat;
+    simsignal_t consumedDataStat;
+    simsignal_t maxDataFrameLostCountStat;
+
+    bool roundConsumedDataValue = false;
+};
+
+class ConnectionFlowControlResponder: public FlowControlResponder {
+public:
+    ConnectionFlowControlResponder(Connection *connection, uint64_t kDefaultConnectionWindowSize, uint64_t maxDataFrameThreshold, bool roundConsumedDataValue, Statistics *stats);
+    ~ConnectionFlowControlResponder();
+
+    virtual void updateHighestRecievedOffset(uint64_t offset);
+    virtual void onDataBlockedFrameReceived(uint64_t dataLimit);
+    virtual QuicFrame *generateMaxDataFrame();
+    virtual QuicFrame *onMaxDataFrameLost();
+
+private:
+    Connection *connection;
+};
+
+class StreamFlowControlResponder: public FlowControlResponder {
+public:
+    StreamFlowControlResponder(Stream *stream, uint64_t kDefaultStreamWindowSize, uint64_t maxDataFrameThreshold, bool roundConsumedDataValue, Statistics *stats);
+    ~StreamFlowControlResponder();
+
+    virtual void updateHighestRecievedOffset(uint64_t offset);
+    virtual void onDataBlockedFrameReceived(uint64_t dataLimit);
+    virtual QuicFrame *generateMaxDataFrame();
+    virtual QuicFrame *onMaxDataFrameLost();
+
+private:
+    Stream *stream;
+};
+
+} /* namespace quic */
+} /* namespace inet */
+
+#endif /* INET_APPLICATIONS_QUIC_FLOWCONTROLLER_FLOWCONTROLRESPONDER_H_ */

@@ -1,0 +1,295 @@
+//
+// Copyright (C) 2019-2024 Timo Völker, Ekaterina Volodina
+// Copyright (C) 2025 OpenSim Ltd.
+//
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+
+#include "Stream.h"
+#include "../packet/QuicStreamFrame.h"
+
+namespace inet {
+namespace quic {
+
+#define minvalue(x,y,z) (x < y ? (x < z ? x : z) : (y < z ? y : z))
+
+Stream::Stream(uint64_t id, Connection *connection, Statistics *connStats) {
+    this->id = id;
+    this->connection = connection;
+    this->streamCreatedTime = simTime();
+
+    this->stats = new Statistics(connStats, "_sid=" + std::to_string(id));
+    sendBufferUnsentAppDataStat = stats->createStatisticEntry("sendBufferUnsentAppData");
+    streamRcvAppDataStat = stats->createStatisticEntry("streamRcvAppData");
+    stats->getMod()->emit(streamRcvAppDataStat, (uint64_t)0);
+
+    streamFlowController = new StreamFlowController(id, connection->getRemoteTransportParameters()->initialMaxStreamData, stats);
+    streamFlowControlResponder = new StreamFlowControlResponder(this, connection->getLocalTransportParameters()->initialMaxStreamData, connection->getMaxStreamDataFrameThreshold(), connection->getRoundConsumedDataValue(), stats);
+    receiveQueue = new StreamRcvQueue(this, stats);
+}
+
+Stream::~Stream() {
+    delete streamFlowController;
+    delete streamFlowControlResponder;
+    delete receiveQueue;
+    delete stats;
+}
+
+void Stream::enqueueDataFromApp(Ptr<const Chunk> data)
+{
+    sendQueue.addData(data);
+    stats->getMod()->emit(sendBufferUnsentAppDataStat, sendQueue.getTotalDataLengthToSend());
+}
+
+uint64_t Stream::getSendQueueLength()
+{
+    return sendQueue.getTotalDataLength();
+}
+
+Ptr<StreamFrameHeader> Stream::createHeader(StreamSndQueue::Region region)
+{
+    Ptr<StreamFrameHeader> header = makeShared<StreamFrameHeader>();
+    header->setStreamId(this->id);
+    header->setOffset(B(region.offset).get());
+    header->setLength(B(region.length).get());
+    header->calcChunkLength();
+    return header;
+}
+
+uint64_t Stream::getNextStreamFrameSize(uint64_t maxFrameSize)
+{
+    StreamSndQueue::Region region = sendQueue.getNextSendRegion();
+    if (region.offset == b(-1)) {
+        // no data to send
+        return 0;
+    }
+
+    // check flow control windows
+    b availRwnd = B(checkAndGetAvailableRwnd());
+    if (availRwnd == b(0)) {
+        // cannot send data because flow control window is 0
+        return 0;
+    }
+    if (region.length > availRwnd) {
+        region.length = availRwnd;
+    }
+
+    auto header = createHeader(region);
+    b headerLength = header->getChunkLength();
+    b maxFrameBytes = B(maxFrameSize);
+    if (maxFrameBytes <= headerLength) {
+        // not enough space for the header
+        return 0;
+    }
+
+    b frameBytes = region.length + headerLength;
+    if (maxFrameBytes <= frameBytes) {
+        return maxFrameSize;
+    }
+    return B(frameBytes).get();
+}
+
+QuicFrame *Stream::generateStreamFrame(uint64_t offset, uint64_t length)
+{
+    StreamSndQueue::Region region = sendQueue.getSendRegion(B(offset), B(length));
+    if (region.offset == b(-1)) {
+        // no data to send
+        return nullptr;
+    }
+
+    // check flow control windows
+    b availRwnd = B(checkAndGetAvailableRwnd());
+    if (availRwnd == b(0)) {
+        // cannot send data because flow control window is 0
+        return nullptr;
+    }
+    if (region.length > availRwnd) {
+        region.length = availRwnd;
+    }
+
+    auto header = createHeader(region);
+    sendQueue.addOutstandingRegion(region);
+    QuicStreamFrame *frame = new QuicStreamFrame(this);
+    frame->setHeader(header);
+
+    stats->getMod()->emit(sendBufferUnsentAppDataStat, sendQueue.getTotalDataLengthToSend());
+
+    /* TODO: How to count retransmitted data?
+    streamFlowController->onStreamFrameSent(B(region.length).get());
+    connectionFlowController->onStreamFrameSent(B(region.length).get());
+    */
+    return frame;
+}
+
+QuicFrame *Stream::generateNextStreamFrame(uint64_t maxFrameSize)
+{
+    StreamSndQueue::Region region = sendQueue.getNextSendRegion();
+    if (region.offset == b(-1)) {
+        throw cRuntimeError("Attempt to generate stream frame failed because no data are available.");
+    }
+
+    // check flow control windows
+    b availRwnd = B(checkAndGetAvailableRwnd());
+    if (availRwnd == b(0)) {
+        // cannot send data because flow control window is 0
+        return nullptr;
+    }
+    if (region.length > availRwnd) {
+        region.length = availRwnd;
+    }
+
+    b maxFrameBytes = B(maxFrameSize);
+    if (region.length > maxFrameBytes) {
+        region.length = B(maxFrameSize - StreamFrameHeader::MIN_HEADER_SIZE);
+    }
+
+    auto header = createHeader(region);
+    b headerLength = header->getChunkLength();
+    EV_DEBUG << "region (" << region.offset << ", " << region.length << ") headerLength = " << headerLength << endl;
+    if (maxFrameBytes <= headerLength) {
+        throw cRuntimeError("Attempt to generate stream frame failed because maxFrameSize is too small for the stream header.");
+    }
+
+    if (maxFrameBytes < region.length + headerLength) {
+        region.length = maxFrameBytes - headerLength;
+        header = createHeader(region);
+        EV_DEBUG << "new region (" << region.offset << ", " << region.length << ") headerLength = " << header->getChunkLength() << endl;
+    }
+
+    sendQueue.addOutstandingRegion(region);
+    QuicStreamFrame *frame = new QuicStreamFrame(this);
+    frame->setHeader(header);
+
+    stats->getMod()->emit(sendBufferUnsentAppDataStat, sendQueue.getTotalDataLengthToSend());
+
+    streamFlowController->onStreamFrameSent(B(region.length).get());
+    connection->getConnectionFlowController()->onStreamFrameSent(B(region.length).get());
+
+    return frame;
+}
+
+const Ptr<const Chunk> Stream::getDataToSend(uint64_t offset, uint64_t length)
+{
+    auto data = sendQueue.getData(B(offset), B(length));
+    if (data == nullptr) {
+        throw cRuntimeError("Unable to fetch data from send buffer");
+    }
+    return data;
+}
+
+void Stream::streamDataLost(uint64_t offset, uint64_t length)
+{
+    sendQueue.dataLost(B(offset), B(length));
+    streamFlowController->onStreamFrameLost(length);
+    connection->getConnectionFlowController()->onStreamFrameLost(length);
+    stats->getMod()->emit(sendBufferUnsentAppDataStat, sendQueue.getTotalDataLengthToSend());
+}
+
+void Stream::streamDataAcked(uint64_t offset, uint64_t length)
+{
+    sendQueue.dataAcked(B(offset), B(length));
+}
+
+void Stream::bufferReceivedData(Ptr<const Chunk> data, uint64_t offset)
+{
+    //Handling unordered stream frames
+    receiveQueue->push(data, offset);
+}
+
+void Stream::processFlowControlResponder(uint64_t dataSize)
+{
+    streamFlowControlResponder->updateConsumedData(dataSize);
+
+    if (streamFlowControlResponder->isSendMaxDataFrame()){
+        auto maxStreamDataFrame = streamFlowControlResponder->generateMaxDataFrame();
+        connection->getControlQueue()->push_back(maxStreamDataFrame);
+     }
+}
+
+void Stream::updateHighestRecievedOffset(uint64_t offset){
+    streamFlowControlResponder->updateHighestRecievedOffset(offset);
+}
+
+bool Stream::hasDataForApp()
+{
+    return receiveQueue->hasDataForApp();
+}
+
+uint64_t Stream::getAvailableDataSizeForApp()
+{
+    return B(receiveQueue->reorderBuffer.getAvailableDataLength()).get();
+}
+
+Ptr<const Chunk> Stream::getDataForApp(B dataSize)
+{
+    Ptr<const Chunk> chunk = receiveQueue->pop(dataSize);
+    auto chunkSize = B(chunk->getChunkLength()).get();
+
+    ConnectionFlowControlResponder *connectionFlowControlResponder = connection->getConnectionFlowControlResponder();
+    connectionFlowControlResponder->updateConsumedData(chunkSize);
+
+    if (connectionFlowControlResponder->isSendMaxDataFrame()){
+        auto maxDataFrame = connectionFlowControlResponder->generateMaxDataFrame();
+        connection->getControlQueue()->push_back(maxDataFrame);
+    }
+
+    processFlowControlResponder(chunkSize);
+    return chunk;
+}
+
+uint64_t Stream::checkAndGetAvailableRwnd()
+{
+    //check if connection flow control allowed to send Data
+    ConnectionFlowController *connectionFlowController = connection->getConnectionFlowController();
+    if(connectionFlowController->getAvailableRwnd()==0  && !connectionFlowController->isDataBlockedFrameWasSend()){
+        auto blockedFrame = connectionFlowController->generateDataBlockFrame();
+        connection->getControlQueue()->push_back(blockedFrame);
+    }
+
+    //check if stream flow control allowed to send Data
+     if (streamFlowController->getAvailableRwnd() == 0 && !streamFlowController->isDataBlockedFrameWasSend()){
+         auto blockedFrame = streamFlowController->generateDataBlockFrame();
+         connection->getControlQueue()->push_back(blockedFrame);
+     }
+    EV_DEBUG << "checkAndGetAvailableRwnd for stream " << id << " - remaining flow control credits: connection: " << connectionFlowController->getAvailableRwnd() << ", stream: " << streamFlowController->getAvailableRwnd() << endl;
+    return (std::min(connectionFlowController->getAvailableRwnd(), streamFlowController->getAvailableRwnd()));
+}
+
+bool Stream::isAllowedToReceivedData(uint64_t dataSize)
+{
+    if(connection->getRoundConsumedDataValue()){
+        auto maxStreamDataSizeInQuicPacket = connection->getPath()->getMaxQuicPacketSize() - OneRttPacketHeader::SIZE;
+        if(connection->getConnectionFlowControlResponder()->getRcvwnd() + maxStreamDataSizeInQuicPacket >= dataSize && streamFlowControlResponder->getRcvwnd() + maxStreamDataSizeInQuicPacket >= dataSize) return true;
+        else {throw cRuntimeError("FLOW_CONTROL_ERROR");}
+    }else{
+        if(connection->getConnectionFlowControlResponder()->getRcvwnd() >= dataSize && streamFlowControlResponder->getRcvwnd() >= dataSize) return true;
+        else {throw cRuntimeError("FLOW_CONTROL_ERROR");}
+    }
+}
+
+void Stream::onDataBlockedFrameReceived(uint64_t streamDataLimit)
+{
+    streamFlowControlResponder->onDataBlockedFrameReceived(streamDataLimit);
+}
+
+void Stream::onMaxStreamDataFrameReceived(uint64_t maxStreamData)
+{
+    streamFlowController->onMaxFrameReceived(maxStreamData);
+}
+
+void Stream::onMaxStreamDataFrameLost()
+{
+    auto maxStreamDataFrame = streamFlowControlResponder->onMaxDataFrameLost();
+    connection->getControlQueue()->push_back(maxStreamDataFrame);
+
+// send retransmission of FC update immediately
+//    this->connection->sendPackets();
+}
+
+void Stream::measureStreamRcvDataBytes(uint64_t dataLength)
+{
+    stats->getMod()->emit(streamRcvAppDataStat, dataLength);
+}
+
+} /* namespace quic */
+} /* namespace inet */
