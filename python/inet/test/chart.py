@@ -121,8 +121,11 @@ class MultipleChartTestTasks(MultipleTestTasks):
         self.kwargs = kwargs
         self.multiple_simulation_tasks = multiple_simulation_tasks
 
+    def count_tasks(self):
+        return super().count_tasks() + self.multiple_simulation_tasks.count_tasks()
+
     def run_protected(self, **kwargs):
-        multiple_simulation_task_results = self.multiple_simulation_tasks.run_protected(**kwargs)
+        multiple_simulation_task_results = self.multiple_simulation_tasks.run(**kwargs)
         # avoid reusing the processes from the process pool because matplotlib can generate different images due to tight layout
         return super().run_protected(**kwargs, maxtasksperchild=1)
 
@@ -236,8 +239,11 @@ class MultipleChartUpdateTasks(MultipleUpdateTasks):
         self.kwargs = kwargs
         self.multiple_simulation_tasks = multiple_simulation_tasks
 
+    def count_tasks(self):
+        return super().count_tasks() + self.multiple_simulation_tasks.count_tasks()
+
     def run_protected(self, **kwargs):
-        multiple_simulation_task_results = self.multiple_simulation_tasks.run_protected(**kwargs)
+        multiple_simulation_task_results = self.multiple_simulation_tasks.run(**kwargs)
         # avoid reusing the processes from the process pool because matplotlib can generate different images due to tight layout
         return super().run_protected(**kwargs, maxtasksperchild=1)
 

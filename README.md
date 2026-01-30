@@ -1,3 +1,5 @@
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/inet-framework/inet)
+
 [![Build: Linux](https://github.com/aarizaq/inetmanet-4.x/actions/workflows/build-linux.yml/badge.svg)](https://github.com/aarizaq/inetmanet-4.x/actions/workflows/build-linux.yml)
 [![Build: Mac OS](https://github.com/aarizaq/inetmanet-4.x/actions/workflows/build-macos.yml/badge.svg)](https://github.com/aarizaq/inetmanet-4.x/actions/workflows/build-macos.yml)
 [![Build: Windows](https://github.com/aarizaq/inetmanet-4.x/actions/workflows/build-windows.yml/badge.svg)](https://github.com/aarizaq/inetmanet-4.x/actions/workflows/build-windows.yml)

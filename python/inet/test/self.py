@@ -64,8 +64,8 @@ def run_long_nested_multiple_external_tasks():
 #  - native environment vs specific nix environment
 
 class SimulationSelfTestTask(TestTask):
-    def __init__(self, simulation_project, action="Running simulation self test", print_run_start_separately=False, **kwargs):
-        super().__init__(simulation_project=simulation_project, action=action, print_run_start_separately=print_run_start_separately, **kwargs)
+    def __init__(self, simulation_project, action="Running simulation self test", **kwargs):
+        super().__init__(simulation_project=simulation_project, action=action, **kwargs)
         self.simulation_project = simulation_project
 
     def get_parameters_string(self, **kwargs):
@@ -76,8 +76,8 @@ class SimulationSelfTestTask(TestTask):
         return TaskResult(task=self, result=simulation_task_results.result)
 
 class SmokeTestSelfTestTask(TestTask):
-    def __init__(self, simulation_project, action="Running smoke test self test", print_run_start_separately=False, **kwargs):
-        super().__init__(simulation_project=simulation_project, action=action, print_run_start_separately=print_run_start_separately, **kwargs)
+    def __init__(self, simulation_project, action="Running smoke test self test", **kwargs):
+        super().__init__(simulation_project=simulation_project, action=action, **kwargs)
         self.simulation_project = simulation_project
 
     def get_parameters_string(self, **kwargs):
@@ -88,8 +88,8 @@ class SmokeTestSelfTestTask(TestTask):
         return TestTaskResult(task=self, result=smoke_test_task_results.result)
 
 class FingerprintTestSelfTestTask(TestTask):
-    def __init__(self, simulation_project, action="Running fingerprint test self test", print_run_start_separately=False, **kwargs):
-        super().__init__(simulation_project=simulation_project, action=action, print_run_start_separately=print_run_start_separately, **kwargs)
+    def __init__(self, simulation_project, action="Running fingerprint test self test", **kwargs):
+        super().__init__(simulation_project=simulation_project, action=action, **kwargs)
         self.simulation_project = simulation_project
 
     def get_parameters_string(self, **kwargs):
@@ -103,18 +103,18 @@ class FingerprintTestSelfTestTask(TestTask):
         return TestTaskResult(task=self, result=fingerprint_test_task_results.result)
 
 class SimulationProjectSelfTestTasks(MultipleTestTasks):
-    def __init__(self, simulation_project, name="simulation project self test", print_run_start_separately=False, **kwargs):
+    def __init__(self, simulation_project, name="simulation project self test", **kwargs):
         super().__init__(tasks = [SimulationSelfTestTask(simulation_project=simulation_project, concurrent=True, **kwargs),
                                   SmokeTestSelfTestTask(simulation_project=simulation_project, concurrent=True, **kwargs),
                                   FingerprintTestSelfTestTask(simulation_project=simulation_project, concurrent=False, **kwargs)],
-                         simulation_project=simulation_project, name=name, print_run_start_separately=print_run_start_separately, concurrent=False, **kwargs)
+                         simulation_project=simulation_project, name=name, concurrent=False, **kwargs)
         self.simulation_project = simulation_project
 
 class MultipleSelfTestTasks(MultipleTestTasks):
-    def __init__(self, name="self test", print_run_start_separately=False, **kwargs):
+    def __init__(self, name="self test", **kwargs):
         super().__init__(tasks=[SimulationProjectSelfTestTasks(simulation_project=get_simulation_project("aloha", None), sim_time_limit="90min", **kwargs),
                                 SimulationProjectSelfTestTasks(simulation_project=get_simulation_project("tictoc", None), sim_time_limit="1s", **kwargs)],
-                         name=name, print_run_start_separately=print_run_start_separately, concurrent=False, **kwargs)
+                         name=name, concurrent=False, **kwargs)
 
 def parse_arguments():
     description = "Runs the self test on the OMNeT++ sample projects."
@@ -144,3 +144,23 @@ def run_self_tests_main():
     self_test_task_results = MultipleSelfTestTasks(**kwargs).run(**kwargs)
     print(self_test_task_results)
     sys.exit(0 if (self_test_task_results is None or self_test_task_results.is_all_results_expected()) else 1)
+
+class TaskSelfTestTask(Task):
+    def run_protected(self, **kwargs):
+        time.sleep(0)
+        return super().run_protected(**kwargs)
+
+def test_tasks(**kwargs):
+    TaskSelfTestTask(name="T", action="simulation").run(**kwargs)
+    tasks = [TaskSelfTestTask(name="A", action="simulation", **kwargs), TaskSelfTestTask(name="B", action="simulation", **kwargs)]
+    multiple_tasks = MultipleTasks(tasks=tasks, name="main task", **kwargs)
+    multiple_tasks.run(**kwargs)
+    tasks1 = [TaskSelfTestTask(name="A", action="compile", **kwargs), TaskSelfTestTask(name="B", action="compile", **kwargs), TaskSelfTestTask(name="C", action="compile", **kwargs), TaskSelfTestTask(name="D", action="compile", **kwargs)]
+    tasks2 = [TaskSelfTestTask(name="X", action="link", **kwargs), TaskSelfTestTask(name="Y", action="link", **kwargs), TaskSelfTestTask(name="Z", action="link", **kwargs)]
+    multiple_tasks1 = MultipleTasks(tasks=tasks1, name="compile task", **kwargs)
+    multiple_tasks2 = MultipleTasks(tasks=tasks2, name="link task", **kwargs)
+    multiple_tasks = MultipleTasks(tasks=[multiple_tasks1, multiple_tasks2], name="main task", **kwargs)
+    multiple_tasks.run(**kwargs)
+    tested_task = TaskSelfTestTask(name="X", action="simulate", **kwargs)
+    task_test_task = TaskTestTask(name="test", tested_task=tested_task, **kwargs)
+    task_test_task.run(**kwargs)
