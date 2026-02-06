@@ -18,8 +18,8 @@ Inetmanet/INET Framework for OMNEST/OMNeT++
 =================================
 
 The [INET framework](https://inet.omnetpp.org) is an open-source communication networks
-simulation package, written for the OMNEST/OMNeT++ simulation system. The INET
-framework contains models for numerous wired and wireless protocols, a detailed
+simulation package, written for the [OMNEST/OMNeT++](https://omnetpp.org) simulation system.
+The INET framework contains models for numerous wired and wireless protocols, a detailed
 physical layer model, application models and more. See the CREDITS file for the
 names of people who have contributed to the INET Framework.
 
@@ -57,7 +57,7 @@ the INET framework without writing any C++ code, as long as you use the
 available modules.
 
 To implement new protocols or modify existing ones, you'll need to add your
-code somewhere under the src directory. If you add new files under the 'src'
+code somewhere under the src directory. If you add new files under the 'src/inet'
 directory you will need to regenerate the makefiles (using the 'make makefiles'
 command).
 
@@ -85,4 +85,4 @@ Inetmanet is compatible with inet framework but it has several differences.
        Cloud Computing modules:
               iCanClod.
               CloudNetSim++.
-              
+
