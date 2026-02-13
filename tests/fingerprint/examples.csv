@@ -21,7 +21,7 @@
 /examples/aodv/,                     -f omnetpp.ini -c SimpleRREQ2 -r 0,              100s,          bbe1-7a30/tplx;a64f-8746/~tNl;db72-577b/~tND;aa07-6704/tyf, PASS, wireless adhoc Ipv4
 /examples/aodv/,                     -f omnetpp.ini -c SimpleLifecycle -r 0,          100s,          2169-1021/tplx;a20d-c44b/~tNl;5d65-ddbc/~tND;cc7e-bc54/tyf, PASS, wireless adhoc Ipv4
 /examples/aodv/,                     -f omnetpp.ini -c ShortestPath -r 0,             100s,          5d58-230f/tplx;3a72-db39/~tNl;6ee6-e8f0/~tND;1950-0f81/tyf, PASS, wireless adhoc Ipv4
-/examples/aodv/,                     -f omnetpp.ini -c StaticExternal -r 0,           100s,          42b7-89e4/tplx;5708-ba01/~tNl;f8fd-9e0f/~tND;ac04-0c8b/tyf, PASS, wireless adhoc Ipv4
+/examples/aodv/,                     -f omnetpp.ini -c StaticExternal -r 0,           100s,          42b7-89e4/tplx;5708-ba01/~tNl;f8fd-9e0f/~tND;4b41-ac19/tyf, PASS, wireless adhoc Ipv4
 
 /examples/bgpv4/Bgp2RoutersInAS/,    -f omnetpp.ini -c General -r 0,                1000s,           40df-b616/tplx;c504-7297/~tNl;c40f-3bef/~tND;574c-3348/tyf, PASS, ospf EthernetMac Ipv4
 /examples/bgpv4/Bgp3Routers/,        -f omnetpp.ini -c General -r 0,                1000s,           a4fe-e9a6/tplx;2c93-b913/~tNl;abc7-4ccf/~tND;935e-496e/tyf, PASS, ospf EthernetMac Ipv4
@@ -78,18 +78,18 @@
 # /examples/emulation/traceroute/,     -f omnetpp.ini -c General -r 0,                100s,         0, ERROR,    # pcap devices not supported
 
 /examples/ethernet/arptest/,         -f omnetpp.ini -c ARPTest -r 0,                500s,            14ec-01e6/tplx;47b1-8963/~tNl;7156-c692/~tND;26ac-bc27/tyf, PASS, EthernetMac Ipv4
-/examples/ethernet/arptest2/,        -f omnetpp.ini -c ARPTest -r 0,                500s,            9fd4-92f6/tplx;f941-98dc/~tNl;3969-59b6/~tND;0d87-579d/tyf, PASS, EthernetMac EthernetCsmaMac Ipv4
+/examples/ethernet/arptest2/,        -f omnetpp.ini -c ARPTest -r 0,                500s,            9fd4-92f6/tplx;3206-4a80/~tNl;96b2-5f00/~tND;0d87-579d/tyf, PASS, EthernetMac EthernetCsmaMac Ipv4
 
 # /examples/ethernet/lans/,            -f .qtenv.ini -c General -r 0
-/examples/ethernet/lans/,            -f bus.ini -c BusLAN -r 0,                     100s,            1b3d-7b41/tplx;2946-2702/~tNl;59e8-47d5/tyf, PASS, EthernetCsmaMac
+/examples/ethernet/lans/,            -f bus.ini -c BusLAN -r 0,                     100s,            1b3d-7b41/tplx;46eb-2c9e/~tNl;59e8-47d5/tyf, PASS, EthernetCsmaMac
 # /examples/ethernet/lans/,            -f defaults.ini -c General -r 0,               -1s,             0, ERROR,   # not a complete simulations, defaults.ini included by other ini files
 /examples/ethernet/lans/,            -f duplexswitch.ini -c SwitchedDuplexLAN -r 0, 50s,             ee0c-f755/tplx;5a1c-a9ae/~tNl;1b8f-1990/tyf, PASS, EthernetMac
 /examples/ethernet/lans/,            -f hub.ini -c Hub1 -r 0,                       100s,            d8b2-0ab0/tplx;5164-36e7/~tNl;8df5-5ef0/tyf, PASS, EthernetCsmaMac
-/examples/ethernet/lans/,            -f hub.ini -c Hub2 -r 0,                       10s,             3eee-921e/tplx;b082-4d6c/~tNl;58b0-336c/tyf, PASS, EthernetCsmaMac
+/examples/ethernet/lans/,            -f hub.ini -c Hub2 -r 0,                       10s,             3eee-921e/tplx;9c01-f043/~tNl;58b0-336c/tyf, PASS, EthernetCsmaMac
 /examples/ethernet/lans/,            -f hub.ini -c Hub3 -r 0,                       100s,            d8b2-0ab0/tplx;5164-36e7/~tNl;51c7-9021/tyf, PASS, EthernetCsmaMac
-/examples/ethernet/lans/,            -f largeNet.ini -c LargeNet -r 0,              5s,              2298-dd5e/tplx;aeb3-eb63/~tNl, PASS, EthernetMac EthernetCsmaMac
-/examples/ethernet/lans/,            -f mixed.ini -c MixedLAN -r 0,                 100s,            7ecc-a6a1/tplx;b63d-a3a9/~tNl;f826-48f7/tyf, PASS, EthernetMac EthernetCsmaMac
-/examples/ethernet/lans/,            -f omnetpp.ini -c MixedLAN1 -r 0,              500s,            4b21-d2b6/tplx;2bbc-8d4e/~tNl;ef2c-9469/tyf, PASS, EthernetMac EthernetCsmaMac
+/examples/ethernet/lans/,            -f largeNet.ini -c LargeNet -r 0,              5s,              2298-dd5e/tplx;72a3-e2d6/~tNl, PASS, EthernetMac EthernetCsmaMac
+/examples/ethernet/lans/,            -f mixed.ini -c MixedLAN -r 0,                 100s,            7ecc-a6a1/tplx;990a-3876/~tNl;f826-48f7/tyf, PASS, EthernetMac EthernetCsmaMac
+/examples/ethernet/lans/,            -f omnetpp.ini -c MixedLAN1 -r 0,              500s,            4b21-d2b6/tplx;695a-3394/~tNl;ef2c-9469/tyf, PASS, EthernetMac EthernetCsmaMac
 /examples/ethernet/lans/,            -f switch.ini -c SwitchedLAN1 -r 0,            1000s,           cc86-a9b1/tplx;6ff2-5a07/~tNl;c495-296c/tyf, PASS, EthernetMac
 /examples/ethernet/lans/,            -f switch.ini -c SwitchedLanPreconf -r 0,      1000s,           65ca-9091/tplx;2c9a-5fb7/~tNl;4e12-a2bb/tyf, PASS, EthernetMac
 /examples/ethernet/lans/,            -f twoHosts.ini -c TwoHosts1 -r 0,             200s,            05a6-a95c/tplx;1ffa-9820/~tNl;51cf-d8d8/tyf, PASS, EthernetCsmaMac
@@ -220,8 +220,8 @@
 /examples/inet/tcp_eth_reconnect/,   -f omnetpp.ini -c with_EtherMACFullDuplex -r 1,  10s,        c7dd-8ce3/tplx;273f-6d68/~tNl;68a3-9d13/~tND;2cd9-3cf2/tyf, PASS, EthernetMac Ipv4
 /examples/inet/tcp_eth_reconnect/,   -f omnetpp.ini -c with_EtherMAC_fullduplex -r 0, 10s,        c6db-8480/tplx;6359-0047/~tNl;f12c-b386/~tND;c5a3-d29b/tyf, PASS, EthernetCsmaMac Ipv4
 /examples/inet/tcp_eth_reconnect/,   -f omnetpp.ini -c with_EtherMAC_fullduplex -r 1, 10s,        c6db-8480/tplx;6359-0047/~tNl;f12c-b386/~tND;04cc-deaa/tyf, PASS, EthernetCsmaMac Ipv4
-/examples/inet/tcp_eth_reconnect/,   -f omnetpp.ini -c with_EtherMAC_halfduplex -r 0, 10s,        adc4-719f/tplx;ba1f-d891/~tNl;6d00-87e2/~tND;38c8-fb23/tyf, PASS, EthernetCsmaMac Ipv4
-/examples/inet/tcp_eth_reconnect/,   -f omnetpp.ini -c with_EtherMAC_halfduplex -r 1, 10s,        0ba9-ca2f/tplx;347e-510e/~tNl;0bf1-68fc/~tND;9cc0-778f/tyf, PASS, EthernetCsmaMac Ipv4
+/examples/inet/tcp_eth_reconnect/,   -f omnetpp.ini -c with_EtherMAC_halfduplex -r 0, 10s,        adc4-719f/tplx;e5ae-b931/~tNl;a294-ab6d/~tND;38c8-fb23/tyf, PASS, EthernetCsmaMac Ipv4
+/examples/inet/tcp_eth_reconnect/,   -f omnetpp.ini -c with_EtherMAC_halfduplex -r 1, 10s,        0ba9-ca2f/tplx;894e-5243/~tNl;0d46-ef82/~tND;9cc0-778f/tyf, PASS, EthernetCsmaMac Ipv4
 
 /examples/inet/tcp_ppp_reconnect/,   -f omnetpp.ini -c General -r 0,                  10s,        c390-6895/tplx;0cf5-894b/~tNl;3675-9aee/~tND;32ba-9e70/tyf, PASS, Ipv4
 
@@ -548,7 +548,7 @@
 
 /examples/wireless/crosstalk/,       -f omnetpp.ini -c General -r 0,                2s,           0a4f-e755/tplx;7ef5-c624/~tNl;105a-8a94/~tND;9c67-8ccc/tyf, PASS, wireless Ipv4
 
-/examples/wireless/dynamic/,         -f omnetpp.ini -c General -r 0,                100s,         4b91-925c/tplx;2b55-3ab9/~tNl;1ab2-bb7c/~tND;475f-d30d/tyf, PASS, wireless Ipv4
+/examples/wireless/dynamic/,         -f omnetpp.ini -c General -r 0,                100s,         4b91-925c/tplx;2b55-3ab9/~tNl;1ab2-bb7c/~tND;ee3e-a3da/tyf, PASS, wireless Ipv4
 
 /examples/wireless/errorrate/,       -f omnetpp.ini -c General -r 0,                100s,         0bb3-adca/tplx;b0b7-4a84/~tNl;1c49-63dd/~tND;63dc-edcc/tyf, PASS, wireless Ipv4
 
