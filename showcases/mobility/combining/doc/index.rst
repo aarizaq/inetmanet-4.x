@@ -15,7 +15,7 @@ motion, position, and orientation independently, to generate more sophisticated
 motion patterns. (The use of elementary mobility models is covered in a separate
 showcase, :doc:`../../basic/doc/index`.)
 
-| Verified with INET version: ``4.0``
+| Verified with INET version: ``4.6``
 | Source files location: `inet/showcases/mobility/combining <https://github.com/inet-framework/inet/tree/master/showcases/mobility/combining>`__
 
 Overview
@@ -159,8 +159,8 @@ You can take a look at the ``Superpositioning1`` configuration in omnetpp.ini:
 
 The :par:`numElements` parameter defines the number of mobility submodules,
 which are contained in a submodule vector named :par:`element`.
-Therefore, instead of :par:`mobility.typeName = XY`, the mobility
-submodules can be referenced with :par:`mobility.element[0].typeName = XY`.
+Therefore, instead of :par:`mobility.typename = XY`, the mobility
+submodules can be referenced with :par:`mobility.element[0].typename = XY`.
 This is also visible if we take a look at the inside of ``host[0]``'s
 mobility submodule:
 
@@ -311,8 +311,8 @@ Ensure that ``opp_env`` is installed on your system, then execute:
 
 .. code-block:: bash
 
-    $ opp_env run inet-4.5 --init -w inet-workspace --install --build-modes=release --chdir \
-       -c 'cd inet-4.5.*/showcases/mobility/combining && inet'
+    $ opp_env run inet-4.6 --init -w inet-workspace --install --build-modes=release --chdir \
+       -c 'cd inet-4.6.*/showcases/mobility/combining && inet'
 
 This command creates an ``inet-workspace`` directory, installs the appropriate
 versions of INET and OMNeT++ within it, and launches the ``inet`` command in the
@@ -323,7 +323,7 @@ workspace and then open an interactive shell:
 
 .. code-block:: bash
 
-    $ opp_env install --init -w inet-workspace --build-modes=release inet-4.5
+    $ opp_env install --init -w inet-workspace --build-modes=release inet-4.6
     $ cd inet-workspace
     $ opp_env shell
 

@@ -14,7 +14,7 @@ This demonstration includes a sample simulation that generates and records PCAP
 traces of TCP, UDP, and ICMP traffic, using various physical layer protocols
 such as Ethernet and 802.11.
 
-| Verified with INET version: ``4.0``
+| Verified with INET version: ``4.6``
 | Source files location: `inet/showcases/general/pcaprecording <https://github.com/inet-framework/inet/tree/master/showcases/general/pcaprecording>`__
 
 The model
@@ -155,7 +155,7 @@ interface:
 
 There are two PCAP recorder modules in ``router1``, with one of them
 recording Ethernet traffic on ``eth0`` and the other PPP traffic on
-``ppp0``. The :par:`moduleNamePatters` parameter needs to be set for both
+``ppp0``. The :par:`moduleNamePatterns` parameter needs to be set for both
 PCAP recorder modules, because ``router1`` has two interfaces.
 
 .. literalinclude:: ../omnetpp.ini
@@ -164,7 +164,7 @@ PCAP recorder modules, because ``router1`` has two interfaces.
    :end-at: moduleNamePatterns = "eth[0]
 
 In ``router2``, we'll record only packets carrying TCP data on the ``eth0``
-interface. ``router2`` has two interfaces, so the :par:`moduleNamePatters`
+interface. ``router2`` has two interfaces, so the :par:`moduleNamePatterns`
 parameter needs to be set. The packet data filter is set to match packets
 containing a ``TcpHeader`` and an ``Ipv4Header``, and where the TCP payload
 length is greater than 0 (so that ACKs and handshake packets are not recorded).
@@ -324,8 +324,8 @@ Ensure that ``opp_env`` is installed on your system, then execute:
 
 .. code-block:: bash
 
-    $ opp_env run inet-4.5 --init -w inet-workspace --install --build-modes=release --chdir \
-       -c 'cd inet-4.5.*/showcases/general/pcaprecording && inet'
+    $ opp_env run inet-4.6 --init -w inet-workspace --install --build-modes=release --chdir \
+       -c 'cd inet-4.6.*/showcases/general/pcaprecording && inet'
 
 This command creates an ``inet-workspace`` directory, installs the appropriate
 versions of INET and OMNeT++ within it, and launches the ``inet`` command in the
@@ -336,7 +336,7 @@ workspace and then open an interactive shell:
 
 .. code-block:: bash
 
-    $ opp_env install --init -w inet-workspace --build-modes=release inet-4.5
+    $ opp_env install --init -w inet-workspace --build-modes=release inet-4.6
     $ cd inet-workspace
     $ opp_env shell
 

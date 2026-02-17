@@ -14,7 +14,7 @@ transfer.
 This showcase presents an example network that employs DiffServ to
 provide preferential service to voice over other types of traffic.
 
-| Verified with INET version: ``4.0``
+| Verified with INET version: ``4.6``
 | Source files location: `inet/showcases/general/diffserv <https://github.com/inet-framework/inet/tree/master/showcases/general/diffserv>`__
 
 About Differentiated Services
@@ -91,7 +91,7 @@ The showcase contains three different configurations:
 - ``VoIP_WithPolicing``: The VoIP traffic is classified as EF
   traffic and others as AF. AF traffic is rate
   limited using Token Bucket to 70% of the link's capacity.
-- ``VoIP_WithPolicingAndQueuing``: This is the same as the previous
+- ``VoIP_WithPolicingAndQueueing``: This is the same as the previous
   configuration, except the router's queue is configured so that EF
   packets are prioritized over other packets, so lower delays are
   expected.
@@ -104,8 +104,8 @@ If both of them are used, the layout of the interface looks like the following:
    :scale: 100%
    :align: center
 
-In the ``VoIP_WithPolicing`` and ``VoIP_WithPolicingAndQueuing``
-configurations, INET's :ned:`DiffservTrafficConditioner` module is used in the
+In the ``VoIP_WithPolicing`` and ``VoIP_WithPolicingAndQueueing``
+configurations, the :ned:`DiffservTrafficConditioner` module is used in the
 router's PPP interface to achieve the required policing.
 
 .. figure:: media/TrafficConditioner.png
@@ -143,7 +143,7 @@ the ``omnetpp.ini`` file:
    :start-at: WithPolicing
    :end-before: ####
 
-In the ``VoIP_WithPolicingAndQueuing`` configuration, a
+In the ``VoIP_WithPolicingAndQueueing`` configuration, a
 :ned:`DiffservQueue` module is used instead of :ned:`DropTailQueue` in the
 router's PPP interface to achieve priority queuing.
 
@@ -247,7 +247,7 @@ if we take a look at the audio track:
 With Traffic Policing and Priority Queuing
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-With the ``VoIP_WithPolicingAndQueuing`` configuration, the router's queue
+With the ``VoIP_WithPolicingAndQueueing`` configuration, the router's queue
 is configured to prioritize EF packets over other traffic.
 The following video shows how the different types of packets are handled:
 
@@ -287,8 +287,8 @@ Ensure that ``opp_env`` is installed on your system, then execute:
 
 .. code-block:: bash
 
-    $ opp_env run inet-4.5 --init -w inet-workspace --install --build-modes=release --chdir \
-       -c 'cd inet-4.5.*/showcases/general/diffserv && inet'
+    $ opp_env run inet-4.6 --init -w inet-workspace --install --build-modes=release --chdir \
+       -c 'cd inet-4.6.*/showcases/general/diffserv && inet'
 
 This command creates an ``inet-workspace`` directory, installs the appropriate
 versions of INET and OMNeT++ within it, and launches the ``inet`` command in the
@@ -299,7 +299,7 @@ workspace and then open an interactive shell:
 
 .. code-block:: bash
 
-    $ opp_env install --init -w inet-workspace --build-modes=release inet-4.5
+    $ opp_env install --init -w inet-workspace --build-modes=release inet-4.6
     $ cd inet-workspace
     $ opp_env shell
 

@@ -13,7 +13,7 @@ The visualization can take the form of spectrums, spectrograms, and heatmaps rep
 spatial power density. This showcase demonstrates such visualizations with three example
 simulations.
 
-| Verified with INET version: ``4.2``
+| Verified with INET version: ``4.6``
 | Source files location: `inet/showcases/visualizer/spectrum <https://github.com/inet-framework/inet/tree/master/showcases/visualizer/spectrum>`__
 
 About the Visualizer
@@ -280,7 +280,7 @@ for both the main and the per-node figures. With less detail, the figure becomes
 pixelated; with more detail, even if the canvas is zoomed in, the figure still doesn't
 become pixelated.
 
-The power density map feature can calculate the heatmap in three modes, controlled by the :par:`PowerDensityMapPixelMode` parameter: 
+The power density map feature can calculate the heatmap in three modes, controlled by the :par:`powerDensityMapPixelMode` parameter: 
 
 - ``sampling``: Use sampling to calculate the heatmap, i.e. sample the power density at the center of each pixel 
 - ``partition``: Calculate and draw the power density using the interpolation of the partitioning of the original multidimensional power density function
@@ -289,7 +289,7 @@ The power density map feature can calculate the heatmap in three modes, controll
 Sampling is the fastest, but it can lead to loss of detail due to undersampling in some corner cases. Partition is slower and more accurate; it paints coherent pixel areas, potentially painting the same pixel several times, leading to inaccurate pixel colors.
 Mean is the slowest, but the most accurate. Note that the :par:`powerDensityMapPixelMode` parameter
 pertains both to the main and the per-node figures; ``mean`` by default.
-Similarly, the spectrogram figure has the :par:`SpectrogramPixelMode` parameter.
+Similarly, the spectrogram figure has the :par:`spectrogramPixelMode` parameter.
 
 .. note:: The power density map feature is very CPU-intensive, but the visualization can use multiple CPU cores. For multi-core support, INET needs to be compiled with OpenMP.
 
@@ -368,8 +368,8 @@ Ensure that ``opp_env`` is installed on your system, then execute:
 
 .. code-block:: bash
 
-    $ opp_env run inet-4.5 --init -w inet-workspace --install --build-modes=release --chdir \
-       -c 'cd inet-4.5.*/showcases/visualizer/canvas/spectrum && inet'
+    $ opp_env run inet-4.6 --init -w inet-workspace --install --build-modes=release --chdir \
+       -c 'cd inet-4.6.*/showcases/visualizer/canvas/spectrum && inet'
 
 This command creates an ``inet-workspace`` directory, installs the appropriate
 versions of INET and OMNeT++ within it, and launches the ``inet`` command in the
@@ -380,7 +380,7 @@ workspace and then open an interactive shell:
 
 .. code-block:: bash
 
-    $ opp_env install --init -w inet-workspace --build-modes=release inet-4.5
+    $ opp_env install --init -w inet-workspace --build-modes=release inet-4.6
     $ cd inet-workspace
     $ opp_env shell
 

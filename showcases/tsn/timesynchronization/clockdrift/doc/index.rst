@@ -20,7 +20,7 @@ nodes and how to configure clock drift for these clocks. We will also show how
 to use time synchronization mechanisms to reduce time differences between the
 clocks of different devices.
 
-| Verified with INET version: ``4.5``
+| Verified with INET version: ``4.6``
 | Source files location: `inet/showcases/tsn/timesynchronization/clockdrift <https://github.com/inet-framework/inet/tree/master/showcases/tsn/timesynchronization/clockdrift>`__
 
 Simulating Clock Drift and Time Synchronization
@@ -145,7 +145,7 @@ simulation time. Also, we need to explicitly tell the relevant modules (here,
 the UDP apps and ``switch1``'s queue) to use the clock module in the host,
 otherwise, they would use the global simulation time by default.
 
-We set the :par:`nominalTickLenght` parameter of all oscillators to 10ns, which is a typical value for
+We set the :par:`nominalTickLength` parameter of all oscillators to 10ns, which is a typical value for
 real-world clocks. To be able to represent 1 PPM clock drift, we set fs simulation time accuracy (10ns / 10^6 = 10fs).
 
 Here are the drifts (time differences) over time:
@@ -585,8 +585,8 @@ Ensure that ``opp_env`` is installed on your system, then execute:
 
 .. code-block:: bash
 
-    $ opp_env run inet-4.5 --init -w inet-workspace --install --build-modes=release --chdir \
-       -c 'cd inet-4.5.*/showcases/tsn/timesynchronization/clockdrift && inet'
+    $ opp_env run inet-4.6 --init -w inet-workspace --install --build-modes=release --chdir \
+       -c 'cd inet-4.6.*/showcases/tsn/timesynchronization/clockdrift && inet'
 
 This command creates an ``inet-workspace`` directory, installs the appropriate
 versions of INET and OMNeT++ within it, and launches the ``inet`` command in the
@@ -597,7 +597,7 @@ workspace and then open an interactive shell:
 
 .. code-block:: bash
 
-    $ opp_env install --init -w inet-workspace --build-modes=release inet-4.5
+    $ opp_env install --init -w inet-workspace --build-modes=release inet-4.6
     $ cd inet-workspace
     $ opp_env shell
 

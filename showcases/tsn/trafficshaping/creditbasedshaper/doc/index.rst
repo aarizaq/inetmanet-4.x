@@ -13,7 +13,7 @@ with an example simulation.
 
 .. **TODO** some interesting stuff to show? -> shaping in general increases delay even for high priority frames. but can overall decrease delay (as it decreases delay for lower priority frames)
 
-| Verified with INET version: ``4.4``
+| Verified with INET version: ``4.6``
 | Source files location: `inet/showcases/tsn/trafficshaping/creditbasedshaper <https://github.com/inet-framework/inet/tree/master/showcases/tsn/trafficshaping/creditbasedshaper>`__
 
 Credit-Based Shaping Overview
@@ -64,7 +64,7 @@ To conveniently incorporate a credit-based shaper into a network interface, it
 can be added as a submodule to an :ned:`Ieee8021qTimeAwareShaper`. The
 :ned:`Ieee8021qTimeAwareShaper` module supports a configurable number of traffic
 classes, pre-existing queues for each class, and can be enabled for Ethernet
-interfaces by setting the :par:`enableEgressTrafficShaping` parameter in the
+interfaces by setting the :par:`hasEgressTrafficShaping` parameter in the
 network node to ``true``. To utilize a credit-based shaper, the
 ``transmissionSelectionAlgorithm`` submodule of the time-aware shaper can be
 overridden accordingly. As an example, here is a time-aware shaper module that
@@ -129,7 +129,7 @@ Within the client, our goal is to classify packets originating from the two
 packet sources into two traffic classes: `best effort` and
 `video`. To achieve this, we activate IEEE 802.1 stream
 identification and stream encoding functionalities by setting the
-:par:`hasOutgoingStreams` parameter in the switch to ``true``. We proceed by configuring the stream
+:par:`hasOutgoingStreams` parameter in the client to ``true``. We proceed by configuring the stream
 identifier module within the bridging layer; this module is responsible for
 associating outgoing packets with named streams based on their UDP destination
 ports. Following this, the stream encoder sets the Priority Code Point (PCP) number on the packets according to
@@ -289,8 +289,8 @@ Ensure that ``opp_env`` is installed on your system, then execute:
 
 .. code-block:: bash
 
-    $ opp_env run inet-4.5 --init -w inet-workspace --install --build-modes=release --chdir \
-       -c 'cd inet-4.5.*/showcases/tsn/trafficshaping/creditbasedshaper && inet'
+    $ opp_env run inet-4.6 --init -w inet-workspace --install --build-modes=release --chdir \
+       -c 'cd inet-4.6.*/showcases/tsn/trafficshaping/creditbasedshaper && inet'
 
 This command creates an ``inet-workspace`` directory, installs the appropriate
 versions of INET and OMNeT++ within it, and launches the ``inet`` command in the
@@ -301,7 +301,7 @@ workspace and then open an interactive shell:
 
 .. code-block:: bash
 
-    $ opp_env install --init -w inet-workspace --build-modes=release inet-4.5
+    $ opp_env install --init -w inet-workspace --build-modes=release inet-4.6
     $ cd inet-workspace
     $ opp_env shell
 

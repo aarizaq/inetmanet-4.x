@@ -82,7 +82,7 @@ Ensure that ``opp_env`` is installed on your system, then execute:
 
 .. code-block:: bash
 
-    $ opp_env install --init -w inet-workspace inet-latest --build-modes=release --options=inet:full
+    $ opp_env install --init -w inet-workspace inet-4.6 --build-modes=release --options=inet:full
     $ cd inet-workspace
     $ sudo setcap cap_sys_admin+ep omnetpp-*/bin/opp_run_release
     $ opp_env shell --options=inet:full
@@ -103,5 +103,5 @@ Discussion
 ----------
 
 Use `this
-page <https://github.com/inet-framework/inet-showcases/issues/TODO>`__ in
+page <https://github.com/inet-framework/inet-showcases/issues/1088>`__ in
 the GitHub issue tracker for commenting on this showcase.

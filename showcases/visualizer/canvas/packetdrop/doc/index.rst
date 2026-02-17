@@ -12,7 +12,7 @@ debugging and analysis. The simulation models showcase typical scenarios of
 packet drops resulting from issues such as retransmission in wireless networks
 and overflowing queues in bottleneck routers.
 
-| Verified with INET version: ``4.0``
+| Verified with INET version: ``4.6``
 | Source files location: `inet/showcases/visualizer/packetdrop <https://github.com/inet-framework/inet/tree/master/showcases/visualizer/packetdrop>`__
 
 About the visualizer
@@ -31,7 +31,7 @@ are visualized. This selection can be narrowed with the :par:`nodeFilter`,
 (The :par:`packetFilter` can filter for packet properties, such as name, fields, chunks, protocol headers, etc.)
 Additionally, use the :par:`detailsFilter` parameter to filter for packet drop reasons.
 
-The :par:`packetFormat` parameter is a format string and specifies the text displayed with the packet drop animation.
+The :par:`labelFormat` parameter is a format string and specifies the text displayed with the packet drop animation.
 By default, the dropped packet's name is displayed.
 The format string can contain the following directives:
 
@@ -258,8 +258,8 @@ Ensure that ``opp_env`` is installed on your system, then execute:
 
 .. code-block:: bash
 
-    $ opp_env run inet-4.5 --init -w inet-workspace --install --build-modes=release --chdir \
-       -c 'cd inet-4.5.*/showcases/visualizer/canvas/packetdrop && inet'
+    $ opp_env run inet-4.6 --init -w inet-workspace --install --build-modes=release --chdir \
+       -c 'cd inet-4.6.*/showcases/visualizer/canvas/packetdrop && inet'
 
 This command creates an ``inet-workspace`` directory, installs the appropriate
 versions of INET and OMNeT++ within it, and launches the ``inet`` command in the
@@ -270,7 +270,7 @@ workspace and then open an interactive shell:
 
 .. code-block:: bash
 
-    $ opp_env install --init -w inet-workspace --build-modes=release inet-4.5
+    $ opp_env install --init -w inet-workspace --build-modes=release inet-4.6
     $ cd inet-workspace
     $ opp_env shell
 

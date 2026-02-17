@@ -10,7 +10,7 @@ This showcase demonstrates how to group packets into flows for the purpose of
 taking measurements on them, such as elapsed time, time spent in queues, or
 transmission time.
 
-| Verified with INET version: ``4.4``
+| Verified with INET version: ``4.6``
 | Source files location: `inet/showcases/general/flowmeasurement <https://github.com/inet-framework/inet/tree/master/showcases/general/flowmeasurement>`__
 
 The Model
@@ -89,7 +89,7 @@ have the same set of parameters that specify the flow name (:par:`flowName`
 parameter), the set of packets that enter or exit the flow (:par:`packetFilter`
 parameter), and the required measurements (:par:`measure` parameter).
 
-By default, the filters match all packets (``packetFilter = 'true'``). The
+By default, the filters match all packets (``packetFilter = '*'``). The
 :par:`measure` parameter is a list containing elements from the following set,
 separated by spaces:
 
@@ -156,8 +156,8 @@ The module type :ned:`PacketFlowVisualizer` (also included in
 :ned:`IntegratedCanvasVisualizer`) can display packet flows in the network as dashed
 arrows annotated by the flow name. The arrows are color-coded so that flows can
 be differentiated by color. The visualization can be enabled with the
-:par:`displayPacketFlows` parameter, e.g.
-``*.visualizer.packetFlowVisualizer.displayPacketFlows = true`` in the .INI
+:par:`displayRoutes` parameter, e.g.
+``*.visualizer.packetFlowVisualizer.displayRoutes = true`` in the .INI
 file.
 
 Example Simulations
@@ -251,7 +251,7 @@ Similarly, we enable the measurement recorder module in the server UDP apps (by 
    :end-at: *.server*.app[*].measurementRecorder.typename = "FlowMeasurementRecorder"
    :language: ini
 
-For the packet flow between the two switches, we can enable the built-in ``measurementLayer`` submodule of :ned:`EthernetInterface`:
+For the packet flow between the two switches, we can enable the built-in ``measurementLayer`` submodule of :ned:`LayeredEthernetInterface`:
 
 .. literalinclude:: ../omnetpp.ini
    :start-at: *.switch*.eth[2].measurementLayer.typename = "MeasurementLayer"
@@ -472,8 +472,8 @@ Ensure that ``opp_env`` is installed on your system, then execute:
 
 .. code-block:: bash
 
-    $ opp_env run inet-4.5 --init -w inet-workspace --install --build-modes=release --chdir \
-       -c 'cd inet-4.5.*/showcases/measurement/flow && inet'
+    $ opp_env run inet-4.6 --init -w inet-workspace --install --build-modes=release --chdir \
+       -c 'cd inet-4.6.*/showcases/measurement/flow && inet'
 
 This command creates an ``inet-workspace`` directory, installs the appropriate
 versions of INET and OMNeT++ within it, and launches the ``inet`` command in the
@@ -484,7 +484,7 @@ workspace and then open an interactive shell:
 
 .. code-block:: bash
 
-    $ opp_env install --init -w inet-workspace --build-modes=release inet-4.5
+    $ opp_env install --init -w inet-workspace --build-modes=release inet-4.6
     $ cd inet-workspace
     $ opp_env shell
 
@@ -494,4 +494,4 @@ then start exploring.
 Discussion
 ----------
 
-Use `this <https://github.com/inet-framework/inet-showcases/discussions/TODO>`__ page in the GitHub issue tracker for commenting on this showcase.
+Use `this <https://github.com/inet-framework/inet/discussions/1076>`__ page in the GitHub issue tracker for commenting on this showcase.

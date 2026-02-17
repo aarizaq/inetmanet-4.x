@@ -15,7 +15,7 @@ This showcase provides a demonstration of some of the elementary mobility models
 available in INET. The topic of combining multiple mobility models is covered in
 a separate showcase, :doc:`../../combining/doc/index`.
 
-| Verified with INET version: ``4.0``
+| Verified with INET version: ``4.6``
 | Source files location: `inet/showcases/mobility/basic <https://github.com/inet-framework/inet/tree/master/showcases/mobility/basic>`__
 
 Overview
@@ -95,8 +95,8 @@ Some of these mobility models are introduced by the following example simulation
 LinearMobility
 ~~~~~~~~~~~~~~
 
-The :ned:`LinearMobility` module describes linear motion with a constant speed or
-constant acceleration. As such, it has parameters for speed and starting angle.
+The :ned:`LinearMobility` module describes linear motion with a constant speed.
+As such, it has parameters for speed and starting heading.
 The model also has parameters for initial positioning (:par:`initialX`,
 :par:`initialY`, :par:`initialZ`), which, by default, are random
 values inside the constraint area.
@@ -108,8 +108,8 @@ The configuration in omnetpp.ini is the following:
    :start-at: *.host[*].mobility.typename = "LinearMobility"
    :end-at: speed
 
-We leave the angle parameter on its default value, which is
-a random value.
+We leave the :par:`initialMovementHeading` parameter on its default value,
+which is a random value.
 
 The following video shows the motion of the nodes:
 
@@ -345,8 +345,8 @@ Ensure that ``opp_env`` is installed on your system, then execute:
 
 .. code-block:: bash
 
-    $ opp_env run inet-4.5 --init -w inet-workspace --install --build-modes=release --chdir \
-       -c 'cd inet-4.5.*/showcases/mobility/basic && inet'
+    $ opp_env run inet-4.6 --init -w inet-workspace --install --build-modes=release --chdir \
+       -c 'cd inet-4.6.*/showcases/mobility/basic && inet'
 
 This command creates an ``inet-workspace`` directory, installs the appropriate
 versions of INET and OMNeT++ within it, and launches the ``inet`` command in the
@@ -357,7 +357,7 @@ workspace and then open an interactive shell:
 
 .. code-block:: bash
 
-    $ opp_env install --init -w inet-workspace --build-modes=release inet-4.5
+    $ opp_env install --init -w inet-workspace --build-modes=release inet-4.6
     $ cd inet-workspace
     $ opp_env shell
 

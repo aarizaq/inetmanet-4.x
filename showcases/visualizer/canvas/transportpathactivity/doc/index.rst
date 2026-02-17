@@ -14,7 +14,7 @@ This showcase contains two simulation models, each highlighting various aspects
 of the transport path activity visualizer, allowing for a comprehensive
 understanding of its features.
 
-| Verified with INET version: ``4.0``
+| Verified with INET version: ``4.6``
 | Source files location: `inet/showcases/visualizer/transportpathactivity <https://github.com/inet-framework/inet/tree/master/showcases/visualizer/transportpathactivity>`__
 
 About the Visualizer
@@ -166,7 +166,7 @@ In INET, it is also possible to filter traffic based on network nodes.
 In our second experiment, we want to display traffic only between
 ``source1`` and ``destination1``. For this reason, we set the
 visualizer's :par:`nodeFilter` parameter to display only the part of the
-traffic between ``source1`` and ``destination1``. :par:`PacketFilter` is
+traffic between ``source1`` and ``destination1``. :par:`packetFilter` is
 still enabled in this simulation so that the video stream will not be
 visualized.
 
@@ -213,8 +213,8 @@ Ensure that ``opp_env`` is installed on your system, then execute:
 
 .. code-block:: bash
 
-    $ opp_env run inet-4.5 --init -w inet-workspace --install --build-modes=release --chdir \
-       -c 'cd inet-4.5.*/showcases/visualizer/canvas/transportpathactivity && inet'
+    $ opp_env run inet-4.6 --init -w inet-workspace --install --build-modes=release --chdir \
+       -c 'cd inet-4.6.*/showcases/visualizer/canvas/transportpathactivity && inet'
 
 This command creates an ``inet-workspace`` directory, installs the appropriate
 versions of INET and OMNeT++ within it, and launches the ``inet`` command in the
@@ -225,7 +225,7 @@ workspace and then open an interactive shell:
 
 .. code-block:: bash
 
-    $ opp_env install --init -w inet-workspace --build-modes=release inet-4.5
+    $ opp_env install --init -w inet-workspace --build-modes=release inet-4.6
     $ cd inet-workspace
     $ opp_env shell
 

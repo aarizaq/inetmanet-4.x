@@ -11,7 +11,7 @@ follow mobile nodes and displays properties such as speed and direction.
 
 This showcase demonstrates the capabilities of the mobility visualizer.
 
-| Verified with INET version: ``4.0``
+| Verified with INET version: ``4.6``
 | Source files location: `inet/showcases/visualizer/mobility <https://github.com/inet-framework/inet/tree/master/showcases/visualizer/mobility>`__
 
 About the Visualizer
@@ -20,7 +20,7 @@ About the Visualizer
 In INET, the mobility of nodes can be visualized by :ned:`MobilityVisualizer`
 module (included in the network as part of :ned:`IntegratedCanvasVisualizer`). By
 default, mobility visualization is enabled; it can be disabled by
-setting :par:`displayMovements` parameter to false.
+setting :par:`displayMobility` parameter to false.
 
 By default, all mobilities are considered for the visualization. This
 selection can be narrowed with the visualizer's :par:`moduleFilter`
@@ -37,9 +37,9 @@ The visualizer has several important features:
    movement's direction. The arrow's length is proportional to the
    node's speed.
 -  **Orientation Arc**: Node orientation is represented by an arc whose
-   size is specified by the :par:`orientationArcSize` parameter. This value
+   size is specified by the :par:`orientationPieSize` parameter. This value
    is the relative size of the arc compared to a full circle. The arc's
-   default value is 0.25, i.e. a quarter of a circle.
+   default value is 0.2, i.e. a fifth of a circle.
 
 These features are disabled by default; they can be enabled by setting
 the visualizer's :par:`displayMovementTrails`, :par:`displayVelocities` and
@@ -107,8 +107,8 @@ Ensure that ``opp_env`` is installed on your system, then execute:
 
 .. code-block:: bash
 
-    $ opp_env run inet-4.5 --init -w inet-workspace --install --build-modes=release --chdir \
-       -c 'cd inet-4.5.*/showcases/visualizer/canvas/mobility && inet'
+    $ opp_env run inet-4.6 --init -w inet-workspace --install --build-modes=release --chdir \
+       -c 'cd inet-4.6.*/showcases/visualizer/canvas/mobility && inet'
 
 This command creates an ``inet-workspace`` directory, installs the appropriate
 versions of INET and OMNeT++ within it, and launches the ``inet`` command in the
@@ -119,7 +119,7 @@ workspace and then open an interactive shell:
 
 .. code-block:: bash
 
-    $ opp_env install --init -w inet-workspace --build-modes=release inet-4.5
+    $ opp_env install --init -w inet-workspace --build-modes=release inet-4.6
     $ cd inet-workspace
     $ opp_env shell
 

@@ -26,7 +26,7 @@ Please note that the ``VoipStream`` and ``NetworkEmulationSupport`` features of 
 Framework must be enabled for this demonstration (they are disabled by default),
 and it is only compatible with Linux systems.
 
-| Verified with INET version: ``4.0``
+| Verified with INET version: ``4.6``
 | Source files location: `inet/showcases/emulation/voip <https://github.com/inet-framework/inet/tree/master/showcases/emulation/voip>`__
 
 
@@ -355,7 +355,7 @@ Ensure that ``opp_env`` is installed on your system, then execute:
 
 .. code-block:: bash
 
-    $ opp_env install --init -w inet-workspace inet-latest --build-modes=release --options=inet:full
+    $ opp_env install --init -w inet-workspace inet-4.6 --build-modes=release --options=inet:full
     $ cd inet-workspace
     $ sudo setcap cap_sys_admin+ep omnetpp-*/bin/opp_run_release
     $ opp_env shell --options=inet:full

@@ -17,7 +17,7 @@ can be found in the :doc:`Emulation section </users-guide/ch-emulation>` of the 
 
 In this showcase, a real video application is used to stream a video file to another real video application. Note that this showcase requires the INET Framework's Emulation feature to be turned on (default is off) and is only supported on Linux.
 
-| Verified with INET version: ``4.2``
+| Verified with INET version: ``4.6``
 | Source files location: `inet/showcases/emulation/videostreaming <https://github.com/inet-framework/inet/tree/master/showcases/emulation/videostreaming>`__
 
 The Model
@@ -171,7 +171,7 @@ Ensure that ``opp_env`` is installed on your system, then execute:
 
 .. code-block:: bash
 
-    $ opp_env install --init -w inet-workspace inet-latest --build-modes=release --options=inet:full
+    $ opp_env install --init -w inet-workspace inet-4.6 --build-modes=release --options=inet:full
     $ cd inet-workspace
     $ sudo setcap cap_sys_admin+ep omnetpp-*/bin/opp_run_release
     $ opp_env shell --options=inet:full

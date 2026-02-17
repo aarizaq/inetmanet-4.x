@@ -9,7 +9,7 @@ networks, in addition to IEEE 802.15.4 models. This showcase demonstrates three
 different such MAC protocols through example simulations. The showcase compares the
 performance of the three protocols using statistical analysis.
 
-| Verified with INET version: ``4.0``
+| Verified with INET version: ``4.6``
 | Source files location: `inet/showcases/wireless/sensornetwork <https://github.com/inet-framework/inet/tree/master/showcases/wireless/sensornetwork>`__
 
 Part 1: Demonstrating the MAC protocols
@@ -365,7 +365,7 @@ studies for the individual MACs are detailed in the following sections.
 Optimizing B-MAC
 ~~~~~~~~~~~~~~~~
 
-The goal is to optimize :ned:`BMac`'s :par:`slotTime` parameter for the number
+The goal is to optimize :ned:`BMac`'s :par:`slotDuration` parameter for the number
 of packets received by the server. The configuration in
 :download:`omnetpp.ini <../omnetpp.ini>` for this is
 ``StatisticBMac``. Here is the configuration.
@@ -392,9 +392,9 @@ smooth curve. The best performing value for
 Optimizing X-MAC
 ~~~~~~~~~~~~~~~~
 
-Again, we optimize the :par:`slotTime` parameter for the number of packets
+Again, we optimize the :par:`slotDuration` parameter for the number of packets
 received by the server. As in the :ned:`XMac` configuration, the
-``slotTime`` for the gateway will be shorter than for the sensors. The
+``slotDuration`` for the gateway will be shorter than for the sensors. The
 configuration in :download:`omnetpp.ini <../omnetpp.ini>` for this is
 ``StatisticXMac``. Here is the configuration.
 
@@ -638,8 +638,8 @@ Ensure that ``opp_env`` is installed on your system, then execute:
 
 .. code-block:: bash
 
-    $ opp_env run inet-4.5 --init -w inet-workspace --install --build-modes=release --chdir \
-       -c 'cd inet-4.5.*/showcases/wireless/sensornetwork && inet'
+    $ opp_env run inet-4.6 --init -w inet-workspace --install --build-modes=release --chdir \
+       -c 'cd inet-4.6.*/showcases/wireless/sensornetwork && inet'
 
 This command creates an ``inet-workspace`` directory, installs the appropriate
 versions of INET and OMNeT++ within it, and launches the ``inet`` command in the
@@ -650,7 +650,7 @@ workspace and then open an interactive shell:
 
 .. code-block:: bash
 
-    $ opp_env install --init -w inet-workspace --build-modes=release inet-4.5
+    $ opp_env install --init -w inet-workspace --build-modes=release inet-4.6
     $ cd inet-workspace
     $ opp_env shell
 
