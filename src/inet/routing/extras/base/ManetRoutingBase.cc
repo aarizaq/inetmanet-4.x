@@ -85,6 +85,13 @@ class cStdMultiMapWatcher : public omnetpp::cStdVectorWatcherBase
     }
 };
 
+template <class KeyT, class ValueT, class CmpT>
+void createStdMultiMapWatcher(const char *varname, std::map<KeyT,ValueT,CmpT>& m)
+{
+    new cStdMultiMapWatcher<KeyT,ValueT,CmpT>(varname, m);
+}
+
+#define WATCH_MULTIMAP(m)               createStdMultiMapWatcher(#m,(m))
 
 template<class KeyT, class ValueT, class CmpT>
 class cStdPointerMultiMapWatcher : public cStdMultiMapWatcher<KeyT,ValueT,CmpT>
