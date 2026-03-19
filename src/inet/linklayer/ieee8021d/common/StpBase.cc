@@ -36,15 +36,12 @@ void StpBase::initialize(int stage)
 
     if (stage == INITSTAGE_LOCAL) {
         visualize = par("visualize");
-        bridgePriority = par("bridgePriority");
-
-        maxAge = par("maxAge");
-        helloTime = par("helloTime");
-        forwardDelay = par("forwardDelay");
-
         macTable.reference(this, "macTableModule", true);
         ifTable.reference(this, "interfaceTableModule", true);
         switchModule = getContainingNode(this);
+
+        WATCH(bridgeAddress);
+        WATCH(numPorts);
     }
 }
 
@@ -122,8 +119,9 @@ void StpBase::refreshDisplay() const
 
                 // label ethernet interface with port status and role
                 if (nicModule != nullptr) {
-                    std::string buf = std::string(port->getRoleName()) + "\n" + port->getStateName();
+                    std::string buf = std::string(port->getRoleShortName()) + "/" + port->getStateShortName();
                     nicModule->getDisplayString().setTagArg("t", 0, buf.c_str());
+                    ie->configChanged(NetworkInterface::F_IEEE8021D_DATA); // KLUDGE: abuse change notification mechanism to trick visualizer into copying the NIC display string onto the link
                 }
             }
             else {
@@ -133,15 +131,32 @@ void StpBase::refreshDisplay() const
                 // label ethernet interface with port status and role
                 if (nicModule != nullptr) {
                     nicModule->getDisplayString().setTagArg("t", 0, "");
+                    ie->configChanged(NetworkInterface::F_IEEE8021D_DATA); // KLUDGE: abuse change notification mechanism to trick visualizer into copying the NIC display string onto the link
                 }
             }
         }
 
-        // mark root switch
-        if (isUp() && getRootInterfaceId() == -1)
-            switchModule->getDisplayString().setTagArg("i", 1, ROOT_SWITCH_COLOR);
-        else
-            switchModule->getDisplayString().setTagArg("i", 1, "");
+        // mark root switch and display root path cost
+        if (isUp()) {
+            int rootInterfaceId = getRootInterfaceId();
+            if (rootInterfaceId == -1) {
+                switchModule->getDisplayString().setTagArg("i", 1, ROOT_SWITCH_COLOR);
+                switchModule->getDisplayString().setTagArg("i", 2, 100);
+                switchModule->getDisplayString().setTagArg("t", 0, "cost: 0");
+            }
+            else {
+                const Ieee8021dInterfaceData *rootPort = getPortInterfaceData(rootInterfaceId);
+                std::string costStr = "cost: " + std::to_string(rootPort->getRootPathCost());
+                switchModule->getDisplayString().setTagArg("i", 1, "-");
+                switchModule->getDisplayString().setTagArg("i", 2, int(0));
+                switchModule->getDisplayString().setTagArg("t", 0, costStr.c_str());
+            }
+        }
+        else {
+            switchModule->getDisplayString().setTagArg("i", 1, "-");
+            switchModule->getDisplayString().setTagArg("i", 2, int(0));
+            switchModule->getDisplayString().setTagArg("t", 0, "");
+        }
     }
 }
 

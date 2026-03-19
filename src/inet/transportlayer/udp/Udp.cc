@@ -261,6 +261,7 @@ void Udp::handleUpperCommand(cMessage *msg)
                     setMulticastSourceFilter(sd, ie, cmd->getMulticastAddr(), cmd->getFilterMode(), sourceList);
                     break;
                 }
+                default:
                     throw cRuntimeError("Unknown subclass of UdpSetOptionCommand received from app: code=%d, name=%s", ctrl->getOptionCode(), ctrl->getClassName());
             }
             break;
@@ -942,7 +943,7 @@ void Udp::processUDPPacket(Packet *udpPacket)
     }
 
     // remove lower layer paddings:
-    if (totalLength < udpPacket->getDataLength()) {
+    if (udpHeaderPopPosition + totalLength < udpPacket->getBackOffset()) {
         udpPacket->setBackOffset(udpHeaderPopPosition + totalLength);
     }
 
@@ -1124,7 +1125,7 @@ void Udp::processUndeliverablePacket(Packet *udpPacket)
     else {
         throw cRuntimeError("(%s)%s arrived from lower layer with unrecognized NetworkProtocolInd %s",
                 udpPacket->getClassName(), udpPacket->getName(), protocol->getName());
-        delete udpPacket;
+        // delete udpPacket;
     }
 }
 

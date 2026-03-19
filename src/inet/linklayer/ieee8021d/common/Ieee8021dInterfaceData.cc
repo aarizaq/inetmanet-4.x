@@ -27,6 +27,13 @@ Ieee8021dInterfaceData::PortInfo::PortInfo()
     portNum = -1;
 
     lostBPDU = 0;
+
+    earliestBpduSendTime = 0;
+    bpduSendPending = false;
+
+    proposing = false;
+    agreed = false;
+    synced = false;
 }
 
 Ieee8021dInterfaceData::Ieee8021dInterfaceData()
@@ -56,22 +63,16 @@ const char *Ieee8021dInterfaceData::getRoleName(PortRole role)
     switch (role) {
         case ALTERNATE:
             return "ALTERNATE";
-
         case NOTASSIGNED:
             return "NOTASSIGNED";
-
         case DISABLED:
             return "DISABLED";
-
         case DESIGNATED:
             return "DESIGNATED";
-
         case BACKUP:
             return "BACKUP";
-
         case ROOT:
             return "ROOT";
-
         default:
             throw cRuntimeError("Unknown port role %d", role);
     }
@@ -82,13 +83,52 @@ const char *Ieee8021dInterfaceData::getStateName(PortState state)
     switch (state) {
         case DISCARDING:
             return "DISCARDING";
-
         case LEARNING:
             return "LEARNING";
-
         case FORWARDING:
             return "FORWARDING";
+        case BLOCKING:
+            return "BLOCKING";
+        case LISTENING:
+            return "LISTENING";
+        default:
+            throw cRuntimeError("Unknown port state %d", state);
+    }
+}
 
+const char *Ieee8021dInterfaceData::getRoleShortName(PortRole role)
+{
+    switch (role) {
+        case ALTERNATE:
+            return "A";
+        case NOTASSIGNED:
+            return "-";
+        case DISABLED:
+            return "X";
+        case DESIGNATED:
+            return "D";
+        case BACKUP:
+            return "B";
+        case ROOT:
+            return "R";
+        default:
+            throw cRuntimeError("Unknown port role %d", role);
+    }
+}
+
+const char *Ieee8021dInterfaceData::getStateShortName(PortState state)
+{
+    switch (state) {
+        case DISCARDING:
+            return "D";
+        case LEARNING:
+            return "L";
+        case FORWARDING:
+            return "F";
+        case BLOCKING:
+            return "B";
+        case LISTENING:
+            return "N";
         default:
             throw cRuntimeError("Unknown port state %d", state);
     }

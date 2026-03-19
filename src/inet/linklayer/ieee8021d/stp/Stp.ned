@@ -44,6 +44,10 @@ simple Stp extends SimpleModule like ISpanningTree
         // This time is 20 sec by default, but you can tune the time to be between 6 and 40 sec.
         double maxAge @unit(s) = default(20s);
 
+        // The minimum time interval between the transmission of Configuration BPDUs on a port.
+        // This limits the rate of BPDU transmission to at most one per hold time per port.
+        double holdTime @unit(s) = default(1s);
+
         // The bridge priority determines which bridge is elected as the root bridge. If the switch has a bridge priority that is lower than all
         // the other switches, the other switches automatically select the switch as the root switch.
         int bridgePriority = default(32768);
@@ -53,6 +57,11 @@ simple Stp extends SimpleModule like ISpanningTree
 
         // The path to the MacForwardingTable module
         string macTableModule;
+
+        // Delay before the protocol starts sending BPDUs. Default is 0 (all
+        // switches start synchronized). Set to e.g. uniform(0s,1s) for
+        // realistic randomized startup times.
+        double startTime @unit(s) = default(0s);
 
         // Shows the spanning tree by coloring connections in the network graphics.
         // Label ethernet interface with port role and status. Mark root switch

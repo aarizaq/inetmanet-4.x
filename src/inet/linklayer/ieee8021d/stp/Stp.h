@@ -41,13 +41,20 @@ class INET_API Stp : public StpBase
     unsigned int rootPriority = 0;
     MacAddress rootAddress;
 
-    simtime_t currentMaxAge;
-    simtime_t currentFwdDelay;
-    simtime_t currentHelloTime;
-    simtime_t helloTime;
+    uint16_t configuredBridgePriority = 0;
+    simtime_t configuredMaxAge;
+    simtime_t configuredForwardDelay;
+    simtime_t configuredHelloInterval;
+
+    uint16_t bridgePriority = 0;
+    simtime_t maxAge;
+    simtime_t forwardDelay;
+    simtime_t helloInterval;
+
+    simtime_t timeSinceLastHello;
+    simtime_t holdTime;
 
     // Parameter change detection
-    unsigned int currentBridgePriority = 0;
     // Topology change commencing
     bool topologyChangeNotification = false;
     bool topologyChangeRecvd = false;
@@ -62,13 +69,14 @@ class INET_API Stp : public StpBase
     /*
      * Bridge Protocol Data Unit handling
      */
-    void handleBPDU(Packet *packet, const Ptr<const BpduCfg>& bpdu);
+    void handleBpdu(Packet *packet, const Ptr<const BpduCfg>& bpdu);
     virtual void initInterfacedata(unsigned int interfaceId);
 
     /**
      * Topology change handling
      */
-    void handleTCN(Packet *packet, const Ptr<const BpduTcn>& tcn);
+    void handleTcn(Packet *packet, const Ptr<const BpduTcn>& tcn);
+
     virtual void handleMessageWhenUp(cMessage *msg) override;
     virtual void initialize(int stage) override;
     virtual int numInitStages() const override { return NUM_INIT_STAGES; }
@@ -76,18 +84,18 @@ class INET_API Stp : public StpBase
     /*
      * Send BPDU with specified parameters (portNum, TCA flag, etc.)
      */
-    void generateBPDU(int interfaceId, const MacAddress& address = MacAddress::STP_MULTICAST_ADDRESS, bool tcFlag = false, bool tcaFlag = false);
+    void generateBpdu(int interfaceId, const MacAddress& address = MacAddress::STP_MULTICAST_ADDRESS, bool tcFlag = false, bool tcaFlag = false);
 
     /*
      * Send hello BPDUs on all ports (only for root switches)
      * Invokes generateBPDU(i) where i goes through all ports
      */
-    void generateHelloBPDUs();
+    void generateHelloBpdus();
 
     /*
      * Generate and send Topology Change Notification
      */
-    void generateTCN();
+    void generateTcn();
 
     /*
      * Comparison of all IDs in Ieee8021dInterfaceData::PortInfo structure
@@ -100,8 +108,8 @@ class INET_API Stp : public StpBase
     /*
      * Check of the received BPDU is superior to port information from InterfaceTable
      */
-    bool isSuperiorBPDU(int interfaceId, const Ptr<const BpduCfg>& bpdu);
-    void setSuperiorBPDU(int interfaceId, const Ptr<const BpduCfg>& bpdu);
+    bool isSuperiorBpdu(int interfaceId, const Ptr<const BpduCfg>& bpdu);
+    void setSuperiorBpdu(int interfaceId, const Ptr<const BpduCfg>& bpdu);
 
     void handleTick();
 
@@ -127,7 +135,7 @@ class INET_API Stp : public StpBase
      * Helper functions to handle state changes
      */
     void lostRoot();
-    void lostAlternate();
+    void lostNonDesignated();
     void reset();
 
     /*
@@ -140,7 +148,7 @@ class INET_API Stp : public StpBase
     friend inline std::ostream& operator<<(std::ostream& os, const Ieee8021dInterfaceData::PortRole r);
     friend inline std::ostream& operator<<(std::ostream& os, const Ieee8021dInterfaceData::PortState s);
     friend inline std::ostream& operator<<(std::ostream& os, Ieee8021dInterfaceData *p);
-    friend inline std::ostream& operator<<(std::ostream& os, Stp i);
+    friend inline std::ostream& operator<<(std::ostream& os, const Stp& i);
 
 
   protected:
@@ -191,6 +199,14 @@ inline std::ostream& operator<<(std::ostream& os, const Ieee8021dInterfaceData::
             os << "FWD";
             break;
 
+        case Ieee8021dInterfaceData::BLOCKING:
+            os << "BLK";
+            break;
+
+        case Ieee8021dInterfaceData::LISTENING:
+            os << "LIS";
+            break;
+
         default:
             os << "<?>";
             break;
@@ -219,30 +235,23 @@ inline std::ostream& operator<<(std::ostream& os, Ieee8021dInterfaceData *p)
     return os;
 }
 
-inline std::ostream& operator<<(std::ostream& os, Stp i)
+inline std::ostream& operator<<(std::ostream& os, const Stp& i)
 {
-    os << "RootID Priority: " << i.rootPriority << " \n";
-    os << "  Address: " << i.rootAddress << " \n";
-    if (i.isRoot)
-        os << "  This bridge is the Root. \n";
-    else {
-        os << "  Cost: " << i.rootPathCost << " \n";
-        os << "  Port: " << i.rootInterfaceId << " \n";
-    }
-    os << "  Hello Time: " << i.currentHelloTime << " \n";
-    os << "  Max Age: " << i.currentMaxAge << " \n";
-    os << "  Forward Delay: " << i.currentFwdDelay << " \n";
-    os << "BridgeID Priority: " << i.bridgePriority << "\n";
-    os << "  Address: " << i.bridgeAddress << " \n";
-    os << "  Hello Time: " << i.helloTime << " \n";
-    os << "  Max Age: " << i.maxAge << " \n";
-    os << "  Forward Delay: " << i.forwardDelay << " \n";
-    os << "Port Flag Role State Cost Priority \n";
-    os << "-----------------------------------------\n";
-
+    os << "isRoot=" << i.isRoot << "\n";
+    os << "bridgeAddress=" << i.bridgeAddress << "\n";
+    os << "configuredBridgePriority=" << i.configuredBridgePriority << "\n";
+    os << "configuredHelloInterval=" << i.configuredHelloInterval << "\n";
+    os << "configuredMaxAge=" << i.configuredMaxAge << "\n";
+    os << "configuredForwardDelay=" << i.configuredForwardDelay << "\n";
+    os << "rootPriority=" << i.rootPriority << " rootAddress=" << i.rootAddress << "\n";
+    os << "rootPathCost=" << i.rootPathCost << " rootInterfaceId=" << i.rootInterfaceId << "\n";
+    os << "bridgePriority=" << i.bridgePriority << "\n";
+    os << "helloInterval=" << i.helloInterval << " maxAge=" << i.maxAge << " forwardDelay=" << i.forwardDelay << "\n";
+    os << "timeSinceLastHello=" << i.timeSinceLastHello << "\n";
+    os << "Port  Role  State  Cost  Priority\n";
+    os << "----------------------------------\n";
     for (unsigned int x = 0; x < i.numPorts; x++)
-        os << x << "  " << i.getPortInterfaceData(x) << " \n";
-
+        os << x << "  " << i.getPortInterfaceData(x) << "\n";
     return os;
 }
 

@@ -12,6 +12,7 @@ the simulations (NED, ini and other files) and the web pages are in the
 
 Recently released tutorials:
 
+- :doc:`stp/doc/index` :sub:`(released on: 2026-03-13)`
 - :doc:`ospf/doc/index` :sub:`(released on: 2026-02-26)`
 - :doc:`bgp/doc/index` :sub:`(released on: 2026-02-26)`
 - :doc:`rip/doc/index` :sub:`(released on: 2026-02-26)`
@@ -29,3 +30,4 @@ The following tutorials are available:
    RIP Routing <rip/doc/index>
    BGP Routing <bgp/doc/index>
    OSPF Routing <ospf/doc/index>
+   STP/RSTP <stp/doc/index>

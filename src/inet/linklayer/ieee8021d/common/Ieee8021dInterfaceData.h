@@ -23,14 +23,14 @@ class INET_API Ieee8021dInterfaceData : public InterfaceProtocolData
   public:
     enum PortRole { ALTERNATE, NOTASSIGNED, DISABLED, DESIGNATED, BACKUP, ROOT };
 
-    enum PortState { DISCARDING, LEARNING, FORWARDING };
+    enum PortState { DISCARDING, LEARNING, FORWARDING, BLOCKING, LISTENING }; // DISCARDING is RSTP-only; BLOCKING and LISTENING are STP-only
 
     class INET_API PortInfo {
       public:
         /* The following values have same meaning in both STP and RSTP.
          * See Ieee8021dBDPU for more info.
          */
-        unsigned int priority;
+        uint16_t priority;
         unsigned int linkCost;
         bool edge;
 
@@ -59,6 +59,14 @@ class INET_API Ieee8021dInterfaceData : public InterfaceProtocolData
 
         unsigned int lostBPDU;
         simtime_t nextUpgrade;
+
+        simtime_t earliestBpduSendTime; // The earliest time a BPDU can be sent on this port (hold timer)
+        bool bpduSendPending; // True if a BPDU send was suppressed by the hold timer
+
+        // Proposal/Agreement state (RSTP)
+        bool proposing; // This port is sending Proposal flags in BPDUs
+        bool agreed;    // Downstream neighbor has sent Agreement for this port
+        bool synced;    // This port has been synced (blocked) as part of a P/A handshake
 
       public:
         PortInfo();
@@ -157,13 +165,38 @@ class INET_API Ieee8021dInterfaceData : public InterfaceProtocolData
 
     const char *getStateName() const { return getStateName(getState()); }
 
+    const char *getRoleShortName() const { return getRoleShortName(getRole()); }
+
+    const char *getStateShortName() const { return getStateShortName(getState()); }
+
     static const char *getRoleName(PortRole role);
 
     static const char *getStateName(PortState state);
 
+    static const char *getRoleShortName(PortRole role);
+
+    static const char *getStateShortName(PortState state);
+
     simtime_t getNextUpgrade() const { return portData.nextUpgrade; }
 
     void setNextUpgrade(simtime_t nextUpgrade) { portData.nextUpgrade = nextUpgrade; }
+
+    simtime_t getEarliestBpduSendTime() const { return portData.earliestBpduSendTime; }
+
+    void setEarliestBpduSendTime(simtime_t t) { portData.earliestBpduSendTime = t; }
+
+    bool getBpduSendPending() const { return portData.bpduSendPending; }
+
+    void setBpduSendPending(bool pending) { portData.bpduSendPending = pending; }
+
+    bool isProposing() const { return portData.proposing; }
+    void setProposing(bool proposing) { portData.proposing = proposing; }
+
+    bool isAgreed() const { return portData.agreed; }
+    void setAgreed(bool agreed) { portData.agreed = agreed; }
+
+    bool isSynced() const { return portData.synced; }
+    void setSynced(bool synced) { portData.synced = synced; }
 };
 
 } // namespace inet

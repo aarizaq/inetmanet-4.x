@@ -66,6 +66,17 @@ simple Rstp extends SimpleModule like ISpanningTree
         // Label ethernet interface with port role and status. Mark root switch
         bool visualize = default(false);
 
+        // If true, designated ports may fall back to forwardDelay timers when
+        // the link partner does not support RSTP (no Proposal/Agreement).
+        // If false (default), timer-based transitions raise an error, catching
+        // P/A implementation bugs in pure RSTP networks.
+        bool allowStpPeers = default(false);
+
+        // Delay before the protocol starts sending BPDUs. Default is 0 (all
+        // switches start synchronized). Set to e.g. uniform(0s,1s) for
+        // realistic randomized startup times.
+        double startTime @unit(s) = default(0s);
+
         // If true, edge ports immediately become designated/forwarding, else they will have to wait to get designated.
         bool autoEdge = default(true);
 
