@@ -934,24 +934,22 @@ string icancloud_Base::getHostName() {
     found = end = false;
     current_Module = this;
 
-    // While not found and not raise the top of the hierarchy...
-    while ((!found) && (!end)) {
-
-        // Get the current module's parent module!
-        parent_Module = current_Module->getParentModule();
-
-        // End of the hierarchy! or get the hostName!
-        if (parent_Module == nullptr)
-            end = true;
-        else {
-            //const char *newHostName = parent_Module->par ("hostName");
-            const char *newHostName = parent_Module->getAncestorPar("hostName");
-
+    int k;
+    parent_Module = current_Module->getParentModule();
+    while (!end && !found) {
+        while (parent_Module && (k = parent_Module->findPar("hostName")) < 0)
+            parent_Module = parent_Module->getParentModule();
+        if (parent_Module != nullptr) {
+            const char *newHostName = parent_Module->par(k);
             if (newHostName != nullptr) {
                 hostName = newHostName;
                 found = true;
             }
+            else
+                parent_Module = parent_Module->getParentModule();
         }
+        else
+            end = true;
     }
 
     // If hostName not found!

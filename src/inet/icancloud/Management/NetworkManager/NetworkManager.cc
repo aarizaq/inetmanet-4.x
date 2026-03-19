@@ -83,19 +83,14 @@ void NetworkManager::createNewUser (int newUserID){
 
 }
 
-void NetworkManager::deleteUser (int userID){
-
-	vector <ipsUserSet*>::iterator it;
-	string virtualIP;
-
-	ipsCloud.begin();
-	for (it = ipsCloud.begin(); it < ipsCloud.end(); it++){
+void NetworkManager::deleteUser (int userID)
+{
+	for (auto it = ipsCloud.begin(); it < ipsCloud.end(); it++){
 		if (((*it)->userID) == userID){
 			ipsCloud.erase(it);
 			break;
 		}
 	}
-
 }
 
 void NetworkManager::setIPBasis(string ip){
@@ -108,13 +103,11 @@ string NetworkManager::getIPBasis(){
 
 string NetworkManager::allocateVirtualIP (string ipNode, int userID, int vmID){
 
-	vector <ipsUserSet*>::iterator it;
 	VirtualIPCell* ipcell;
 	string virtualIP;
 	ipcell = new VirtualIPCell();
 
-	for (it = ipsCloud.begin(); it < ipsCloud.end(); it++){
-
+	for (auto it = ipsCloud.begin(); it < ipsCloud.end(); it++){
 		if (((*it)->userID) == userID){
 
 			ipcell->setIPNode(ipNode);
@@ -123,7 +116,6 @@ string NetworkManager::allocateVirtualIP (string ipNode, int userID, int vmID){
 			ipcell->setVMID(vmID);
 			(*it)->virtualIPCell.insert((*it)->virtualIPCell.end(),ipcell);
 			break;
-
 		}
 	}
 
@@ -132,19 +124,16 @@ string NetworkManager::allocateVirtualIP (string ipNode, int userID, int vmID){
 }
 
 void NetworkManager::deleteVirtualIP_by_VIP(string virtualIP, int userID){
-	vector <ipsUserSet*>::iterator it;
-	vector <VirtualIPCell*>::iterator itStr;
 	bool found;
 	string vIP;
 	string hole;
 
 	found = false;
-
-	for (it = ipsCloud.begin(); it < ipsCloud.end(); it++){
+	for (auto it = ipsCloud.begin(); it < ipsCloud.end(); it++){
 
 		if (((*it)->userID) == userID){
 
-			for (itStr = (*it)->virtualIPCell.begin(); itStr < (*it)->virtualIPCell.begin(); itStr++){
+			for (auto itStr = (*it)->virtualIPCell.begin(); itStr < (*it)->virtualIPCell.begin(); itStr++){
 
 				vIP = (*itStr)->getVirtualIP().c_str();
 
@@ -167,19 +156,17 @@ void NetworkManager::deleteVirtualIP_by_VIP(string virtualIP, int userID){
 
 void NetworkManager::deleteVirtualIP_by_VMID(int vmID, int userID){
 
-	vector <ipsUserSet*>::iterator it;
-	vector <VirtualIPCell*>::iterator itStr;
 	bool found;
 	int vm_id;
 	string hole;
 
 	found = false;
 
-	for (it = ipsCloud.begin(); (it < ipsCloud.end()) && (!found); it++){
+	for (auto it = ipsCloud.begin(); (it < ipsCloud.end()) && (!found); it++){
 
 		if (((*it)->userID) == userID){
 
-			for (itStr = (*it)->virtualIPCell.begin(); (itStr < (*it)->virtualIPCell.end()) && (!found); itStr++){
+			for (auto itStr = (*it)->virtualIPCell.begin(); (itStr < (*it)->virtualIPCell.end()) && (!found); itStr++){
 
 				vm_id = (*itStr)->getVMID();
 
@@ -200,8 +187,6 @@ void NetworkManager::deleteVirtualIP_by_VMID(int vmID, int userID){
 string NetworkManager::searchNodeIP (string virtualIP, int userID){
 
 	//Define ..
-		vector <ipsUserSet*>::iterator it;
-		vector <VirtualIPCell*>::iterator itStr;
 		bool found;
 		string ipFound;
 		string user;
@@ -213,11 +198,11 @@ string NetworkManager::searchNodeIP (string virtualIP, int userID){
 		ipFound.clear();
 
 
-	for (it = ipsCloud.begin(); (it < ipsCloud.end()) && (!found); ){
+	for (auto it = ipsCloud.begin(); (it < ipsCloud.end()) && (!found); ){
 
 		if (((*it)->userID) == userID){
 
-			for (itStr = (*it)->virtualIPCell.begin(); (itStr < (*it)->virtualIPCell.end()) && (!found); ){
+			for (auto itStr = (*it)->virtualIPCell.begin(); (itStr < (*it)->virtualIPCell.end()) && (!found); ){
 
 				vIP = (*itStr)->getVirtualIP().c_str();
 
@@ -241,8 +226,6 @@ string NetworkManager::searchNodeIP (string virtualIP, int userID){
 }
 
 string NetworkManager::changeNodeIP (string virtualIP, int userID, string nodeIP){
-	vector <ipsUserSet*>::iterator it;
-	vector <VirtualIPCell*>::iterator itStr;
 	bool found;
 	string ipFound;
 	string vIP;
@@ -250,11 +233,11 @@ string NetworkManager::changeNodeIP (string virtualIP, int userID, string nodeIP
 	found = false;
 	ipFound = "";
 
-	for (it = ipsCloud.begin(); (it < ipsCloud.end()) && (!found); ){
+	for (auto it = ipsCloud.begin(); (it < ipsCloud.end()) && (!found); ){
 
 	    if (((*it)->userID) == userID){
 
-			for (itStr = (*it)->virtualIPCell.begin(); (itStr < (*it)->virtualIPCell.end()) && (!found); ){
+			for (auto itStr = (*it)->virtualIPCell.begin(); (itStr < (*it)->virtualIPCell.end()) && (!found); ){
 
 				vIP = (*itStr)->getVirtualIP().c_str();
 
@@ -282,8 +265,6 @@ string NetworkManager::changeNodeIP (string virtualIP, int userID, string nodeIP
 bool NetworkManager::checkVMIP (string virtualIP, string nodeIP, int userID){
 
 	//Define ..
-		vector <ipsUserSet*>::iterator it;
-		vector <VirtualIPCell*>::iterator itStr;
 		bool found;
 		string nIP;
 		string vIP;
@@ -291,11 +272,11 @@ bool NetworkManager::checkVMIP (string virtualIP, string nodeIP, int userID){
 	// Initialize ..
 		found = false;
 
-	for (it = ipsCloud.begin(); it < ipsCloud.end(); it++){
+	for (auto it = ipsCloud.begin(); it < ipsCloud.end(); it++){
 
 		if (((*it)->userID) == userID){
 
-			for (itStr = (*it)->virtualIPCell.begin(); itStr < (*it)->virtualIPCell.end(); itStr++){
+			for (auto itStr = (*it)->virtualIPCell.begin(); itStr < (*it)->virtualIPCell.end(); itStr++){
 
 				vIP = (*itStr)->getVirtualIP().c_str();
 				nIP = (*itStr)->getIPNode();
@@ -325,8 +306,6 @@ int NetworkManager::getUserIPSize(){
 string NetworkManager::searchVMIP (int userID, int vmID){
 
 	//Define ..
-		vector <ipsUserSet*>::iterator it;
-		vector <VirtualIPCell*>::iterator itStr;
 		bool found;
 		string ipFound;
 
@@ -334,11 +313,11 @@ string NetworkManager::searchVMIP (int userID, int vmID){
 		found = false;
 		ipFound = "";
 
-	for (it = ipsCloud.begin(); (it < ipsCloud.end()) && (!found); ){
+	for (auto it = ipsCloud.begin(); (it < ipsCloud.end()) && (!found); ){
 
 		if (((*it)->userID) == userID){
 
-			for (itStr = (*it)->virtualIPCell.begin(); (itStr < (*it)->virtualIPCell.end()) && (!found); ){
+			for (auto itStr = (*it)->virtualIPCell.begin(); (itStr < (*it)->virtualIPCell.end()) && (!found); ){
 
 				if (((*itStr)->getVMID()) == vmID){
 
@@ -432,8 +411,6 @@ void NetworkManager::freePortOfVM (string ipNode, int vmID, int user, int virtua
 int NetworkManager::getVMid (string virtualIP, int uId){
 
     //Define ..
-        vector <ipsUserSet*>::iterator it;
-        vector <VirtualIPCell*>::iterator itStr;
         bool found;
         int pIdFound;
 
@@ -441,11 +418,11 @@ int NetworkManager::getVMid (string virtualIP, int uId){
         found = false;
         pIdFound = -1;
 
-    for (it = ipsCloud.begin(); (it < ipsCloud.end()) && (!found); ){
+    for (auto it = ipsCloud.begin(); (it < ipsCloud.end()) && (!found); ){
 
         if (((*it)->userID) == uId){
 
-            for (itStr = (*it)->virtualIPCell.begin(); (itStr < (*it)->virtualIPCell.end()) && (!found); ){
+            for (auto itStr = (*it)->virtualIPCell.begin(); (itStr < (*it)->virtualIPCell.end()) && (!found); ){
 
                 if (strcmp ( (*itStr)->getVirtualIP().c_str(), virtualIP.c_str() ) == 0){
 
