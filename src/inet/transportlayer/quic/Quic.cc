@@ -15,14 +15,10 @@
 #include "AppSocket.h"
 #include "inet/common/ModuleAccess.h"
 #include "inet/networklayer/common/IcmpErrorTag_m.h"
-#include "inet/transportlayer/udp/UdpHeader_m.h"
+#include "inet/networklayer/ipv4/IcmpHeader_m.h"
+#include "inet/networklayer/icmpv6/Icmpv6Header_m.h"
 #include "exception/ConnectionDiedException.h"
 #include "packet/ConnectionId.h"
-
-#ifdef INET_WITH_IPv4
-#include "inet/networklayer/ipv4/IcmpHeader.h"
-#include "inet/networklayer/ipv4/Ipv4Header_m.h"
-#endif // ifdef INET_WITH_IPv4
 
 namespace inet {
 namespace quic {
@@ -125,47 +121,58 @@ void Quic::handleMessageFromUdp(cMessage *msg)
     } else if (msg->getKind() == UDP_I_ERROR) {
         EV_WARN << "Error message received from UDP" << endl;
         Indication *ind = check_and_cast<Indication *>(msg);
-        auto icmpErrorInd = ind->getTag<IcmpErrorInd>();
-#ifdef INET_WITH_IPv4
-        auto quotedPacket = icmpErrorInd->getQuotedPacket()->dup();
-        auto icmpHeader = quotedPacket->popAtFront<IcmpHeader>();
-        if (icmpHeader != nullptr) {
-            if (icmpHeader->getType() == ICMP_DESTINATION_UNREACHABLE && icmpHeader->getCode() == ICMP_DU_FRAGMENTATION_NEEDED) {
-                // Packet Too Big (PTB) message received
-                Ptr<const IcmpPtb> icmpPtb = dynamicPtrCast<const IcmpPtb>(icmpHeader);
 
-                quotedPacket->popAtFront<Ipv4Header>(); // skip IP header of reflected packet
-                quotedPacket->popAtFront<UdpHeader>(); // skip UDP header of reflected packet
-                if (quotedPacket->getByteLength() > 0) {
-                    bool readSrcConnectionId = true;
-                    uint64_t connectionId = extractConnectionId(quotedPacket, &readSrcConnectionId);
-                    Connection *connection = nullptr;
-                    if (readSrcConnectionId) {
-                        // could read source connection ID, finding connection should be easy
-                        connection = findConnection(connectionId);
-                    } else {
-                        // could only read destination connection ID, try to find connection
-                        connection = findConnectionByDstConnectionId(connectionId, quotedPacket);
-                    }
+        // The originalPacket has already been unwrapped by ICMP, IP, and UDP
+        // layers. It now contains only the QUIC payload.
+        Packet *originalPacket;
+        int mtu = -1;
 
-                    if (connection) {
-                        connection->processIcmpPtb(quotedPacket, icmpPtb->getMtu());
-                    } else {
-                        EV_WARN << "Could not find connection for a ICMP PTB" << endl;
-                    }
+        if (ind->findTag<Icmpv4ErrorInd>()) {
+            auto& errorInd = ind->getTagForUpdate<Icmpv4ErrorInd>();
+            originalPacket = errorInd->getOriginalPacketForUpdate();
+            // ICMPv4 Fragmentation Needed: type=3 (Destination Unreachable), code=4
+            if (errorInd->getType() == ICMP_DESTINATION_UNREACHABLE &&
+                errorInd->getCode() == ICMP_DU_FRAGMENTATION_NEEDED)
+                mtu = errorInd->getMtu();
+            else
+                EV_WARN << "ICMPv4 error type=" << errorInd->getType() << " code=" << errorInd->getCode() << " not handled" << endl;
+        }
+        else if (ind->findTag<Icmpv6ErrorInd>()) {
+            auto& errorInd = ind->getTagForUpdate<Icmpv6ErrorInd>();
+            originalPacket = errorInd->getOriginalPacketForUpdate();
+            // ICMPv6 Packet Too Big: type=2
+            if (errorInd->getType() == ICMPv6_PACKET_TOO_BIG)
+                mtu = errorInd->getMtu();
+            else
+                EV_WARN << "ICMPv6 error type=" << errorInd->getType() << " code=" << errorInd->getCode() << " not handled" << endl;
+        }
+        else {
+            EV_ERROR << "UDP_I_ERROR received without ICMP error indication tag" << endl;
+            delete msg;
+            return;
+        }
+
+        if (mtu >= 0) {
+            // Packet Too Big (PTB) / Fragmentation Needed message
+            if (originalPacket->getByteLength() > 0) {
+                bool readSrcConnectionId = true;
+                uint64_t connectionId = extractConnectionId(originalPacket, &readSrcConnectionId);
+                Connection *connection = nullptr;
+                if (readSrcConnectionId) {
+                    connection = findConnection(connectionId);
                 } else {
-                    EV_WARN << "ICMP PTB message reflects not enough data from the original packet." << endl;
+                    connection = findConnectionByDstConnectionId(connectionId, originalPacket);
+                }
+
+                if (connection) {
+                    connection->processIcmpPtb(originalPacket, mtu);
+                } else {
+                    EV_WARN << "Could not find connection for ICMP PTB" << endl;
                 }
             } else {
-                EV_WARN << "ICMP types other than PTB not handled" << endl;
+                EV_WARN << "ICMP PTB message reflects not enough data from the original packet." << endl;
             }
-        } else {
-            EV_WARN << "ICMPv6 not handled" << endl;
         }
-        delete quotedPacket;
-#else
-        EV_WARN << "INET compiled without Ipv4" << endl;
-#endif // ifdef INET_WITH_IPv4
     } else if (msg->getKind() == UDP_I_DATA) {
         Packet *pkt = check_and_cast<Packet *>(msg);
 

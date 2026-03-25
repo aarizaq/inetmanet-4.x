@@ -11,6 +11,8 @@
 #include "inet/common/ModuleAccess.h"
 #include "inet/common/ProtocolGroup.h"
 #include "inet/common/ProtocolTag_m.h"
+#include "inet/common/packet/Message.h"
+#include "inet/networklayer/common/IcmpErrorTag_m.h"
 #include "inet/common/checksum/Checksum.h"
 #include "inet/common/lifecycle/NodeStatus.h"
 #include "inet/linklayer/common/InterfaceTag_m.h"
@@ -53,6 +55,21 @@ void Icmpv6::handleMessage(cMessage *msg)
         processICMPv6Message(check_and_cast<Packet *>(msg));
         return;
     }
+    else if (msg->getArrivalGate()->isName("transportIn")) {
+        // Handle send-error requests from transport layers (e.g. UDP)
+        auto request = check_and_cast<Request *>(msg);
+        if (auto tag = request->findTagForUpdate<Icmpv6SendErrorReq>()) {
+            auto origPacket = tag->getOriginalPacketForUpdate();
+            // restore the original network datagram (IP header + transport payload)
+            origPacket->setFrontOffset(origPacket->getTag<NetworkProtocolInd>()->getNetworkHeaderFrontOffset());
+            sendErrorMessage(origPacket, tag->getType(), tag->getCode());
+        }
+        else {
+            throw cRuntimeError("Unknown Request arrived on transportIn: %s", request->getName());
+        }
+        delete request;
+        return;
+    }
     else
         throw cRuntimeError("Message %s(%s) arrived in unknown '%s' gate", msg->getName(), msg->getClassName(), msg->getArrivalGate()->getName());
 }
@@ -72,54 +89,68 @@ void Icmpv6::processICMPv6Message(Packet *packet)
     auto icmpv6msg = packet->peekAtFront<Icmpv6Header>();
     int type = icmpv6msg->getType();
     if (type < 128) {
-        // ICMP errors are delivered to the appropriate higher layer protocols
-        EV_INFO << "ICMPv6 packet: passing it to higher layer\n";
-        const auto& bogusIpv6Header = packet->peekDataAt<Ipv6Header>(icmpv6msg->getChunkLength());
+        // ICMPv6 error messages (type < 128).
+        // Pop the ICMPv6 header and create an Indication with Icmpv6ErrorInd tag.
+        // The remaining packet content (quoted IPv6 + transport + payload) becomes
+        // the originalPacket, progressively unwrapped by upper layers.
+        const auto& icmpHeader = packet->popAtFront<Icmpv6Header>();
+
+        auto *indication = new Indication("ICMPv6-error");
+        auto& errorInd = indication->addTag<Icmpv6ErrorInd>();
+        errorInd->setType(icmpHeader->getType());
+        // Extract code and MTU from the specific ICMPv6 subtypes
+        switch (type) {
+            case ICMPv6_DESTINATION_UNREACHABLE:
+                errorInd->setCode(CHK(dynamicPtrCast<const Icmpv6DestUnreachableMsg>(icmpHeader))->getCode());
+                break;
+            case ICMPv6_PACKET_TOO_BIG: {
+                auto ptb = CHK(dynamicPtrCast<const Icmpv6PacketTooBigMsg>(icmpHeader));
+                errorInd->setCode(ptb->getCode());
+                errorInd->setMtu(ptb->getMTU());
+                break;
+            }
+            case ICMPv6_TIME_EXCEEDED:
+                errorInd->setCode(CHK(dynamicPtrCast<const Icmpv6TimeExceededMsg>(icmpHeader))->getCode());
+                break;
+            case ICMPv6_PARAMETER_PROBLEM:
+                errorInd->setCode(CHK(dynamicPtrCast<const Icmpv6ParamProblemMsg>(icmpHeader))->getCode());
+                break;
+        }
+        packet->trim();
+        packet->addTagIfAbsent<PacketProtocolTag>()->setProtocol(&Protocol::ipv6);
+        errorInd->setOriginalPacket(packet); // ownership transfer, no dup needed
+
+        // Peek at the quoted IPv6 header to determine the transport protocol
+        const auto& bogusIpv6Header = packet->peekAtFront<Ipv6Header>();
         int transportProtocol = bogusIpv6Header->getProtocolId();
         if (transportProtocol == IP_PROT_IPv6_ICMP) {
             // ICMP error answer to an ICMP packet:
-            errorOut(icmpv6msg);
-            delete packet;
+            errorOut(indication);
         }
         else {
-            auto dispatchProtocolReq = packet->addTagIfAbsent<DispatchProtocolReq>();
-            dispatchProtocolReq->setServicePrimitive(SP_INDICATION);
-            dispatchProtocolReq->setProtocol(ProtocolGroup::getIpProtocolGroup()->getProtocol(transportProtocol));
-            send(packet, "transportOut");
+            // Send the Indication to IPv6 via ipv6Out; IPv6 will pop the quoted
+            // IPv6 header and forward the indication to the transport protocol.
+            indication->addTagIfAbsent<DispatchProtocolReq>()->setProtocol(&Protocol::ipv6);
+            send(indication, "ipv6Out");
         }
     }
     else {
-        auto icmpv6msg = packet->popAtFront<Icmpv6Header>();
-        if (dynamicPtrCast<const Icmpv6DestUnreachableMsg>(icmpv6msg)) {
-            EV_INFO << "ICMPv6 Destination Unreachable Message Received." << endl;
-            errorOut(icmpv6msg);
-            delete packet;
+        switch (type) {
+            case ICMPv6_ECHO_REQUEST: {
+                EV_INFO << "ICMPv6 Echo Request Message Received." << endl;
+                const auto& echoRequest = packet->popAtFront<Icmpv6EchoRequestMsg>();
+                processEchoRequest(packet, echoRequest);
+                break;
+            }
+            case ICMPv6_ECHO_REPLY: {
+                EV_INFO << "ICMPv6 Echo Reply Message Received." << endl;
+                const auto& echoReply = packet->popAtFront<Icmpv6EchoReplyMsg>();
+                processEchoReply(packet, echoReply);
+                break;
+            }
+            default:
+                throw cRuntimeError("Unknown ICMPv6 message type %d received", type);
         }
-        else if (dynamicPtrCast<const Icmpv6PacketTooBigMsg>(icmpv6msg)) {
-            EV_INFO << "ICMPv6 Packet Too Big Message Received." << endl;
-            errorOut(icmpv6msg);
-            delete packet;
-        }
-        else if (dynamicPtrCast<const Icmpv6TimeExceededMsg>(icmpv6msg)) {
-            EV_INFO << "ICMPv6 Time Exceeded Message Received." << endl;
-            errorOut(icmpv6msg);
-            delete packet;
-        }
-        else if (dynamicPtrCast<const Icmpv6ParamProblemMsg>(icmpv6msg)) {
-            EV_INFO << "ICMPv6 Parameter Problem Message Received." << endl;
-            errorOut(icmpv6msg);
-            delete packet;
-        }
-        else if (auto echoRequest = dynamicPtrCast<const Icmpv6EchoRequestMsg>(icmpv6msg)) {
-            EV_INFO << "ICMPv6 Echo Request Message Received." << endl;
-            processEchoRequest(packet, echoRequest);
-        }
-        else if (auto echoReply = dynamicPtrCast<const Icmpv6EchoReplyMsg>(icmpv6msg)) {
-            EV_INFO << "ICMPv6 Echo Reply Message Received." << endl;
-            processEchoReply(packet, echoReply);
-        }
-        else
-            throw cRuntimeError("Unknown message type received: (%s)%s.\n", icmpv6msg->getClassName(), icmpv6msg->getName());
     }
 }
 
@@ -185,7 +216,12 @@ void Icmpv6::sendErrorMessage(Packet *origDatagram, Icmpv6Type type, int code)
 {
     Enter_Method("sendErrorMessage(datagram, type=%d, code=%d)", type, code);
 
-    if (!validateDatagramPromptingError(origDatagram))
+    // Packets received from the network have an InterfaceInd tag;
+    // locally originated packets don't. Skip validation for locally
+    // originated packets so the error can be processed locally (see below).
+    bool fromNetwork = origDatagram->findTag<InterfaceInd>() != nullptr;
+
+    if (fromNetwork && !validateDatagramPromptingError(origDatagram))
         return;
 
     Packet *errorMsg;
@@ -300,6 +336,16 @@ bool Icmpv6::validateDatagramPromptingError(Packet *packet)
         return false;
     }
 
+    // RFC 4443 Section 2.4(e): don't send ICMPv6 error if source is unspecified or multicast
+    if (ipv6Header->getSrcAddress().isUnspecified()) {
+        EV_INFO << "won't send ICMP error messages to unspecified address, message " << ipv6Header << endl;
+        return false;
+    }
+    if (ipv6Header->getSrcAddress().isMulticast()) {
+        EV_INFO << "won't send ICMP error messages to multicast address, message " << ipv6Header << endl;
+        return false;
+    }
+
     // do not reply with error message to error message
     if (ipv6Header->getProtocolId() == IP_PROT_IPv6_ICMP) {
         auto recICMPMsg = packet->peekDataAt<Icmpv6Header>(ipv6Header->getChunkLength());
@@ -311,8 +357,9 @@ bool Icmpv6::validateDatagramPromptingError(Packet *packet)
     return true;
 }
 
-void Icmpv6::errorOut(const Ptr<const Icmpv6Header>& icmpv6msg)
+void Icmpv6::errorOut(Indication *indication)
 {
+    delete indication;
 }
 
 void Icmpv6::handleRegisterService(const Protocol& protocol, cGate *gate, ServicePrimitive servicePrimitive)

@@ -29,6 +29,7 @@
 #include "inet/networklayer/common/EcnTag_m.h"
 #include "inet/networklayer/common/FragmentationTag_m.h"
 #include "inet/networklayer/common/HopLimitTag_m.h"
+#include "inet/networklayer/common/IcmpErrorTag_m.h"
 #include "inet/networklayer/common/L3AddressTag_m.h"
 #include "inet/networklayer/common/L3Tools.h"
 #include "inet/networklayer/common/MulticastTag_m.h"
@@ -201,7 +202,9 @@ void Ipv4::handleRequest(Request *request)
 void Ipv4::handleMessageWhenUp(cMessage *msg)
 {
     if (msg->arrivedOn("transportIn")) { // TODO packet->getArrivalGate()->getBaseId() == transportInGateBaseId
-        if (auto request = dynamic_cast<Request *>(msg))
+        if (auto indication = dynamic_cast<Indication *>(msg))
+            handleIndication(indication);
+        else if (auto request = dynamic_cast<Request *>(msg))
             handleRequest(request);
         else
             handlePacketFromHL(check_and_cast<Packet *>(msg));
@@ -212,6 +215,41 @@ void Ipv4::handleMessageWhenUp(cMessage *msg)
     }
     else
         throw cRuntimeError("message arrived on unknown gate '%s'", msg->getArrivalGate()->getName());
+}
+
+void Ipv4::handleIndication(Indication *indication)
+{
+    if (indication->findTag<Icmpv4ErrorInd>())
+        handleIcmpErrorIndication(indication);
+    else
+        throw cRuntimeError("Unknown Indication arrived on transportIn: %s", indication->getName());
+}
+
+void Ipv4::handleIcmpErrorIndication(Indication *indication)
+{
+    auto& errorInd = indication->getTagForUpdate<Icmpv4ErrorInd>();
+    Packet *originalPacket = errorInd->getOriginalPacketForUpdate();
+
+    // Pop the quoted IPv4 header and convert it to tags on the original packet
+    const auto& ipv4Header = originalPacket->popAtFront<Ipv4Header>();
+
+    auto& l3Ind = originalPacket->addTagIfAbsent<L3AddressInd>();
+    l3Ind->setSrcAddress(ipv4Header->getSrcAddress());
+    l3Ind->setDestAddress(ipv4Header->getDestAddress());
+    originalPacket->addTagIfAbsent<HopLimitInd>()->setHopLimit(ipv4Header->getTimeToLive());
+    originalPacket->addTagIfAbsent<DscpInd>()->setDifferentiatedServicesCodePoint(ipv4Header->getDscp());
+    originalPacket->addTagIfAbsent<EcnInd>()->setExplicitCongestionNotification(ipv4Header->getEcn());
+    originalPacket->addTagIfAbsent<TosInd>()->setTos(ipv4Header->getTypeOfService());
+
+    // Dispatch the same Indication to the appropriate transport protocol.
+    // SP_INDICATION routes via protocolToGateIndex to the transport module's ipIn gate.
+    auto protocol = ProtocolGroup::getIpProtocolGroup()->getProtocol(ipv4Header->getProtocolId());
+    auto& dispatchReq = indication->addTagIfAbsent<DispatchProtocolReq>();
+    dispatchReq->setProtocol(protocol);
+    dispatchReq->setServicePrimitive(SP_INDICATION);
+
+    EV_INFO << "Forwarding ICMP error indication to transport protocol " << protocol->getName() << "\n";
+    send(indication, "transportOut");
 }
 
 const NetworkInterface *Ipv4::getSourceInterface(Packet *packet)
@@ -235,7 +273,7 @@ Ipv4Address Ipv4::getNextHop(Packet *packet)
 void Ipv4::handleIncomingDatagram(Packet *packet)
 {
     ASSERT(packet);
-    int interfaceId = packet->getTag<InterfaceInd>()->getInterfaceId();
+    ASSERT(packet->getTag<InterfaceInd>());
     emit(packetReceivedFromLowerSignal, packet);
 
     //
@@ -257,7 +295,7 @@ void Ipv4::handleIncomingDatagram(Packet *packet)
 
     if (ipv4Header->getTotalLengthField() > packet->getDataLength()) {
         EV_WARN << "length error found, sending ICMP_PARAMETER_PROBLEM\n";
-        sendIcmpError(packet, interfaceId, ICMP_PARAMETER_PROBLEM, 0);
+        sendIcmpError(packet, ICMP_PARAMETER_PROBLEM, 0);
         return;
     }
 
@@ -273,7 +311,7 @@ void Ipv4::handleIncomingDatagram(Packet *packet)
         double relativeHeaderLength = ipv4Header->getHeaderLength().get<B>() / (double)ipv4Header->getChunkLength().get<B>();
         if (dblrand() <= relativeHeaderLength) {
             EV_WARN << "bit error found, sending ICMP_PARAMETER_PROBLEM\n";
-            sendIcmpError(packet, interfaceId, ICMP_PARAMETER_PROBLEM, 0);
+            sendIcmpError(packet, ICMP_PARAMETER_PROBLEM, 0);
             return;
         }
     }
@@ -628,7 +666,7 @@ void Ipv4::routeUnicastPacket(Packet *packet)
         PacketDropDetails details;
         details.setReason(NO_ROUTE_FOUND);
         emit(packetDroppedSignal, packet, &details);
-        sendIcmpError(packet, fromIE ? fromIE->getInterfaceId() : -1, ICMP_DESTINATION_UNREACHABLE, 0);
+        sendIcmpError(packet, ICMP_DESTINATION_UNREACHABLE, 0);
     }
     else { // fragment and send
         if (fromIE != nullptr) {
@@ -855,14 +893,15 @@ void Ipv4::reassembleAndDeliverFinish(Packet *packet)
     else {
         EV_ERROR << "Transport protocol '" << protocol->getName() << "' not connected, discarding packet\n";
         packet->setFrontOffset(ipv4HeaderPosition);
-        // get source interface:
-        const auto& tag = packet->findTag<InterfaceInd>();
-        sendIcmpError(packet, tag ? tag->getInterfaceId() : -1, ICMP_DESTINATION_UNREACHABLE, ICMP_DU_PROTOCOL_UNREACHABLE);
+        sendIcmpError(packet, ICMP_DESTINATION_UNREACHABLE, ICMP_DU_PROTOCOL_UNREACHABLE);
     }
 }
 
 void Ipv4::decapsulate(Packet *packet)
 {
+    // save the front offset so upper layers can restore the original IP datagram
+    packet->getTagForUpdate<NetworkProtocolInd>()->setNetworkHeaderFrontOffset(packet->getFrontOffset());
+
     // decapsulate transport packet
 
     const auto& ipv4Header = packet->popAtFront<Ipv4Header>();
@@ -917,7 +956,7 @@ void Ipv4::fragmentAndSend(Packet *packet)
         details.setReason(HOP_LIMIT_REACHED);
         emit(packetDroppedSignal, packet, &details);
         EV_WARN << "datagram TTL reached zero, sending ICMP_TIME_EXCEEDED\n";
-        sendIcmpError(packet, -1 /*TODO*/, ICMP_TIME_EXCEEDED, 0);
+        sendIcmpError(packet, ICMP_TIME_EXCEEDED, 0);
         numDropped++;
         return;
     }
@@ -1459,9 +1498,9 @@ void Ipv4::receiveSignal(cComponent *source, simsignal_t signalID, cObject *obj,
     }
 }
 
-void Ipv4::sendIcmpError(Packet *origPacket, int inputInterfaceId, IcmpType type, IcmpCode code)
+void Ipv4::sendIcmpError(Packet *origPacket, IcmpType type, IcmpCode code)
 {
-    icmp->sendErrorMessage(origPacket, inputInterfaceId, type, code);
+    icmp->sendErrorMessage(origPacket, type, code);
     delete origPacket;
 }
 

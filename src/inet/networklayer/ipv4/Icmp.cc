@@ -15,6 +15,8 @@
 #include "inet/common/ModuleAccess.h"
 #include "inet/common/ProtocolGroup.h"
 #include "inet/common/ProtocolTag_m.h"
+#include "inet/common/packet/Message.h"
+#include "inet/networklayer/common/IcmpErrorTag_m.h"
 #include "inet/common/checksum/Checksum.h"
 #include "inet/common/packet/dissector/ProtocolDissector.h"
 #include "inet/common/packet/dissector/ProtocolDissectorRegistry.h"
@@ -70,15 +72,33 @@ void Icmp::handleMessage(cMessage *msg)
         processIcmpMessage(check_and_cast<Packet *>(msg));
         return;
     }
+    else if (arrivalGate->isName("transportIn")) {
+        // Handle send-error requests from transport layers (e.g. UDP)
+        auto request = check_and_cast<Request *>(msg);
+        if (auto tag = request->findTagForUpdate<Icmpv4SendErrorReq>()) {
+            auto origPacket = tag->getOriginalPacketForUpdate();
+            // restore the original network datagram (IP header + transport payload)
+            origPacket->setFrontOffset(origPacket->getTag<NetworkProtocolInd>()->getNetworkHeaderFrontOffset());
+            sendErrorMessage(origPacket, tag->getType(), static_cast<IcmpCode>(tag->getCode()));
+        }
+        else {
+            throw cRuntimeError("Unknown Request arrived on transportIn: %s", request->getName());
+        }
+        delete request;
+        return;
+    }
     else
         throw cRuntimeError("Message %s(%s) arrived in unknown '%s' gate", msg->getName(), msg->getClassName(), msg->getArrivalGate()->getName());
 }
 
-bool Icmp::maySendErrorMessage(Packet *packet, int inputInterfaceId)
+bool Icmp::maySendErrorMessage(Packet *packet)
 {
     const auto& ipv4Header = packet->peekAtFront<Ipv4Header>();
     Ipv4Address origSrcAddr = ipv4Header->getSrcAddress();
     Ipv4Address origDestAddr = ipv4Header->getDestAddress();
+
+    auto& interfaceInd = packet->findTag<InterfaceInd>();
+    int inputInterfaceId = interfaceInd ? interfaceInd->getInterfaceId() : -1;
 
     // don't send ICMP error messages in response to broadcast or multicast messages
     if (origDestAddr.isMulticast() || origDestAddr.isLimitedBroadcastAddress() || possiblyLocalBroadcast(origDestAddr, inputInterfaceId)) {
@@ -135,7 +155,7 @@ void Icmp::sendPtbMessage(Packet *packet, int mtu)
 {
     Enter_Method("sendPtbMessage(datagram, mtu=%d)", mtu);
 
-    if (maySendErrorMessage(packet, -1)) {
+    if (maySendErrorMessage(packet)) {
         // assemble a message name
         char msgname[80];
         snprintf(msgname, sizeof(msgname), "ICMP-PTB-#%" PRIu64 "-mtu%d", ++ctr, mtu);
@@ -159,11 +179,11 @@ void Icmp::sendPtbMessage(Packet *packet, int mtu)
     }
 }
 
-void Icmp::sendErrorMessage(Packet *packet, int inputInterfaceId, IcmpType type, IcmpCode code)
+void Icmp::sendErrorMessage(Packet *packet, IcmpType type, IcmpCode code)
 {
     Enter_Method("sendErrorMessage(datagram, type=%d, code=%d)", type, code);
 
-    if (maySendErrorMessage(packet, inputInterfaceId)) {
+    if (maySendErrorMessage(packet)) {
         // assemble a message name
         char msgname[80];
         snprintf(msgname, sizeof(msgname), "ICMP-error-#%" PRIu64 "-type%d-code%d", ++ctr, type, code);
@@ -239,25 +259,39 @@ void Icmp::processIcmpMessage(Packet *packet)
         case ICMP_DESTINATION_UNREACHABLE:
         case ICMP_TIME_EXCEEDED:
         case ICMP_PARAMETER_PROBLEM: {
-            // ICMP errors are delivered to the appropriate higher layer protocol
-            const auto& bogusL3Packet = packet->peekDataAt<Ipv4Header>(icmpmsg->getChunkLength());
-            int transportProtocol = bogusL3Packet->getProtocolId();
+            // Pop the ICMP header and create an Indication with Icmpv4ErrorInd tag.
+            // The remaining packet content (quoted IPv4 + transport + payload) becomes
+            // the originalPacket, which will be progressively unwrapped by upper layers.
+            const auto& icmpHeader = packet->popAtFront<IcmpHeader>();
+
+            auto *indication = new Indication("ICMP-error");
+            auto& errorInd = indication->addTag<Icmpv4ErrorInd>();
+            errorInd->setType(icmpHeader->getType());
+            errorInd->setCode(icmpHeader->getCode());
+            if (auto ptb = dynamicPtrCast<const IcmpPtb>(icmpHeader))
+                errorInd->setMtu(ptb->getMtu());
+            packet->trim();
+            packet->addTagIfAbsent<PacketProtocolTag>()->setProtocol(&Protocol::ipv4);
+            errorInd->setOriginalPacket(packet); // ownership transfer, no dup needed
+
+            // Peek at the quoted IPv4 header to determine the transport protocol
+            const auto& bogusIpv4Header = packet->peekAtFront<Ipv4Header>();
+            int transportProtocol = bogusIpv4Header->getProtocolId();
             if (transportProtocol == IP_PROT_ICMP) {
                 // received ICMP error answer to an ICMP packet:
                 // FIXME should send up dest unreachable answers to pingapps
-                errorOut(packet);
+                errorOut(indication);
             }
             else {
                 if (!contains(transportProtocols, transportProtocol)) {
                     EV_ERROR << "Transport protocol " << transportProtocol << " not registered, packet dropped\n";
-                    delete packet;
+                    delete indication;
                 }
                 else {
-                    auto dispatchProtocolReq = packet->addTagIfAbsent<DispatchProtocolReq>();
-                    dispatchProtocolReq->setServicePrimitive(SP_INDICATION);
-                    dispatchProtocolReq->setProtocol(ProtocolGroup::getIpProtocolGroup()->getProtocol(transportProtocol));
-                    packet->addTagIfAbsent<PacketProtocolTag>()->setProtocol(&Protocol::icmpv4);
-                    send(packet, "transportOut");
+                    // Send the Indication to IPv4 via ipOut; IPv4 will pop the quoted
+                    // IPv4 header and forward the indication to the transport protocol.
+                    indication->addTagIfAbsent<DispatchProtocolReq>()->setProtocol(&Protocol::ipv4);
+                    send(indication, "ipOut");
                 }
             }
             break;
@@ -284,9 +318,9 @@ void Icmp::processIcmpMessage(Packet *packet)
     }
 }
 
-void Icmp::errorOut(Packet *packet)
+void Icmp::errorOut(Indication *indication)
 {
-    delete packet;
+    delete indication;
 }
 
 void Icmp::processEchoRequest(Packet *request)

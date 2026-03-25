@@ -148,6 +148,14 @@ class INET_API Ipv4 : public OperationalBase, public NetfilterBase, public INetw
     virtual void handlePacketFromHL(Packet *packet);
 
     /**
+     * Handle an ICMP error indication arriving from the ICMP module.
+     * Pops the quoted IPv4 header from the original packet, converts it
+     * to tags, and forwards the indication to the appropriate transport protocol.
+     */
+    virtual void handleIndication(Indication *indication);
+    virtual void handleIcmpErrorIndication(Indication *indication);
+
+    /**
      * Routes and sends datagram received from higher layers.
      * Invokes datagramLocalOutHook(), then routePacket().
      */
@@ -207,7 +215,7 @@ class INET_API Ipv4 : public OperationalBase, public NetfilterBase, public INetw
 
     virtual void sendPacketToNIC(Packet *packet);
 
-    virtual void sendIcmpError(Packet *packet, int inputInterfaceId, IcmpType type, IcmpCode code);
+    virtual void sendIcmpError(Packet *packet, IcmpType type, IcmpCode code);
 
     virtual Packet *prepareForForwarding(Packet *packet) const;
 

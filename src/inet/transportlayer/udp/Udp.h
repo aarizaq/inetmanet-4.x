@@ -26,13 +26,6 @@
 #include "inet/transportlayer/contract/udp/UdpCommand_m.h"
 #include "inet/transportlayer/udp/UdpHeader_m.h"
 
-#ifdef INET_WITH_IPv4
-#include "inet/networklayer/ipv4/Icmp.h"
-#endif
-
-#ifdef INET_WITH_IPv6
-#include "inet/networklayer/icmpv6/Icmpv6.h"
-#endif
 
 namespace inet {
 
@@ -116,12 +109,6 @@ class INET_API Udp : public TransportProtocolBase
     // other state vars
     ushort lastEphemeralPort = EPHEMERAL_PORTRANGE_START;
     ModuleRefByPar<IInterfaceTable> ift;
-#ifdef INET_WITH_IPv4
-    opp_component_ptr<Icmp> icmp;
-#endif
-#ifdef INET_WITH_IPv6
-    opp_component_ptr<Icmpv6> icmpv6;
-#endif
 
     // statistics
     int numSent = 0;
@@ -168,11 +155,16 @@ class INET_API Udp : public TransportProtocolBase
     virtual SockDesc *findFirstSocketByLocalAddress(const L3Address& localAddr, ushort localPort);
     virtual void sendUp(Ptr<const UdpHeader>& header, Packet *payload, SockDesc *sd, ushort srcPort, ushort destPort);
     virtual void processUndeliverablePacket(Packet *udpPacket);
-    virtual void sendUpErrorIndication(SockDesc *sd, const L3Address& localAddr, ushort localPort, const L3Address& remoteAddr, ushort remotePort, Packet *quotedPacket);
+    virtual void sendUpErrorIndication(SockDesc *sd, const L3Address& localAddr, ushort localPort, const L3Address& remoteAddr, ushort remotePort, Indication *indication);
 
-    // process an ICMP error packet
-    virtual void processICMPv4Error(Packet *icmpPacket);
-    virtual void processICMPv6Error(Packet *icmpPacket);
+    // handle an Indication arriving from the network layer
+    virtual void handleIndication(Indication *indication);
+
+    // process ICMPv4/ICMPv6 error indications
+    virtual void processIcmpv4Error(Indication *indication);
+    virtual void processIcmpv6Error(Indication *indication);
+    virtual void processIcmpErrorForSocket(Indication *indication, Packet *originalPacket,
+            const L3Address& localAddr, ushort localPort, const L3Address& remoteAddr, ushort remotePort);
 
     // process Udp packets coming from IP
     virtual void processUDPPacket(Packet *udpPacket);
@@ -180,8 +172,11 @@ class INET_API Udp : public TransportProtocolBase
     // process packets from application
     virtual void handleUpperPacket(Packet *appData) override;
 
-    // process packets from network layr
-    virtual void handleLowerPacket(Packet *appData) override;
+    // process packets from network layer
+    virtual void handleLowerPacket(Packet *packet) override;
+
+    // process ICMP error indications from network layer
+    virtual void handleLowerCommand(cMessage *msg) override;
 
     // process commands from application
     virtual void handleUpperCommand(cMessage *msg) override;
