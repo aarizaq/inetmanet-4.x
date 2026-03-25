@@ -1359,8 +1359,11 @@ bool ManetRoutingBase::sendICMP(Packet *pkt)
 
     EV_DETAIL << "issuing ICMP Destination Unreachable for packets waiting in queue for failed route discovery.\n";
     int interfaceId = pkt->getTag<InterfaceInd>()->getInterfaceId();
-    icmpModule->sendErrorMessage(pktAux, interfaceId , ICMP_DESTINATION_UNREACHABLE, 0);
-
+    auto tagIndication = pktAux->findTag<InterfaceInd>();
+    if (tagIndication == nullptr || tagIndication->getInterfaceId() != interfaceId) {
+        pktAux->addTag<InterfaceInd>()->setInterfaceId(interfaceId);
+    }
+    icmpModule->sendErrorMessage(pktAux, ICMP_DESTINATION_UNREACHABLE, 0);
     return true;
 }
 // The address group allows to implement the anycast. Any address in the group is valid for the route
