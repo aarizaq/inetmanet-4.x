@@ -8,23 +8,9 @@ import inet.common.INETDefs;
 import inet.common.TagBase;
 import inet.common.packet.chunk.Chunk;
 import inet.common.packet.Packet;
-import inet.networklayer.ipv4.IcmpHeader;
-import inet.networklayer.icmpv6.Icmpv6Header;
+import inet.networklayer.common.Icmpv6Type;
 
 namespace inet;
-
-//
-// ICMPv4 error indication. Attached by the Icmp module when an ICMPv4 error
-// message is received. Each layer pops its own header from the original
-// packet and converts it to tags before forwarding the indication upward.
-//
-class Icmpv4ErrorInd extends TagBase
-{
-    IcmpType type;          // ICMPv4 type (e.g. ICMP_DESTINATION_UNREACHABLE)
-    int code;               // ICMPv4 code (e.g. ICMP_DU_FRAGMENTATION_NEEDED)
-    int mtu = -1;           // only relevant for Fragmentation Needed
-    Packet *originalPacket @owned;  // progressively unwrapped quoted packet
-}
 
 //
 // ICMPv6 error indication. Attached by the Icmpv6 module when an ICMPv6 error
@@ -37,17 +23,6 @@ class Icmpv6ErrorInd extends TagBase
     int code;               // ICMPv6 code
     int mtu = -1;           // only relevant for Packet Too Big
     Packet *originalPacket @owned;  // progressively unwrapped quoted packet
-}
-
-//
-// Request tag: asks the ICMP module to send an ICMPv4 error message.
-// Attached to a Request sent to ICMP via the MessageDispatcher.
-//
-class Icmpv4SendErrorReq extends TagBase
-{
-    IcmpType type;          // ICMPv4 type (e.g. ICMP_DESTINATION_UNREACHABLE)
-    int code;               // ICMPv4 code (e.g. ICMP_DU_PORT_UNREACHABLE)
-    Packet *originalPacket @owned;  // the packet that triggered the error
 }
 
 //
