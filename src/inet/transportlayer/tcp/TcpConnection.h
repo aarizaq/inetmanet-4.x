@@ -11,6 +11,8 @@
 
 #include "inet/common/SimpleModule.h"
 #include "inet/networklayer/common/L3Address.h"
+#include "inet/networklayer/ipv4/IcmpHeader_m.h"
+#include "inet/networklayer/icmpv6/Icmpv6Header_m.h"
 #include "inet/transportlayer/tcp/Tcp.h"
 #include "inet/transportlayer/tcp/TcpConnectionState_m.h"
 #include "inet/transportlayer/tcp_common/TcpHeader.h"
@@ -419,6 +421,46 @@ class INET_API TcpConnection : public SimpleModule
     virtual bool processAppCommand(cMessage *msg);
 
     virtual void handleMessage(cMessage *msg);
+
+    /**
+     * Process an ICMPv4 error indication for this connection.
+     * Hard errors (port/protocol unreachable) abort connections in SYN_SENT state.
+     * All other cases send a soft TCP_I_ICMPv4_ERROR notification to the app.
+     * Returns false if the connection has moved to CLOSED.
+     */
+    virtual bool processIcmpv4Error(Indication *indication);
+
+    /**
+     * Process an ICMPv6 error indication for this connection.
+     * Hard errors (port unreachable, admin prohibited) abort connections in SYN_SENT state.
+     * All other cases send a soft TCP_I_ICMPv6_ERROR notification to the app.
+     * Returns false if the connection has moved to CLOSED.
+     */
+    virtual bool processIcmpv6Error(Indication *indication);
+
+    /**
+     * Returns true if the given ICMPv4 type+code is a "hard" error
+     * (protocol unreachable, port unreachable, admin prohibited).
+     */
+    static bool isHardIcmpv4Error(int type, int code);
+
+    /**
+     * Returns true if the given ICMPv6 type+code is a "hard" error
+     * (port unreachable, admin prohibited).
+     */
+    static bool isHardIcmpv6Error(int type, int code);
+
+    /**
+     * Returns true if the ICMPv4 error is "Fragmentation Needed and DF Set"
+     * (type=3, code=4), used for Path MTU Discovery (RFC 1191).
+     */
+    static bool isFragNeeded(IcmpType type, int code);
+
+    /**
+     * Returns true if the ICMPv6 error is "Packet Too Big"
+     * (type=2), used for Path MTU Discovery (RFC 1981).
+     */
+    static bool isPacketTooBig(Icmpv6Type type, int code);
 
     /**
      * For SACK TCP. RFC 3517, page 3: "This routine returns whether the given

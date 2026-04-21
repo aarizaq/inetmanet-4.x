@@ -16,7 +16,12 @@
 #include "inet/common/packet/Message.h"
 #include "inet/common/socket/SocketTag_m.h"
 #include "inet/networklayer/common/DscpTag_m.h"
+#include "inet/networklayer/common/Icmpv4ErrorTag_m.h"
+#include "inet/networklayer/common/Icmpv6ErrorTag_m.h"
+#include "inet/networklayer/ipv4/IcmpHeader_m.h"
+#include "inet/networklayer/icmpv6/Icmpv6Header_m.h"
 #include "inet/networklayer/common/EcnTag_m.h"
+#include "inet/networklayer/common/FragmentationTag_m.h"
 #include "inet/networklayer/common/HopLimitTag_m.h"
 #include "inet/networklayer/common/IpProtocolId_m.h"
 #include "inet/networklayer/common/L3AddressTag_m.h"
@@ -113,6 +118,8 @@ const char *TcpConnection::indicationName(int code)
         CASE(TCP_I_TIMED_OUT);
         CASE(TCP_I_STATUS);
         CASE(TCP_I_SEND_MSG);
+        CASE(TCP_I_ICMPv4_ERROR);
+        CASE(TCP_I_ICMPv6_ERROR);
     }
     return s;
 #undef CASE
@@ -280,6 +287,10 @@ void TcpConnection::sendToIP(Packet *tcpSegment, const Ptr<TcpHeader>& tcpHeader
     if (tos != -1 && tcpSegment->findTag<TosReq>() == nullptr)
         tcpSegment->addTag<TosReq>()->setTos(tos);
 
+    // PMTUD (RFC 1191): set Don't Fragment bit on IPv4 segments
+    if (state->pmtudEnabled && remoteAddr.getType() == L3Address::IPv4)
+        tcpSegment->addTagIfAbsent<FragmentationReq>()->setDontFragment(true);
+
     auto addresses = tcpSegment->addTagIfAbsent<L3AddressReq>();
     addresses->setSrcAddress(localAddr);
     addresses->setDestAddress(remoteAddr);
@@ -352,6 +363,140 @@ void TcpConnection::sendIndicationToApp(int code, const int id)
     indication->addTag<SocketInd>()->setSocketId(socketId);
     indication->setControlInfo(ind);
     sendToApp(indication);
+}
+
+bool TcpConnection::processIcmpv4Error(Indication *indication)
+{
+    Enter_Method("processIcmpv4Error");
+    take(indication);
+
+    auto& errorInd = indication->getTag<Icmpv4ErrorInd>();
+
+    EV_WARN << "ICMPv4 error for connection " << localAddr << ":" << localPort
+            << " > " << remoteAddr << ":" << remotePort
+            << " type=" << errorInd->getType() << " code=" << errorInd->getCode() << "\n";
+
+    // Hard errors abort the connection during setup (RFC 5461).
+    // Once ESTABLISHED, even hard errors are treated as soft to prevent
+    // blind reset attacks.
+    if (isHardIcmpv4Error(errorInd->getType(), errorInd->getCode()) && fsm.getState() == TCP_S_SYN_SENT) {
+        EV_DETAIL << "Hard ICMPv4 error during connection setup -- connection refused\n";
+
+        sendQueue->discardUpTo(sendQueue->getBufferEndSeq());
+        if (state->sack_enabled)
+            rexmitQueue->discardUpTo(rexmitQueue->getBufferEndSeq());
+
+        sendIndicationToApp(TCP_I_CONNECTION_REFUSED);
+        delete indication;
+
+        return performStateTransition(TCP_E_RCV_RST);
+    }
+
+    // PMTUD (RFC 1191): if Fragmentation Needed and DF Set, reduce snd_mss
+    if (state->pmtudEnabled && isFragNeeded(errorInd->getType(), errorInd->getCode())) {
+        int mtu = errorInd->getMtu();
+        if (mtu > 0) {
+            // 20 bytes IPv4 header + 20 bytes TCP minimum header
+            uint32_t newMss = mtu - 40;
+            if (newMss < state->snd_mss) {
+                EV_DETAIL << "PMTUD: reducing snd_mss from " << state->snd_mss
+                          << " to " << newMss << " (reported MTU=" << mtu << ")\n";
+                state->snd_mss = newMss;
+                state->pmtudLastMssReduction = simTime();
+                retransmitOneSegment(true);
+            }
+        }
+    }
+
+    // Soft notification: forward the original indication to the application, no state change.
+    // The Icmpv4ErrorInd tag is already attached; just relabel and add SocketInd.
+    indication->setName(indicationName(TCP_I_ICMPv4_ERROR));
+    indication->setKind(TCP_I_ICMPv4_ERROR);
+    indication->addTag<SocketInd>()->setSocketId(socketId);
+    sendToApp(indication);
+    return true;
+}
+
+bool TcpConnection::processIcmpv6Error(Indication *indication)
+{
+    Enter_Method("processIcmpv6Error");
+    take(indication);
+
+    auto& errorInd = indication->getTag<Icmpv6ErrorInd>();
+
+    EV_WARN << "ICMPv6 error for connection " << localAddr << ":" << localPort
+            << " > " << remoteAddr << ":" << remotePort
+            << " type=" << errorInd->getType() << " code=" << errorInd->getCode() << "\n";
+
+    // Hard errors abort the connection during setup (RFC 5461).
+    // Once ESTABLISHED, even hard errors are treated as soft to prevent
+    // blind reset attacks.
+    if (isHardIcmpv6Error(errorInd->getType(), errorInd->getCode()) && fsm.getState() == TCP_S_SYN_SENT) {
+        EV_DETAIL << "Hard ICMPv6 error during connection setup -- connection refused\n";
+
+        sendQueue->discardUpTo(sendQueue->getBufferEndSeq());
+        if (state->sack_enabled)
+            rexmitQueue->discardUpTo(rexmitQueue->getBufferEndSeq());
+
+        sendIndicationToApp(TCP_I_CONNECTION_REFUSED);
+        delete indication;
+
+        return performStateTransition(TCP_E_RCV_RST);
+    }
+
+    // PMTUD (RFC 1981): if Packet Too Big, reduce snd_mss
+    if (state->pmtudEnabled && isPacketTooBig(errorInd->getType(), errorInd->getCode())) {
+        int mtu = errorInd->getMtu();
+        if (mtu > 0) {
+            // 40 bytes IPv6 header + 20 bytes TCP minimum header
+            uint32_t newMss = mtu - 60;
+            if (newMss < state->snd_mss) {
+                EV_DETAIL << "PMTUD: reducing snd_mss from " << state->snd_mss
+                          << " to " << newMss << " (reported MTU=" << mtu << ")\n";
+                state->snd_mss = newMss;
+                state->pmtudLastMssReduction = simTime();
+                retransmitOneSegment(true);
+            }
+        }
+    }
+
+    // Soft notification: forward the original indication to the application, no state change.
+    // The Icmpv6ErrorInd tag is already attached; just relabel and add SocketInd.
+    indication->setName(indicationName(TCP_I_ICMPv6_ERROR));
+    indication->setKind(TCP_I_ICMPv6_ERROR);
+    indication->addTag<SocketInd>()->setSocketId(socketId);
+    sendToApp(indication);
+    return true;
+}
+
+bool TcpConnection::isHardIcmpv4Error(int type, int code)
+{
+    // ICMPv4 Destination Unreachable with protocol/port unreachable or admin prohibited
+    return type == ICMP_DESTINATION_UNREACHABLE
+           && (code == ICMP_DU_PROTOCOL_UNREACHABLE
+               || code == ICMP_DU_PORT_UNREACHABLE
+               || code == ICMP_DU_COMMUNICATION_PROHIBITED);
+}
+
+bool TcpConnection::isHardIcmpv6Error(int type, int code)
+{
+    // ICMPv6 Destination Unreachable with port unreachable or admin prohibited
+    return type == ICMPv6_DESTINATION_UNREACHABLE
+           && (code == PORT_UNREACHABLE
+               || code == COMM_WITH_DEST_PROHIBITED);
+}
+
+bool TcpConnection::isFragNeeded(IcmpType type, int code)
+{
+    // ICMPv4 Destination Unreachable / Fragmentation Needed and DF Set (RFC 1191)
+    return type == ICMP_DESTINATION_UNREACHABLE
+           && code == ICMP_DU_FRAGMENTATION_NEEDED;
+}
+
+bool TcpConnection::isPacketTooBig(Icmpv6Type type, int code)
+{
+    // ICMPv6 Packet Too Big (RFC 1981)
+    return type == ICMPv6_PACKET_TOO_BIG;
 }
 
 void TcpConnection::sendAvailableIndicationToApp()
@@ -478,6 +623,9 @@ void TcpConnection::configureStateVariables()
     state->ecnWillingness = tcpMain->par("ecnWillingness"); // if set, current host is willing to use ECN
     state->dupthresh = tcpMain->par("dupthresh");
     state->sack_support = tcpMain->par("sackSupport"); // if set, this means that current host supports SACK (RFC 2018, 2883, 3517)
+    state->pmtudEnabled = tcpMain->par("pmtudEnabled"); // Path MTU Discovery (RFC 1191, RFC 1981)
+    state->pmtudTimeout = tcpMain->par("pmtudTimeout"); // time after which original MSS is restored
+    state->pmtudLastMssReduction = -1; // never reduced yet
 
     if (state->sack_support) {
         std::string algorithmName1 = "TcpReno";
@@ -762,6 +910,17 @@ void TcpConnection::sendFin()
 
 uint32_t TcpConnection::sendSegment(uint32_t bytes)
 {
+    // PMTUD (RFC 1191): if the probe timeout has elapsed since the last MSS reduction,
+    // restore the original negotiated MSS to probe for increased path MTU.
+    if (state->pmtudEnabled && state->pmtudLastMssReduction >= SIMTIME_ZERO
+        && simTime() - state->pmtudLastMssReduction >= state->pmtudTimeout)
+    {
+        EV_INFO << "PMTUD: probe timeout elapsed, restoring snd_mss from " << state->snd_mss
+                << " to original " << state->pmtudOriginalMss << "\n";
+        state->snd_mss = state->pmtudOriginalMss;
+        state->pmtudLastMssReduction = -1;
+    }
+
     // FIXME check it: where is the right place for the next code (sacked/rexmitted)
     if (state->sack_enabled && state->afterRto) {
         // check rexmitQ and try to forward snd_nxt before sending new data
@@ -1160,6 +1319,9 @@ bool TcpConnection::processMSSOption(const Ptr<const TcpHeader>& tcpHeader, cons
 
     if (state->snd_mss == 0)
         state->snd_mss = 536;
+
+    // Store negotiated MSS for PMTUD: this is the value we restore after the probe timeout
+    state->pmtudOriginalMss = state->snd_mss;
 
     EV_INFO << "Tcp Header Option MSS(=" << option.getMaxSegmentSize() << ") received, SMSS is set to " << state->snd_mss << "\n";
     return true;
