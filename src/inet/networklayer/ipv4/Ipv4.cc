@@ -1237,7 +1237,9 @@ void Ipv4::sendPacketToNIC(Packet *packet)
     EV_INFO << "Sending " << packet << " to output interface = " << networkInterface->getInterfaceName() << ".\n";
     packet->addTagIfAbsent<PacketProtocolTag>()->setProtocol(&Protocol::ipv4);
     packet->addTagIfAbsent<DispatchProtocolInd>()->setProtocol(&Protocol::ipv4);
-    if (auto networkInterfaceProtocol = networkInterface->getProtocol())
+    if (networkInterface->isLoopback())
+        packet->removeTagIfPresent<EncapsulationProtocolReq>();
+    else if (auto networkInterfaceProtocol = networkInterface->getProtocol())
         ensureEncapsulationProtocolReq(packet, networkInterfaceProtocol, true, false);
     setDispatchProtocol(packet);
     send(packet, "queueOut");
