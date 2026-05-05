@@ -45,7 +45,7 @@ using namespace ieee80211;
 namespace inetmanet {
 
 template<class KeyT, class ValueT, class CmpT>
-class cStdMultiMapWatcher : public cStdVectorWatcherBase
+class cStdMultiMapWatcher : public omnetpp::cStdVectorWatcherBase
 {
   protected:
     std::multimap<KeyT,ValueT,CmpT>& m;
