@@ -542,7 +542,7 @@ class INET_API ManetRoutingBase : public ApplicationBase, public UdpSocket::ICal
 
 #define interface80211ptr getInterfaceWlanByAddress()
 
-
+#if OMNETPP_VERSION < 0x0604
 
 template<class KeyT, class ValueT, class CmpT>
 class cStdMultiMapWatcher : public omnetpp::cStdVectorWatcherBase
@@ -610,8 +610,14 @@ void createStdPointerMultiMapWatcher(const char *varname, std::multimap<KeyT,Val
 {
     new cStdPointerMultiMapWatcher<KeyT,ValueT,CmpT>(varname, m);
 }
-
 #define WATCH_PTRMULTIMAP(m)            createStdPointerMultiMapWatcher(#m,(m))
+#else
+#define WATCH_MULTIMAP(variable)     WATCH(variable)
+#define WATCH_PTRMULTIMAP(variable)  WATCH(variable)
+
+#endif
+
+
 
 
 } // namespace inetmanet
