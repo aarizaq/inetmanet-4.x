@@ -20,7 +20,7 @@ namespace inet {
  * arrives on them.
  */
 
-typedef struct natInfo
+struct NatInfo
 {
     bool multi;
     uint32_t peer1;
@@ -28,32 +28,32 @@ typedef struct natInfo
     L3Address peer1Address2;
     uint32_t peer1Assoc;
     uint32_t peer1Port;
-    int32_t peer1Gate;
+    int peer1Gate;
     uint32_t peer2;
     L3Address peer2Address1;
     L3Address peer2Address2;
     uint32_t peer2Assoc;
     uint32_t peer2Port;
-    int32_t peer2Gate;
-} NatInfo;
+    int peer2Gate;
+};
 typedef std::vector<NatInfo *> NatVector;
 
 class INET_API SctpNatServer : public SimpleModule, public LifecycleUnsupported
 {
   protected:
-    int32_t notifications;
+    int notifications;
     uint32_t assocId;
     SctpSocket *socket;
     bool shutdownReceived;
-    int64_t bytesSent;
-    int32_t packetsSent;
-    int32_t packetsRcvd;
-    int32_t numSessions;
-    int32_t numRequestsToSend; // requests to send in this session
+    long bytesSent;
+    long packetsSent;
+    long packetsRcvd;
+    int numSessions;
+    int numRequestsToSend; // requests to send in this session
     bool ordered;
-    int32_t outboundStreams;
-    int32_t inboundStreams;
-    int32_t lastStream;
+    int outboundStreams;
+    int inboundStreams;
+    int lastStream;
 
     NatVector& natVector = SIMULATION_SHARED_VARIABLE(natVector);
 
