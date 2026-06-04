@@ -47,12 +47,15 @@ class INET_API Rx : public SimpleModule, public IRx
     virtual void setOrExtendNav(simtime_t navInterval);
     virtual bool isFcsOk(Packet *packet) const;
     virtual void recomputeMediumFree();
+    std::string getRxStatusTxt() const;
+
     virtual void refreshDisplay() const override;
     virtual void finish() override {
         if (mediumFree)
             timeMediumFree += (simTime() - lastFree);
         recordScalar("Idle Time", timeMediumFree/simTime());
     }
+
   public:
     Rx();
     ~Rx();
