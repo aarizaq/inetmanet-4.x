@@ -339,7 +339,7 @@ void ManetRoutingBase::registerRoutingModule()
     }
 
     isOperational = true;
-    WATCH_PTRMULTIMAP(timerMultiMap);
+    WATCH(timerMultiMap);
  //   WATCH_MAP(*routesVector);
     if (!mac_layer_ || isConnectedIp) {
         socket.setOutputGate(gate("socketOut"));
