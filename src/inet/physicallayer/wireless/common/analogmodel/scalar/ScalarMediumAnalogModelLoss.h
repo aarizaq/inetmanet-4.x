@@ -19,7 +19,6 @@ class INET_API ScalarMediumAnalogModelLoss : public ScalarMediumAnalogModel
     typedef std::vector<int> Links;
     static std::map<int, Links> uniLinks;
     static std::map<int, Links> lossLinks;
-    int hostId = -1;
     m communicationRange;
     bool checkLinkLoss(const IRadio *radio, const ITransmission *transmission) const;
   protected:
@@ -29,7 +28,7 @@ class INET_API ScalarMediumAnalogModelLoss : public ScalarMediumAnalogModel
   public:
     virtual std::ostream& printToStream(std::ostream& stream, int level, int evFlags = 0) const override;
 
-    virtual W computeReceptionPower(const IRadio *radio, const ITransmission *transmission, const IArrival *arrival) const;
+    virtual W computeReceptionPower(const IRadio *radio, const ITransmission *transmission, const IArrival *arrival) const override;
 
 };
 
