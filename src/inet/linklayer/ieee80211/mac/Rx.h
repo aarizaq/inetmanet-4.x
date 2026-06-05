@@ -49,7 +49,6 @@ class INET_API Rx : public SimpleModule, public IRx
     virtual void recomputeMediumFree();
     std::string getRxStatusTxt() const;
 
-    virtual void refreshDisplay() const override;
     virtual void finish() override {
         if (mediumFree)
             timeMediumFree += (simTime() - lastFree);
