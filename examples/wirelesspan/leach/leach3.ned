@@ -12,10 +12,10 @@ network LeachSimpleNet
     parameters:
         int numNodes;
         @display("bgb=1209.63,909.50995;bgg=100,1,grey95");
-        @figure[title](type=label; pos=0,-1; anchor=sw; color=darkblue);
+        @figure[title](type=label; pos=0,-1; anchor=sw; color=darkblue; text="");
 
         @statistic[residualEnergyCapacity](source="energyStorage"; record=count);
-        
+
         @signal[subIntervalTot](type="int");
         @statistic[rounds](title="num of rounds"; source="subIntervalTot"; record=vector?,counts?);
 
