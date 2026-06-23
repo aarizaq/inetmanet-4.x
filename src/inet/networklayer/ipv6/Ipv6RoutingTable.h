@@ -15,6 +15,7 @@
 #include "inet/common/lifecycle/ILifecycle.h"
 #include "inet/networklayer/contract/IRoutingTable.h"
 #include "inet/networklayer/contract/ipv6/Ipv6Address.h"
+#include "inet/networklayer/ipv6/Ipv6MulticastRoute.h"
 #include "inet/networklayer/ipv6/Ipv6Route.h"
 
 namespace inet {
@@ -47,11 +48,13 @@ class INET_API Ipv6RoutingTable : public SimpleModule, public IRoutingTable, pro
     bool multicastForward = false; // If node is forwarding multicast info
     bool useAdminDist = false; // Use Cisco like administrative distances
 
-#ifdef INET_WITH_xMIPv6
-    bool ishome_agent = false; // added by Zarrar Yousaf @ CNI, UniDortmund on 20.02.07
-    bool ismobile_node = false; // added by Zarrar Yousaf @ CNI, UniDortmund on 25.02.07
-    bool mipv6Support = false; // 4.9.07 - CB
-#endif /* INET_WITH_xMIPv6 */
+    // running counter for naming dynamically created tunnel interfaces
+    int tunnelInterfaceCounter = 0;
+
+    // MIPv6 support flags (set by the Mipv6 module at init time, default false)
+    bool ishome_agent = false;
+    bool ismobile_node = false;
+    bool mipv6Support = false;
 
     // Destination Cache maps dest address to next hop and interfaceId.
     // NOTE: nextHop might be a link-local address from which interfaceId cannot be deduced
@@ -69,6 +72,10 @@ class INET_API Ipv6RoutingTable : public SimpleModule, public IRoutingTable, pro
     // static, OSPF, RIP etc routes as well
     typedef std::vector<Ipv6Route *> RouteList;
     RouteList routeList;
+
+    // Multicast route array, sorted by prefixLength desc, origin asc, group, metric asc
+    typedef std::vector<Ipv6MulticastRoute *> MulticastRouteVector;
+    MulticastRouteVector multicastRoutes;
 
   protected:
     // creates a new empty route, factory method overriden in subclasses that use custom routes
@@ -107,6 +114,11 @@ class INET_API Ipv6RoutingTable : public SimpleModule, public IRoutingTable, pro
     Ipv6Route *internalRemoveRoute(Ipv6Route *route);
     RouteList::iterator internalDeleteRoute(RouteList::iterator it);
 
+    // helper for sorting the multicast routing table, used by addMulticastRoute()
+    static bool multicastRouteLessThan(const Ipv6MulticastRoute *a, const Ipv6MulticastRoute *b);
+    void internalAddMulticastRoute(Ipv6MulticastRoute *entry);
+    Ipv6MulticastRoute *internalRemoveMulticastRoute(Ipv6MulticastRoute *entry);
+
   public:
     Ipv6RoutingTable();
     virtual ~Ipv6RoutingTable();
@@ -141,8 +153,6 @@ class INET_API Ipv6RoutingTable : public SimpleModule, public IRoutingTable, pro
      */
     virtual bool isRouter() const { return isrouter; }
 
-    virtual bool isMulticastForwardingEnabled() { return multicastForward; }
-
     /**
      * To be called from route objects whenever a field changes. Used for
      * maintaining internal data structures and firing "routing table changed"
@@ -150,9 +160,10 @@ class INET_API Ipv6RoutingTable : public SimpleModule, public IRoutingTable, pro
      */
     virtual void routeChanged(Ipv6Route *entry, int fieldCode);
 
-#ifdef INET_WITH_xMIPv6
+    /** @name MIPv6 support */
+    //@{
     /**
-     * Determine whether normal Router or Home Agent
+     * Determine whether normal Router or Home Agent.
      */
     bool isHomeAgent() const { return ishome_agent; }
 
@@ -163,16 +174,16 @@ class INET_API Ipv6RoutingTable : public SimpleModule, public IRoutingTable, pro
 
     /**
      * Determine whether a node is a Mobile Node or Correspondent Node:
-     * MN if TRUE or else a CN
+     * MN if TRUE or else a CN.
      */
     bool isMobileNode() const { return ismobile_node; }
 
     /**
      * Define whether a node is a Mobile Node or Correspondent Node:
-     * MN if TRUE or else a CN
+     * MN if TRUE or else a CN.
      */
     void setIsMobileNode(bool value) { ismobile_node = value; }
-#endif /* INET_WITH_xMIPv6 */
+    //@}
 
     /** @name Routing functions */
     //@{
@@ -199,7 +210,7 @@ class INET_API Ipv6RoutingTable : public SimpleModule, public IRoutingTable, pro
      * Performs longest prefix match in the routing table and returns
      * the resulting route, or nullptr if there was no match.
      */
-    const Ipv6Route *doLongestPrefixMatch(const Ipv6Address& dest);
+    const Ipv6Route *doLongestPrefixMatch(const Ipv6Address& dest) const;
 
     /**
      * Checks if the given prefix already exists in the routing table (prefix list)
@@ -276,6 +287,21 @@ class INET_API Ipv6RoutingTable : public SimpleModule, public IRoutingTable, pro
             int metric = 0);
 
     /**
+     * Dynamically create an ~Ipv6TunnelInterface (IPv6-in-IPv6, source -> dest),
+     * wire it into the node's network layer and register it. Returns the new
+     * NetworkInterface. The caller installs the route(s) that steer traffic to it.
+     * This is the generic tunnel-interface plumbing used by both static tunnel
+     * configuration (configureTunnelFromXml) and MIPv6 (Mipv6).
+     */
+    virtual NetworkInterface *createTunnelNetworkInterface(const Ipv6Address& source, const Ipv6Address& destination);
+
+    /**
+     * Tear down and delete a tunnel interface previously created with
+     * createTunnelNetworkInterface().
+     */
+    virtual void deleteTunnelNetworkInterface(NetworkInterface *networkInterface);
+
+    /**
      *  Adds a default route for a host. This method requires the RA's source
      *  address and the router expiry time plus the simTime().
      */
@@ -317,16 +343,58 @@ class INET_API Ipv6RoutingTable : public SimpleModule, public IRoutingTable, pro
     virtual Ipv6Route *getRoute(int i) const override;
     //@}
 
-#ifdef INET_WITH_xMIPv6
-    //================Added by Zarrar Yousaf ===================================
-
-    //void updateHomeNetworkInfo(const Ipv6Address& hoa, const Ipv6Address& ha);//10.07.07 This updates the struct HomeNetwork Info{} with the MN's Home Address(HoA) and the global scope address of the MNs Home Agent (ha).
-    //const Ipv6Address& getHomeAgentAddress() { return homeInfo.homeAgentAddr; } // Zarrar 15.07.07 // return by reference - CB
-    //const Ipv6Address& getMNHomeAddress() { return homeInfo.HoA; } // Zarrar 15.07.07 // return by reference - CB
-    const Ipv6Address& getHomeAddress(); // NEW, 14.01.08 - CB
+    /** @name Multicast routing table operations */
+    //@{
+    /**
+     * Returns true if the address is a multicast group this node is a member of.
+     */
+    virtual bool isLocalMulticastAddress(const Ipv6Address& dest) const;
 
     /**
-     * Check whether provided address is a HoA
+     * Returns the longest-prefix-matching multicast route for the given
+     * (origin, group) pair, or nullptr if there is no matching route.
+     */
+    virtual Ipv6MulticastRoute *findBestMatchingMulticastRoute(const Ipv6Address& origin, const Ipv6Address& group) const;
+
+    /**
+     * Returns the kth multicast route, or nullptr if k is out of range.
+     */
+    virtual Ipv6MulticastRoute *getMulticastRoute(int k) const override { return k >= 0 && static_cast<size_t>(k) < multicastRoutes.size() ? multicastRoutes[k] : nullptr; }
+
+    /**
+     * Adds the given multicast route to the routing table. Ownership is
+     * transferred to the routing table.
+     */
+    virtual void addMulticastRoute(Ipv6MulticastRoute *entry);
+
+    /**
+     * Removes the given multicast route from the routing table, and returns it.
+     * nullptr is returned if the route was not in the routing table.
+     */
+    virtual Ipv6MulticastRoute *removeMulticastRoute(Ipv6MulticastRoute *entry);
+
+    /**
+     * Deletes the given multicast route from the routing table.
+     * Returns true if it was deleted, false if it was not found.
+     */
+    virtual bool deleteMulticastRoute(Ipv6MulticastRoute *entry);
+
+    /**
+     * To be called from multicast route objects whenever a field changes.
+     * Used for maintaining internal data structures and firing notifications.
+     */
+    virtual void multicastRouteChanged(Ipv6MulticastRoute *entry, int fieldCode);
+    //@}
+
+    /** @name MIPv6 routing table operations */
+    //@{
+    /**
+     * Returns the MN's home address (first non-unspecified HoA found on any interface).
+     */
+    const Ipv6Address& getHomeAddress();
+
+    /**
+     * Check whether provided address is a HoA.
      */
     bool isHomeAddress(const Ipv6Address& addr);
 
@@ -358,11 +426,11 @@ class INET_API Ipv6RoutingTable : public SimpleModule, public IRoutingTable, pro
     void setMipv6Support(bool value) { mipv6Support = value; }
 
     /**
-     * Checks whether the provided address is in an on-link address
+     * Checks whether the provided address is an on-link address
      * with respect to the prefix advertisement list.
      */
-    bool isOnLinkAddress(const Ipv6Address& address); // update 11.9.07 - CB
-#endif /* INET_WITH_xMIPv6 */
+    bool isOnLinkAddress(const Ipv6Address& address);
+    //@}
 
     /**
      * ILifecycle method
@@ -372,26 +440,25 @@ class INET_API Ipv6RoutingTable : public SimpleModule, public IRoutingTable, pro
     // IRoutingTable methods:
     virtual bool isAdminDistEnabled() const override { return useAdminDist; }
     virtual bool isForwardingEnabled() const override { return isRouter(); } // TODO inconsistent names
-    virtual bool isMulticastForwardingEnabled() const override { return true; /*TODO isMulticastForwardingEnabled();*/ }
+    virtual bool isMulticastForwardingEnabled() const override { return multicastForward; }
     virtual L3Address getRouterIdAsGeneric() const override { return L3Address(Ipv6Address()); /*TODO getRouterId();*/ }
     virtual bool isLocalAddress(const L3Address& dest) const override { return isLocalAddress(dest.toIpv6()); }
     virtual bool isLocalBroadcastAddress(const L3Address& dest) const { return false; /*TODO isLocalBroadcastAddress(dest.toIPv6());*/ }
     virtual NetworkInterface *getInterfaceByAddress(const L3Address& address) const override;
     virtual NetworkInterface *findInterfaceByLocalBroadcastAddress(const L3Address& dest) const { return nullptr; /*TODO findInterfaceByLocalBroadcastAddress(dest.toIPv6());*/ }
-    virtual IRoute *findBestMatchingRoute(const L3Address& dest) const override { return const_cast<Ipv6Route *>((const_cast<Ipv6RoutingTable *>(this))->doLongestPrefixMatch(dest.toIpv6())); } // FIXME what a name??!! also: remove const; ALSO: THIS DOES NOT UPDATE DESTCACHE LIKE METHODS BUILT ON IT!
-    virtual NetworkInterface *getOutputInterfaceForDestination(const L3Address& dest) const override { const Ipv6Route *e = (const_cast<Ipv6RoutingTable *>(this))->doLongestPrefixMatch(dest.toIpv6()); return e ? e->getInterface() : nullptr; }
-    virtual L3Address getNextHopForDestination(const L3Address& dest) const override { const Ipv6Route *e = (const_cast<Ipv6RoutingTable *>(this))->doLongestPrefixMatch(dest.toIpv6()); return e ? e->getNextHopAsGeneric() : L3Address(); }
-    virtual bool isLocalMulticastAddress(const L3Address& dest) const override { return false; /*TODO isLocalMulticastAddress(dest.toIPv6());*/ }
-    virtual IMulticastRoute *findBestMatchingMulticastRoute(const L3Address& origin, const L3Address& group) const override { return nullptr; /*TODO findBestMatchingMulticastRoute(origin.toIPv6(), group.toIPv6());*/ }
+    virtual IRoute *findBestMatchingRoute(const L3Address& dest) const override { return const_cast<Ipv6Route *>(doLongestPrefixMatch(dest.toIpv6())); }
+    virtual NetworkInterface *getOutputInterfaceForDestination(const L3Address& dest) const override { const Ipv6Route *e = doLongestPrefixMatch(dest.toIpv6()); return e ? e->getInterface() : nullptr; }
+    virtual L3Address getNextHopForDestination(const L3Address& dest) const override { const Ipv6Route *e = doLongestPrefixMatch(dest.toIpv6()); return e ? e->getNextHopAsGeneric() : L3Address(); }
+    virtual bool isLocalMulticastAddress(const L3Address& dest) const override { return isLocalMulticastAddress(dest.toIpv6()); }
+    virtual IMulticastRoute *findBestMatchingMulticastRoute(const L3Address& origin, const L3Address& group) const override { return findBestMatchingMulticastRoute(origin.toIpv6(), group.toIpv6()); }
     virtual IRoute *getDefaultRoute() const override { return nullptr; /*TODO getDefaultRoute();*/ }
     virtual void addRoute(IRoute *entry) override { addRoutingProtocolRoute(check_and_cast<Ipv6Route *>(entry)); } // TODO contrast that with addStaticRoute()!
     virtual IRoute *removeRoute(IRoute *entry) override { return removeRoute(check_and_cast<Ipv6Route *>(entry)); }
     virtual bool deleteRoute(IRoute *entry) override { return deleteRoute(check_and_cast<Ipv6Route *>(entry)); }
-    virtual IMulticastRoute *getMulticastRoute(int i) const override { return nullptr; /*TODO*/ }
-    virtual int getNumMulticastRoutes() const override { return 0; /*TODO getNumMulticastRoutes();*/ }
-    virtual void addMulticastRoute(IMulticastRoute *entry) override { /*TODO addMulticastRoute(entry);*/ }
-    virtual IMulticastRoute *removeMulticastRoute(IMulticastRoute *entry) override { /*TODO removeMulticastRoute(entry);*/ return entry; }
-    virtual bool deleteMulticastRoute(IMulticastRoute *entry) override { return false; /*TODO deleteMulticastRoute(entry);*/ }
+    virtual int getNumMulticastRoutes() const override { return multicastRoutes.size(); }
+    virtual void addMulticastRoute(IMulticastRoute *entry) override { addMulticastRoute(check_and_cast<Ipv6MulticastRoute *>(entry)); }
+    virtual IMulticastRoute *removeMulticastRoute(IMulticastRoute *entry) override { return removeMulticastRoute(check_and_cast<Ipv6MulticastRoute *>(entry)); }
+    virtual bool deleteMulticastRoute(IMulticastRoute *entry) override { return deleteMulticastRoute(check_and_cast<Ipv6MulticastRoute *>(entry)); }
     virtual IRoute *createRoute() override { return new Ipv6Route(Ipv6Address(), 0, IRoute::MANUAL); }
 
     /**

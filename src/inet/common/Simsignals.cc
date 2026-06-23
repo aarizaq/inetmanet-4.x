@@ -51,6 +51,7 @@ simsignal_t ipv4MulticastGroupLeftSignal = cComponent::registerSignal("ipv4Multi
 simsignal_t ipv4MulticastChangeSignal = cComponent::registerSignal("ipv4McastChange");
 simsignal_t ipv4MulticastGroupRegisteredSignal = cComponent::registerSignal("ipv4MulticastGroupRegistered");
 simsignal_t ipv4MulticastGroupUnregisteredSignal = cComponent::registerSignal("ipv4MulticastGroupUnregistered");
+simsignal_t ipv4MulticastListenerChangeSignal = cComponent::registerSignal("ipv4MulticastListenerChange");
 
 // for PIM
 simsignal_t ipv4NewMulticastSignal = cComponent::registerSignal("ipv4NewMulticast");
@@ -64,10 +65,18 @@ simsignal_t pimNeighborChangedSignal = cComponent::registerSignal("pimNeighborCh
 // layer 3 - Ipv6
 simsignal_t ipv6HandoverOccurredSignal = cComponent::registerSignal("ipv6HandoverOccurred");
 simsignal_t mipv6RoCompletedSignal = cComponent::registerSignal("mipv6RoCompleted");
+simsignal_t ipv6AddressAssignedSignal = cComponent::registerSignal("ipv6AddressAssigned");
+simsignal_t ipv6AddressRemovedSignal = cComponent::registerSignal("ipv6AddressRemoved");
 simsignal_t ipv6MulticastGroupJoinedSignal = cComponent::registerSignal("ipv6MulticastGroupJoined");
 simsignal_t ipv6MulticastGroupLeftSignal = cComponent::registerSignal("ipv6MulticastGroupLeft");
 simsignal_t ipv6MulticastGroupRegisteredSignal = cComponent::registerSignal("ipv6MulticastGroupRegistered");
 simsignal_t ipv6MulticastGroupUnregisteredSignal = cComponent::registerSignal("ipv6MulticastGroupUnregistered");
+simsignal_t ipv6MulticastChangeSignal = cComponent::registerSignal("ipv6McastChange");
+simsignal_t ipv6MulticastListenerChangeSignal = cComponent::registerSignal("ipv6MulticastListenerChange");
+simsignal_t ipv6NewMulticastSignal = cComponent::registerSignal("ipv6NewMulticast");
+simsignal_t ipv6DataOnNonrpfSignal = cComponent::registerSignal("ipv6DataOnNonrpf");
+simsignal_t ipv6DataOnRpfSignal = cComponent::registerSignal("ipv6DataOnRpf");
+simsignal_t ipv6MdataRegisterSignal = cComponent::registerSignal("ipv6MdataRegister");
 
 // layer 3 - ISIS
 simsignal_t isisAdjChangedSignal = cComponent::registerSignal("isisAdjChanged");

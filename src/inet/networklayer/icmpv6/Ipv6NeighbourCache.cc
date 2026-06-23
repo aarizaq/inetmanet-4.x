@@ -73,6 +73,15 @@ Ipv6NeighbourCache::Ipv6NeighbourCache(cSimpleModule& neighbourDiscovery)
     WATCH(neighbourMap);
 }
 
+Ipv6NeighbourCache::~Ipv6NeighbourCache()
+{
+    for (auto& elem : neighbourMap) {
+        Neighbour& nbor = elem.second;
+        neighbourDiscovery.cancelAndDelete(nbor.nudTimeoutEvent);
+        neighbourDiscovery.cancelAndDelete(nbor.arTimer);
+    }
+}
+
 Ipv6NeighbourCache::Neighbour *Ipv6NeighbourCache::lookup(const Ipv6Address& addr, int interfaceID)
 {
     Key key(addr, interfaceID);
@@ -206,6 +215,22 @@ const char *Ipv6NeighbourCache::stateName(ReachabilityState state)
         default:
             return "???";
     }
+}
+
+void Ipv6NeighbourCache::clear()
+{
+    for (auto& elem : neighbourMap) {
+        Neighbour& nbor = elem.second;
+        neighbourDiscovery.cancelAndDelete(nbor.nudTimeoutEvent);
+        nbor.nudTimeoutEvent = nullptr;
+        neighbourDiscovery.cancelAndDelete(nbor.arTimer);
+        nbor.arTimer = nullptr;
+        for (auto *pkt : nbor.pendingPackets)
+            delete pkt;
+        nbor.pendingPackets.clear();
+    }
+    neighbourMap.clear();
+    defaultRouterList.clear();
 }
 
 } // namespace inet

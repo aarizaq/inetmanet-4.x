@@ -78,6 +78,33 @@ void BgpRouter::recordStatistics()
     bgpModule->recordScalar("UpdateMsgRcv", statTab[5]);
 }
 
+// A node is "lifecycle-capable" if it contains a NodeStatus ("status") submodule,
+// i.e. it can be shut down, restarted or crashed at runtime. Only on such nodes does
+// the FSM re-arm a connection after a loss (see BgpFsm.cc): a restarted node must
+// reconnect, whereas a plain BGP router keeps its historical behavior of not
+// auto-reconnecting. Enabling auto-reconnect unconditionally would also re-open a
+// listening socket on an already-bound port, crashing non-lifecycle scenarios.
+bool BgpRouter::isLifecycleNode() const
+{
+    return getContainingNode(bgpModule)->getSubmodule("status") != nullptr;
+}
+
+void BgpRouter::closeSessions(bool abort)
+{
+    for (auto& elem : _BGPSessions) {
+        TcpSocket *socket = elem.second->getSocket();
+        if (socket) {
+            _socketMap.removeSocket(socket);
+            abort ? socket->abort() : socket->close();
+        }
+        TcpSocket *socketListen = elem.second->getSocketListen();
+        if (socketListen) {
+            _socketMap.removeSocket(socketListen);
+            abort ? socketListen->abort() : socketListen->close();
+        }
+    }
+}
+
 SessionId BgpRouter::createIbgpSession(const char *peerAddr)
 {
     SessionInfo info;
@@ -413,6 +440,15 @@ void BgpRouter::socketFailure(TcpSocket *socket, int code)
     if (_currSessionId != static_cast<SessionId>(-1)) {
         _BGPSessions[_currSessionId]->getFSM()->TcpConnectionFails();
     }
+}
+
+void BgpRouter::socketPeerClosed(TcpSocket *socket)
+{
+    socket->close();
+    int connId = socket->getSocketId();
+    _currSessionId = findIdFromSocketConnId(_BGPSessions, connId);
+    if (_currSessionId != static_cast<SessionId>(-1))
+        _BGPSessions[_currSessionId]->getFSM()->TcpConnectionFails();
 }
 
 void BgpRouter::socketDataArrived(TcpSocket *socket)
@@ -1099,4 +1135,3 @@ bool BgpRouter::isReachable(const Ipv4Address addr) const
 } // namespace bgp
 
 } // namespace inet
-

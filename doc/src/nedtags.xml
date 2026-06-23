@@ -425,10 +425,6 @@
     <filename>inet.examples.inet.bulktransfer.BulkTransfer.html</filename>
   </compound>
   <compound kind="class">
-    <name>inet.examples.ipv6.ipv6bulk.BulkTransfer6</name>
-    <filename>inet.examples.ipv6.ipv6bulk.BulkTransfer6.html</filename>
-  </compound>
-  <compound kind="class">
     <name>inet.examples.inet.routerperf.BurstHost</name>
     <filename>inet.examples.inet.routerperf.BurstHost.html</filename>
   </compound>
@@ -875,10 +871,6 @@
   <compound kind="class">
     <name>inet.tutorials.queueing.DelayerTutorialStep</name>
     <filename>inet.tutorials.queueing.DelayerTutorialStep.html</filename>
-  </compound>
-  <compound kind="class">
-    <name>inet.examples.ipv6.demonetworketh.DemoNetworkEth</name>
-    <filename>inet.examples.ipv6.demonetworketh.DemoNetworkEth.html</filename>
   </compound>
   <compound kind="class">
     <name>inet.tutorials.queueing.DemultiplexerTutorialStep</name>
@@ -3905,8 +3897,8 @@
     <filename>inet.tutorials.queueing.MeterTutorialStep.html</filename>
   </compound>
   <compound kind="class">
-    <name>inet.examples.mobileipv6.mIPv6Network</name>
-    <filename>inet.examples.mobileipv6.mIPv6Network.html</filename>
+    <name>inet.examples.mobileipv6.Mipv6Network</name>
+    <filename>inet.examples.mobileipv6.Mipv6Network.html</filename>
   </compound>
   <compound kind="class">
     <name>inet.examples.ethernet.lans.MixedLAN</name>
@@ -4153,20 +4145,8 @@
     <filename>inet.examples.inet.nclients.NClients2.html</filename>
   </compound>
   <compound kind="class">
-    <name>inet.examples.ipv6.ipv6nclients.NClientsEth</name>
-    <filename>inet.examples.ipv6.ipv6nclients.NClientsEth.html</filename>
-  </compound>
-  <compound kind="class">
     <name>inet.examples.ipv6.nclients.NClientsEth</name>
     <filename>inet.examples.ipv6.nclients.NClientsEth.html</filename>
-  </compound>
-  <compound kind="class">
-    <name>inet.examples.ipv6.ipv6nclients.NClientsEthPpp</name>
-    <filename>inet.examples.ipv6.ipv6nclients.NClientsEthPpp.html</filename>
-  </compound>
-  <compound kind="class">
-    <name>inet.examples.ipv6.ipv6nclients.NClientsPPP</name>
-    <filename>inet.examples.ipv6.ipv6nclients.NClientsPPP.html</filename>
   </compound>
   <compound kind="class">
     <name>inet.examples.ipv6.nclients.NClientsPPP</name>

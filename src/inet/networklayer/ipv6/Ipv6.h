@@ -8,12 +8,13 @@
 #ifndef __INET_IPV6_H
 #define __INET_IPV6_H
 
-#include "inet/common/SimpleModule.h"
 #include <map>
 #include <set>
 
 #include "inet/common/IProtocolRegistrationListener.h"
-#include "inet/common/lifecycle/LifecycleUnsupported.h"
+#include "inet/networklayer/ipv6/IIpv6ExtensionHeaderHandler.h"
+#include "inet/common/lifecycle/OperationalBase.h"
+#include "inet/common/lifecycle/ModuleOperations.h"
 #include "inet/common/packet/Message.h"
 #include "inet/networklayer/contract/INetfilter.h"
 #include "inet/networklayer/contract/INetworkProtocol.h"
@@ -22,7 +23,6 @@
 #include "inet/networklayer/ipv6/Ipv6FragBuf.h"
 #include "inet/networklayer/ipv6/Ipv6Header.h"
 #include "inet/networklayer/ipv6/Ipv6RoutingTable.h"
-#include "inet/networklayer/ipv6tunneling/Ipv6Tunneling.h"
 
 namespace inet {
 
@@ -31,7 +31,7 @@ class Icmpv6Header;
 /**
  * Ipv6 implementation.
  */
-class INET_API Ipv6 : public SimpleModule, public NetfilterBase, public LifecycleUnsupported, public INetworkProtocol, public DefaultProtocolRegistrationListener
+class INET_API Ipv6 : public OperationalBase, public NetfilterBase, public INetworkProtocol, public DefaultProtocolRegistrationListener, protected cListener
 {
   public:
     /**
@@ -67,14 +67,19 @@ class INET_API Ipv6 : public SimpleModule, public NetfilterBase, public Lifecycl
     ModuleRefByPar<Ipv6RoutingTable> rt;
     ModuleRefByPar<Ipv6NeighbourDiscovery> nd;
     ModuleRefByPar<Icmpv6> icmp;
-    ModuleRefByPar<Ipv6Tunneling> tunneling;
 
     // working vars
+    bool sendRedirects = true; // whether to send ICMPv6 Redirects when forwarding back out the arrival interface (RFC 4861 8.2)
     unsigned int curFragmentId = -1; // counter, used to assign unique fragmentIds to datagrams
     Ipv6FragBuf fragbuf; // fragmentation reassembly buffer
     simtime_t lastCheckTime; // when fragbuf was last checked for state fragments
     std::set<const Protocol *> upperProtocols; // where to send packets after decapsulation
     std::map<int, SocketDescriptor *> socketIdToSocketDescriptor;
+
+    // extension header handler registries
+    std::map<int, IIpv6ExtensionHeaderHandler *> routingHeaderHandlers;    // keyed by routing type
+    std::map<int, IIpv6TlvOptionHandler *> hopByHopOptionHandlers;         // keyed by TLV option type
+    std::map<int, IIpv6TlvOptionHandler *> destOptionHandlers;             // keyed by TLV option type
 
     // statistics
     int numMulticast = 0;
@@ -83,10 +88,7 @@ class INET_API Ipv6 : public SimpleModule, public NetfilterBase, public Lifecycl
     int numUnroutable = 0;
     int numForwarded = 0;
 
-#ifdef INET_WITH_xMIPv6
-    // 28.9.07 - CB
-    // datagrams that are supposed to be sent with a tentative Ipv6 address
-    // are rescheduled for later resubmission.
+    // RFC 4862: defer sending when source address is tentative (DAD in progress)
     class INET_API ScheduledDatagram : public cPacket {
       protected:
         Packet *packet = nullptr;
@@ -104,7 +106,9 @@ class INET_API Ipv6 : public SimpleModule, public NetfilterBase, public Lifecycl
         bool getFromHL() { return fromHL; }
         Packet *removeDatagram() { Packet *ret = packet; packet = nullptr; return ret; }
     };
-#endif /* INET_WITH_xMIPv6 */
+
+    // Queue of datagrams waiting for tentative source address to become permanent
+    std::vector<ScheduledDatagram *> pendingDadQueue;
 
     // netfilter hook variables
     typedef std::list<QueuedDatagramForHook> DatagramQueueForHooks;
@@ -113,6 +117,10 @@ class INET_API Ipv6 : public SimpleModule, public NetfilterBase, public Lifecycl
   protected:
     // utility: look up interface from getArrivalGate()
     virtual NetworkInterface *getSourceInterfaceFrom(Packet *msg);
+
+    // utility: next hop requested by a netfilter hook (e.g. a MANET routing
+    // protocol) via the NextHopAddressReq tag, or UNSPECIFIED if none
+    virtual Ipv6Address getNextHop(Packet *packet);
 
     // utility: show current statistics above the icon
     virtual std::string getIpv6StatusText() const;
@@ -124,7 +132,10 @@ class INET_API Ipv6 : public SimpleModule, public NetfilterBase, public Lifecycl
 
     virtual void preroutingFinish(Packet *packet, const NetworkInterface *fromIE, const NetworkInterface *destIE, Ipv6Address nextHopAddr);
 
-    virtual void handleMessage(cMessage *msg) override;
+    virtual void handleMessageWhenUp(cMessage *msg) override;
+
+    using cListener::receiveSignal;
+    virtual void receiveSignal(cComponent *source, simsignal_t signalID, intval_t value, cObject *details) override;
 
     virtual void handleRequest(Request *request);
 
@@ -235,7 +246,18 @@ class INET_API Ipv6 : public SimpleModule, public NetfilterBase, public Lifecycl
      * Initialization
      */
     virtual void initialize(int stage) override;
-    virtual int numInitStages() const override { return NUM_INIT_STAGES; }
+
+    // lifecycle:
+    virtual bool isInitializeStage(int stage) const override { return stage == INITSTAGE_NETWORK_LAYER; }
+    virtual bool isModuleStartStage(int stage) const override { return stage == ModuleStartOperation::STAGE_NETWORK_LAYER; }
+    virtual bool isModuleStopStage(int stage) const override { return stage == ModuleStopOperation::STAGE_NETWORK_LAYER; }
+    virtual void handleStartOperation(LifecycleOperation *operation) override;
+    virtual void handleStopOperation(LifecycleOperation *operation) override;
+    virtual void handleCrashOperation(LifecycleOperation *operation) override;
+
+    virtual void start();
+    virtual void stop();
+    virtual void flush();
 
     /**
      * Determines the correct interface for the specified destination address.
@@ -244,15 +266,43 @@ class INET_API Ipv6 : public SimpleModule, public NetfilterBase, public Lifecycl
     bool determineOutputInterface(const Ipv6Address& destAddress, Ipv6Address& nextHop, int& interfaceId,
             Packet *packet, bool fromHL);
 
-#ifdef INET_WITH_xMIPv6
     /**
      * Process the extension headers of the datagram.
      * Returns true if all have been processed successfully and false if errors occured
      * and the packet has to be dropped or if the datagram has been forwarded to another
      * module for further processing.
      */
-    bool processExtensionHeaders(Packet *packet, const Ipv6Header *ipv6Header);
-#endif /* INET_WITH_xMIPv6 */
+    bool processExtensionHeaders(Packet *packet);
+
+    /**
+     * Applies RFC 8200 Section 4.2 handling for a Hop-by-Hop or Destination
+     * option whose type has no registered handler. The action is encoded in the
+     * two highest-order bits of the option type. Returns true if the option was
+     * skipped (processing continues), false if the packet was discarded (and
+     * possibly an ICMPv6 Parameter Problem error was sent).
+     */
+    bool handleUnrecognizedTlvOption(Packet *packet, int optType);
+
+  public:
+    /** @name Extension header handler registration */
+    //@{
+    /**
+     * Register a handler for a specific Routing Header type (e.g. type 2 for MIPv6).
+     * Called during initialization by modules that process routing headers.
+     */
+    void registerRoutingHeaderHandler(int routingType, IIpv6ExtensionHeaderHandler *handler);
+
+    /**
+     * Register a handler for a specific TLV option type within Hop-by-Hop Options headers.
+     */
+    void registerHopByHopOptionHandler(int optionType, IIpv6TlvOptionHandler *handler);
+
+    /**
+     * Register a handler for a specific TLV option type within Destination Options headers
+     * (e.g. Home Address Option 0xC9 for MIPv6).
+     */
+    void registerDestinationOptionHandler(int optionType, IIpv6TlvOptionHandler *handler);
+    //@}
 };
 
 } // namespace inet

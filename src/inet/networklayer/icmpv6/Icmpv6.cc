@@ -14,7 +14,7 @@
 #include "inet/common/packet/Message.h"
 #include "inet/networklayer/common/Icmpv6ErrorTag_m.h"
 #include "inet/common/checksum/Checksum.h"
-#include "inet/common/lifecycle/NodeStatus.h"
+#include "inet/common/lifecycle/ModuleOperations.h"
 #include "inet/linklayer/common/InterfaceTag_m.h"
 #include "inet/networklayer/common/L3AddressTag_m.h"
 #include "inet/networklayer/contract/IInterfaceTable.h"
@@ -28,7 +28,7 @@ Define_Module(Icmpv6);
 
 void Icmpv6::initialize(int stage)
 {
-    SimpleModule::initialize(stage);
+    OperationalBase::initialize(stage);
 
     if (stage == INITSTAGE_LOCAL) {
         const char *checksumModeString = par("checksumMode");
@@ -42,24 +42,32 @@ void Icmpv6::initialize(int stage)
         WATCH(numErrorsReceived);
     }
     else if (stage == INITSTAGE_NETWORK_LAYER_PROTOCOLS) {
-        bool isOperational;
-        NodeStatus *nodeStatus = dynamic_cast<NodeStatus *>(getContainingNode(this)->getSubmodule("status"));
-        isOperational = (!nodeStatus) || nodeStatus->getState() == NodeStatus::UP;
-        if (!isOperational)
-            throw cRuntimeError("This module doesn't support starting in node DOWN state");
         registerService(Protocol::icmpv6, gate("transportIn"), gate("transportOut"));
         registerProtocol(Protocol::icmpv6, gate("ipv6Out"), gate("ipv6In"));
     }
 }
 
-void Icmpv6::handleMessage(cMessage *msg)
+void Icmpv6::handleMessageWhenUp(cMessage *msg)
 {
     ASSERT(!msg->isSelfMessage()); // no timers in ICMPv6
 
     // process arriving ICMP message
     if (msg->getArrivalGate()->isName("ipv6In")) {
-        EV_INFO << "Processing ICMPv6 message.\n";
-        processICMPv6Message(check_and_cast<Packet *>(msg));
+        if (auto packet = dynamic_cast<Packet *>(msg)) {
+            EV_INFO << "Processing ICMPv6 message.\n";
+            processICMPv6Message(packet);
+        }
+        else if (auto indication = dynamic_cast<Indication *>(msg)) {
+            // IPv6 reports an ICMPv6 error for an ICMPv6 message we originated (e.g. an
+            // error or NDP message that could not be delivered). There is nothing to
+            // retransmit, and ICMPv6 must not generate errors about errors, so the
+            // notification is simply discarded.
+            EV_WARN << "Received an error indication (" << indication->getName()
+                    << ") for an ICMPv6 message we sent; ignoring it" << endl;
+            delete indication;
+        }
+        else
+            throw cRuntimeError("Unexpected message %s(%s) arrived on ipv6In", msg->getName(), msg->getClassName());
         return;
     }
     else if (msg->getArrivalGate()->isName("transportIn")) {
@@ -154,6 +162,29 @@ void Icmpv6::processICMPv6Message(Packet *packet)
                 EV_INFO << "ICMPv6 Echo Reply Message Received." << endl;
                 const auto& echoReply = packet->popAtFront<Icmpv6EchoReplyMsg>();
                 processEchoReply(packet, echoReply);
+                break;
+            }
+            case ICMPv6_MLD_QUERY:
+            case ICMPv6_MLD_REPORT:
+            case ICMPv6_MLD_DONE:
+            case ICMPv6_MLDv2_REPORT: {
+                // MLD messages (RFC 2710 / RFC 3810) are ICMPv6 subtypes: Query (130),
+                // MLDv1 Report (131), Done (132), and MLDv2 Report (143). If this node runs
+                // MLD, forward to the MLD module via the lp dispatcher by re-tagging with
+                // Protocol::mld. If MLD is not enabled (no mldModule configured), a node
+                // not participating in MLD silently ignores the message.
+                if (par("mldModule").stringValue()[0] == '\0') {
+                    EV_INFO << "ICMPv6: received MLD message (type=" << type << ") but MLD is not enabled on this node; dropping.\n";
+                    PacketDropDetails details;
+                    details.setReason(NO_PROTOCOL_FOUND);
+                    emit(packetDroppedSignal, packet, &details);
+                    delete packet;
+                    break;
+                }
+                EV_INFO << "ICMPv6: forwarding MLD message (type=" << type << ") to MLD module.\n";
+                packet->addTagIfAbsent<DispatchProtocolReq>()->setProtocol(&Protocol::mld);
+                packet->addTagIfAbsent<PacketProtocolTag>()->setProtocol(&Protocol::mld);
+                send(packet, "ipv6Out");
                 break;
             }
             default:

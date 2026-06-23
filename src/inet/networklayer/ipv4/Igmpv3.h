@@ -69,8 +69,19 @@ class INET_API Igmpv3 : public SimpleModule, protected cListener
         IGMPV3_R_GENERAL_QUERY_TIMER,
         IGMPV3_R_GROUP_TIMER,
         IGMPV3_R_SOURCE_TIMER,
+        IGMPV3_R_REXMT_TIMER,
+        IGMPV3_R_OLDER_VERSION_TIMER, // Older Version Host Present timer (RFC 3376 7.3.2), per RouterGroupData
         IGMPV3_H_GENERAL_QUERY_TIMER,
         IGMPV3_H_GROUP_TIMER,
+        IGMPV3_H_STATE_CHANGE_TIMER,
+        IGMPV3_H_OLDER_VERSION_TIMER, // Older Version Querier Present timer (RFC 3376 7.2.1), per HostInterfaceData
+    };
+
+    // Older-version compatibility level (RFC 3376 7.2/7.3). NONE means native v3.
+    enum CompatVersion {
+        IGMP_COMPAT_NONE = 0,
+        IGMP_COMPAT_V1 = 1,
+        IGMP_COMPAT_V2 = 2,
     };
 
     struct HostInterfaceData;
@@ -83,6 +94,12 @@ class INET_API Igmpv3 : public SimpleModule, protected cListener
         HostGroupState state;
         cMessage *timer; // for scheduling responses to Group-Specific and Group-and-Source-Specific Queries
         Ipv4AddressVector queriedSources; // saved from last Group-Specific or Group-and-Source-Specific Query; sorted
+
+        // State-Change Report retransmission (RFC 3376 6.1): the last State-Change
+        // Report is (re)transmitted [Robustness Variable] times in total.
+        std::vector<GroupRecord> pendingRecords; // records of the pending State-Change Report
+        int retransmitCount = 0; // remaining retransmissions (0 = nothing pending)
+        cMessage *retransmitTimer; // fires at uniform(0, unsolicitedReportInterval)
 
         HostGroupData(HostInterfaceData *parent, Ipv4Address group);
         virtual ~HostGroupData();
@@ -97,6 +114,12 @@ class INET_API Igmpv3 : public SimpleModule, protected cListener
 //        int multicastRouterVersion;
         GroupToHostDataMap groups;
         cMessage *generalQueryTimer; // for scheduling responses to General Queries
+
+        // Older Version Querier Present (RFC 3376 7.2.1): while olderVersionTimer is
+        // scheduled, an older-version querier is present on this interface and the host
+        // emits older-version (v1/v2) Reports/Leaves instead of v3 reports.
+        cMessage *olderVersionTimer; // fires at otherQuerierPresentInterval
+        CompatVersion compatVersion = IGMP_COMPAT_NONE;
 
         HostInterfaceData(Igmpv3 *owner, NetworkInterface *ie);
         virtual ~HostInterfaceData();
@@ -143,6 +166,20 @@ class INET_API Igmpv3 : public SimpleModule, protected cListener
         cMessage *timer;
         SourceToSourceRecordMap sources; // TODO should map source addresses to source timers
                                          // i.e. map<Ipv4Address,cMessage*>
+
+        // Last-Member/Group-Specific Query retransmission (RFC 3376 6.4.2): a
+        // Group-Specific or Group-and-Source-Specific Query is sent [Last Member
+        // Query Count] times in total, lastMemberQueryInterval apart.
+        cMessage *rexmtTimer; // fires at lastMemberQueryInterval
+        int rexmtCount = 0; // remaining retransmissions (0 = nothing pending)
+        bool rexmtGroupAndSource = false; // false=Group-Specific, true=Group-and-Source-Specific
+        Ipv4AddressVector rexmtSources; // for the group-and-source case: sources to resend; sorted
+
+        // Older Version Host Present (RFC 3376 7.3.2): while olderVersionTimer is
+        // scheduled, an older-version (v1/v2) host is present for this group. The group
+        // is forwarded as EXCLUDE{} (any-source) and v3 per-source processing is bypassed.
+        cMessage *olderVersionTimer; // fires at groupMembershipInterval
+        CompatVersion olderVersionCompat = IGMP_COMPAT_NONE;
 
         RouterGroupData(RouterInterfaceData *parent, Ipv4Address group);
         virtual ~RouterGroupData();
@@ -194,7 +231,7 @@ class INET_API Igmpv3 : public SimpleModule, protected cListener
     ModuleRefByPar<IInterfaceTable> ift;
 
     bool enabled;
-    int robustness;
+    int robustnessVariable; // RFC 3376: a State-Change Report is (re)transmitted this many times
     double queryInterval; // TODO these should probably be simtime_t
     double queryResponseInterval;
     double groupMembershipInterval;
@@ -257,6 +294,7 @@ class INET_API Igmpv3 : public SimpleModule, protected cListener
     virtual RouterInterfaceData *createRouterInterfaceData(NetworkInterface *ie);
     virtual HostInterfaceData *getHostInterfaceData(NetworkInterface *ie);
     virtual RouterInterfaceData *getRouterInterfaceData(NetworkInterface *ie);
+    virtual RouterGroupData *getRouterGroupData(NetworkInterface *ie, Ipv4Address group); // nullptr if absent
     virtual void deleteHostInterfaceData(int interfaceId);
     virtual void deleteRouterInterfaceData(int interfaceId);
 
@@ -273,13 +311,29 @@ class INET_API Igmpv3 : public SimpleModule, protected cListener
 
     virtual void processHostGeneralQueryTimer(cMessage *msg);
     virtual void processHostGroupQueryTimer(cMessage *msg);
+    virtual void processHostStateChangeTimer(cMessage *msg);
+    virtual void processHostOlderVersionTimer(cMessage *msg);
     virtual void processRouterGeneralQueryTimer(cMessage *msg);
     virtual void processRouterGroupTimer(cMessage *msg);
     virtual void processRouterSourceTimer(cMessage *msg);
+    virtual void processRexmtTimer(cMessage *msg);
+    virtual void processRouterOlderVersionTimer(cMessage *msg);
 
     virtual void processIgmpMessage(Packet *msg);
     virtual void processQuery(Packet *msg);
     virtual void processReport(Packet *msg);
+
+    // --- Older-version interop (RFC 3376 7.2/7.3) ---
+    // Host side: enter older-version compatibility on an older-version General Query, and
+    // emit older-version messages while it is active.
+    virtual void processOlderVersionQuery(NetworkInterface *ie, Packet *packet, CompatVersion version);
+    virtual void sendOlderVersionReport(NetworkInterface *ie, Ipv4Address group, CompatVersion version);
+    virtual void sendOlderVersionLeave(NetworkInterface *ie, Ipv4Address group);
+    // Router side: a received older-version Report/Leave puts the group into
+    // older-version-host-present mode (forward as EXCLUDE{}).
+    virtual void processOlderVersionReport(NetworkInterface *ie, Packet *packet, CompatVersion version);
+    virtual void processOlderVersionLeave(NetworkInterface *ie, Packet *packet);
+    virtual void enterRouterOlderVersionCompat(NetworkInterface *ie, RouterGroupData *groupData, CompatVersion version);
 
     virtual void multicastSourceListChanged(NetworkInterface *ie, Ipv4Address group, const Ipv4MulticastSourceList& sourceList);
 

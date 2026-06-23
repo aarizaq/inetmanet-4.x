@@ -37,10 +37,18 @@ import inet.common.SimpleModule;
 // calling C++ methods of ~Ipv6RoutingTable. No message exchange with ~Ipv6RoutingTable
 // takes place.
 //
-//#FIXME describe operation
-//
 // Routing protocol implementations can also query and manipulate the route table
 // by calling ~Ipv6RoutingTable's methods in C++.
+//
+// <b>Netfilter hooks</b>
+//
+// Other modules can register INetfilter hooks on ~Ipv6 to inspect, modify, drop
+// or queue datagrams at well-defined points (pre-routing, local-out,
+// post-routing). Mobile IPv6 (~Mipv6) uses these hooks to steer home-address
+// traffic onto tunnel interfaces and to insert the Type 2 Routing Header / Home
+// Address Option on route-optimized traffic, so the IPv6 core itself needs no
+// mobility-specific knowledge. IPv6-in-IPv6 tunnels (RFC 2473) are likewise plain
+// ~Ipv6TunnelInterface network interfaces plus routes, not a special path in ~Ipv6.
 //
 // <b>Performance model, QoS</b>
 //
@@ -58,8 +66,8 @@ simple Ipv6 extends SimpleModule
         string routingTableModule;
         string ipv6NeighbourDiscoveryModule;
         string icmpv6Module;
-        string ipv6TunnelingModule;
         double procDelay @unit(s) = default(0s);
+        bool sendRedirects = default(true); // RFC 4861 Section 8.2: when a router forwards a packet back out the interface it arrived on, send the source an ICMPv6 Redirect. Disable on wireless multi-hop / ad-hoc networks (e.g. MANET routing), where the geographic next hop is not directly reachable by the source, so redirects are useless and trigger a storm.
         displayStringTextFormat = default("{ipv6StatusText}");
         @display("i=block/network2");
         @signal[packetDropped](type=inet::Packet);
@@ -67,6 +75,10 @@ simple Ipv6 extends SimpleModule
         @signal[packetReceivedFromUpper](type=inet::Packet);
         @signal[packetSentToLower](type=inet::Packet);
         @signal[packetReceivedFromLower](type=inet::Packet);
+        @signal[ipv6NewMulticast](type=inet::Ipv6Header);
+        @signal[ipv6DataOnNonrpf](type=inet::Ipv6Header);
+        @signal[ipv6DataOnRpf](type=inet::Ipv6Header);
+        @signal[ipv6MdataRegister](type=inet::Packet);
     gates:
         input transportIn @labels(Ipv6ControlInfo/down,TcpHeader,UdpHeader);
         output transportOut @labels(Ipv6ControlInfo/up,TcpHeader,UdpHeader);
@@ -74,12 +86,5 @@ simple Ipv6 extends SimpleModule
         output queueOut @labels(IPv6Datagram);
         input ndIn;
         output ndOut;
-        // tunneling gates - CB
-        input upperTunnelingIn;
-        output upperTunnelingOut;
-        input lowerTunnelingIn;
-        output lowerTunnelingOut;
-        input xMIPv6In;
-        output xMIPv6Out;
 }
 

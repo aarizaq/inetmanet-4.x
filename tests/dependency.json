@@ -473,7 +473,7 @@
   ],
   "Xmipv6": [
    "inet.networklayer.xmipv6",
-   "inet.node.xmipv6"
+   "inet.node.mipv6"
   ],
   "Xmipv6Examples": [
    "inet.examples.mobileipv6"
@@ -614,7 +614,7 @@
   "inet.node.rtp",
   "inet.node.tsn",
   "inet.node.wireless",
-  "inet.node.xmipv6",
+  "inet.node.mipv6",
   "inet.physicallayer.common",
   "inet.physicallayer.wired.common",
   "inet.physicallayer.wired.ethernet",
@@ -854,7 +854,7 @@
   "src/inet/node/rtp": "inet.node.rtp",
   "src/inet/node/tsn": "inet.node.tsn",
   "src/inet/node/wireless": "inet.node.wireless",
-  "src/inet/node/xmipv6": "inet.node.xmipv6",
+  "src/inet/node/xmipv6": "inet.node.mipv6",
   "src/inet/physicallayer/common": "inet.physicallayer.common",
   "src/inet/physicallayer/wired/common": "inet.physicallayer.wired.common",
   "src/inet/physicallayer/wired/ethernet": "inet.physicallayer.wired.ethernet",
@@ -1198,7 +1198,7 @@
   "inet.networklayer.wiseroute": "WiseRoute",
   "inet.linklayer.xmac": "XMac",
   "inet.networklayer.xmipv6": "Xmipv6",
-  "inet.node.xmipv6": "Xmipv6",
+  "inet.node.mipv6": "Xmipv6",
   "inet.examples.mobileipv6": "Xmipv6Examples",
   "inet.linklayer.configurator.gatescheduling.z3": "Z3GateSchedulingConfigurator"
  },
@@ -5999,138 +5999,6 @@
     "PingApplication",
     "Ppp",
     "Queueing",
-    "TcpInet",
-    "Udp"
-   ]
-  },
-  {
-   "working_directory": "examples/ipv6/demonetworketh",
-   "ini_file": "omnetpp.ini",
-   "config": "General",
-   "run_number": 0,
-   "used_features": [
-    "Ethernet",
-    "Ipv6",
-    "Ipv6Examples",
-    "Loopback",
-    "Queueing",
-    "TcpCommon",
-    "TcpInet",
-    "Udp",
-    "VisualizationCanvas"
-   ]
-  },
-  {
-   "working_directory": "examples/ipv6/ipv6bulk",
-   "ini_file": "omnetpp.ini",
-   "config": "inet__lwip",
-   "run_number": 0,
-   "used_features": [
-    "Ethernet",
-    "Ipv6",
-    "Ipv6Examples",
-    "Loopback",
-    "Queueing",
-    "TcpCommon",
-    "TcpInet",
-    "TcpLwip",
-    "Udp"
-   ]
-  },
-  {
-   "working_directory": "examples/ipv6/ipv6bulk",
-   "ini_file": "omnetpp.ini",
-   "config": "inet_inet",
-   "run_number": 0,
-   "used_features": [
-    "Ethernet",
-    "Ipv6",
-    "Ipv6Examples",
-    "Loopback",
-    "Queueing",
-    "TcpCommon",
-    "TcpInet",
-    "Udp"
-   ]
-  },
-  {
-   "working_directory": "examples/ipv6/ipv6bulk",
-   "ini_file": "omnetpp.ini",
-   "config": "lwip__inet",
-   "run_number": 0,
-   "used_features": [
-    "Ethernet",
-    "Ipv6",
-    "Ipv6Examples",
-    "Loopback",
-    "Queueing",
-    "TcpCommon",
-    "TcpInet",
-    "TcpLwip",
-    "Udp"
-   ]
-  },
-  {
-   "working_directory": "examples/ipv6/ipv6bulk",
-   "ini_file": "omnetpp.ini",
-   "config": "lwip__lwip",
-   "run_number": 0,
-   "used_features": [
-    "Ethernet",
-    "Ipv6",
-    "Ipv6Examples",
-    "Loopback",
-    "Queueing",
-    "TcpCommon",
-    "TcpLwip",
-    "Udp"
-   ]
-  },
-  {
-   "working_directory": "examples/ipv6/ipv6nclients",
-   "ini_file": "omnetpp.ini",
-   "config": "ETH",
-   "run_number": 0,
-   "used_features": [
-    "Ethernet",
-    "Ipv6",
-    "Ipv6Examples",
-    "Loopback",
-    "Queueing",
-    "TcpCommon",
-    "TcpInet",
-    "Udp"
-   ]
-  },
-  {
-   "working_directory": "examples/ipv6/ipv6nclients",
-   "ini_file": "omnetpp.ini",
-   "config": "Mixed",
-   "run_number": 0,
-   "used_features": [
-    "Ethernet",
-    "Ipv6",
-    "Ipv6Examples",
-    "Loopback",
-    "Ppp",
-    "Queueing",
-    "TcpCommon",
-    "TcpInet",
-    "Udp"
-   ]
-  },
-  {
-   "working_directory": "examples/ipv6/ipv6nclients",
-   "ini_file": "omnetpp.ini",
-   "config": "PPP",
-   "run_number": 0,
-   "used_features": [
-    "Ipv6",
-    "Ipv6Examples",
-    "Loopback",
-    "Ppp",
-    "Queueing",
-    "TcpCommon",
     "TcpInet",
     "Udp"
    ]
