@@ -158,11 +158,6 @@ protected:
       */
      bool decompressLowPanIphc (Packet* packet, const L3Address &src, const L3Address &dst);
 
-     B compressLowPanNhc (Ptr<SixLowPanIphc> &header, const Ipv6ExtensionHeader *);
-
-     B decompressLowPanNhc  (Ptr<Ipv6Header> &, const Ipv6ExtensionHeader *);
-
-
      /**
       * \brief Compress the headers according to NHC compression.
       * \param [in] packet The packet to be compressed.

@@ -37,125 +37,6 @@ uint8_t SixLowPanDispatch::getNhcDispatchType() const
 }
 */
 
-
-Ipv6ExtensionHeader *SixLowPanIphc::findExtensionHeaderByTypeForUpdate(IpProtocolId extensionType, int index)
-{
-    handleChange();
-    return const_cast<Ipv6ExtensionHeader *>(const_cast<SixLowPanIphc *>(this)->findExtensionHeaderByType(extensionType, index));
-}
-
-const Ipv6ExtensionHeader *SixLowPanIphc::findExtensionHeaderByType(IpProtocolId extensionType, int index) const
-{
-    for (size_t i = 0; i < extensionHeader_arraysize; i++)
-        if (extensionHeader[i]->getExtensionType() == extensionType) {
-            if (index == 0)
-                return extensionHeader[i];
-            else
-                index--;
-        }
-    return nullptr;
-}
-
-void SixLowPanIphc::addExtensionHeader(Ipv6ExtensionHeader *eh)
-{
-    ASSERT((eh->getByteLength() >= B(1)) && (eh->getByteLength().get() % 8 == 0));
-    int thisOrder = eh->getOrder();
-    size_t i;
-    for (i = 0; i < extensionHeader_arraysize; i++) {
-        int thatOrder = extensionHeader[i]->getOrder();
-        if (thisOrder != -1 && thatOrder > thisOrder)
-            break;
-        else if (thisOrder == thatOrder) {
-            if (thisOrder == 1) // first IP_PROT_IPv6EXT_DEST has order 1, second IP_PROT_IPv6EXT_DEST has order 6
-                thisOrder = 6;
-            else if (thisOrder != -1)
-                throw cRuntimeError(this, "addExtensionHeader() duplicate extension header: %d",
-                        eh->getExtensionType());
-        }
-    }
-
-    // insert at position atPos, shift up the rest of the array
-    insertExtensionHeader(i, eh);
-}
-
-B SixLowPanIphc::calculateHeaderByteLength() const
-{
-    B len = B(40);
-    for (size_t i = 0; i < extensionHeader_arraysize; i++)
-        len += extensionHeader[i]->getByteLength();
-    return len;
-}
-
-/**
- * Note: it is assumed that headers are ordered as described in RFC 2460 4.1
- */
-B SixLowPanIphc::calculateUnfragmentableHeaderByteLength() const
-{
-    size_t firstFragmentableExtensionIndex = 0;
-    for (size_t i = extensionHeader_arraysize; i > 0; i--) {
-        int type = extensionHeader[i - 1]->getExtensionType();
-        if (type == IP_PROT_IPv6EXT_ROUTING || type == IP_PROT_IPv6EXT_HOP) {
-            firstFragmentableExtensionIndex = i;
-            break;
-        }
-    }
-
-    B len = B(40);
-    for (size_t i = 0; i < firstFragmentableExtensionIndex; i++)
-        len += extensionHeader[i]->getByteLength();
-    return len;
-}
-
-/**
- * Note: it is assumed that headers are ordered as described in RFC 2460 4.1
- */
-B SixLowPanIphc::calculateFragmentLength() const
-{
-    B len = getChunkLength() - IPv6_HEADER_BYTES;
-    size_t i;
-    for (i = 0; i < extensionHeader_arraysize; i++) {
-        len -= extensionHeader[i]->getByteLength();
-        if (extensionHeader[i]->getExtensionType() == IP_PROT_IPv6EXT_FRAGMENT)
-            break;
-    }
-    ASSERT2(i < extensionHeader_arraysize, "IPv6Datagram::calculateFragmentLength() called on non-fragment datagram");
-    return len;
-}
-
-Ipv6ExtensionHeader *SixLowPanIphc::removeFirstExtensionHeader()
-{
-    handleChange();
-    if (extensionHeader_arraysize == 0)
-        return nullptr;
-    Ipv6ExtensionHeader *eh = removeExtensionHeader(0);
-    eraseExtensionHeader(0);
-    return eh;
-}
-
-Ipv6ExtensionHeader *SixLowPanIphc::removeExtensionHeader(IpProtocolId extensionType)
-{
-    handleChange();
-    if (extensionHeader_arraysize == 0)
-        return nullptr;
-
-    for (size_t i = 0; i < extensionHeader_arraysize; i++) {
-        if (extensionHeader[i]->getExtensionType() == extensionType) {
-            Ipv6ExtensionHeader *eh = removeExtensionHeader(i);
-            eraseExtensionHeader(i);
-            return eh;
-        }
-    }
-    return nullptr;
-}
-
-
-std::ostream& operator<<(std::ostream& out, const Ipv6ExtensionHeader& h)
-{
-    out << "{type:" << h.getExtensionType() << ",length:" << h.getByteLength() << "}";
-    return out;
-}
-
-
 B SixLowPanHc1::getSerializedSize () const
 {
   B serializedSize = B(3);
@@ -315,11 +196,6 @@ B SixLowPanIphc::getSerializedSize() const {
                 serializedSize++;
             break;
         }
-    }
-
-    for (int i = 0; i < (int)this->getExtensionHeaderArraySize(); i++) {
-        auto extHeader = this->getExtensionHeader(i);
-        serializedSize += extHeader->getByteLength();
     }
 
     return serializedSize;

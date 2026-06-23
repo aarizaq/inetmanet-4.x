@@ -16,6 +16,7 @@ import inet.common.INETDefs;
 import inet.common.packet.chunk.Chunk;
 import inet.networklayer.contract.NetworkHeaderBase;
 import inet.networklayer.ipv6.Ipv6Header;
+import inet.networklayer.ipv6.Ipv6ExtensionHeaders;
 import inet.networklayer.contract.ipv6.Ipv6Address;
 import inet.networklayer.common.L3Address;
 import inet.common.checksum.ChecksumMode;
@@ -27,6 +28,42 @@ cplusplus {{
 
 
 namespace inet::wirelesspan::sixlowpan;
+
+
+class Ipv6Header extends NetworkHeaderBase
+{
+    chunkLength = IPv6_HEADER_BYTES;
+    uint8_t version = 6;
+    Ipv6Address srcAddress;
+    Ipv6Address destAddress;
+    B payloadLength = B(-1);    // The size of the payload in octets, including any extension headers. The length is set to zero when a Hop-by-Hop extension header carries a Jumbo Payload option.
+    short trafficClass;    // @bits(8) Traffic Class
+    // OMNeT++ 6.0:
+    // short __dscp @custom @getter(getDscp) @setter(setDscp);  // @bit(6), maps to bits 0-5 of trafficClass
+    // short __ecn @custom @getter(getEcn) @setter(setEcn);  // @bit(2),  maps to bits 6-7 of trafficClass
+
+    unsigned int flowLabel;
+    short hopLimit = 0;
+    IpProtocolId protocolId = IP_PROT_NONE;
+}
+
+cplusplus(Ipv6Header) {{
+  public:
+    virtual short getDscp() const;
+    virtual void setDscp(short dscp);
+    virtual short getEcn() const;
+    virtual void setEcn(short ecn);
+
+    // implements NetworkHeaderBase functions:
+    virtual L3Address getSourceAddress() const override { return L3Address(getSrcAddress()); }
+    virtual void setSourceAddress(const L3Address& address) override { setSrcAddress(address.toIpv6()); }
+    virtual L3Address getDestinationAddress() const override { return L3Address(getDestAddress()); }
+    virtual void setDestinationAddress(const L3Address& address) override { setDestAddress(address.toIpv6()); }
+    virtual const Protocol *getProtocol() const override { return ProtocolGroup::getIpProtocolGroup()->findProtocol(getProtocolId()); }
+    virtual void setProtocol(const Protocol *protocol) override { setProtocolId(static_cast<IpProtocolId>(ProtocolGroup::getIpProtocolGroup()->getProtocolNumber(protocol))); }
+    virtual bool isFragment() const override { return false; } // fragment detection is done at packet level now
+}}
+
 
 
 class SixLowPanDispatch extends NetworkHeaderBase
@@ -151,7 +188,6 @@ class SixLowPanIphc extends SixLowPanDispatch {
   // uint8_t nextHeader;       //!< Next header.
   uint8_t srcInlinePart[16]; //!< source address inline part.
   uint8_t dstInlinePart[16]; //!< destination address inline part.
-  Ipv6ExtensionHeader *extensionHeader[] @owned; 
 }
 
 
@@ -179,54 +215,6 @@ cplusplus(SixLowPanIphc) {{
     HC_COMPR_16,
     HC_COMPR_0
   };     
-     /**
-     * Returns the extension header of the specified type,
-     * or nullptr. If index is 0, then the first, if 1 then the
-     * second extension is returned. (The datagram might
-     * contain two Destination Options extension.)
-     */
-    virtual Ipv6ExtensionHeader *findExtensionHeaderByTypeForUpdate(IpProtocolId extensionType, int index = 0);
-    virtual const Ipv6ExtensionHeader *findExtensionHeaderByType(IpProtocolId extensionType, int index = 0) const;
-
-    /**
-     * Adds an extension header to the datagram.
-     * The extension headers are stored in the order specified in RFC 2460 4.1.
-     */
-    virtual void addExtensionHeader(Ipv6ExtensionHeader *eh);
-
-    /**
-     * Calculates the length of the Ipv6 header plus the extension
-     * headers.
-     */
-    virtual B calculateHeaderByteLength() const;
-
-    /**
-     * Calculates the length of the unfragmentable part of Ipv6 header
-     * plus the extension headers.
-     */
-    virtual B calculateUnfragmentableHeaderByteLength() const;
-
-    /**
-     * Calculates the length of the payload and extension headers
-     * after the Fragment Header.
-     */
-    virtual B calculateFragmentLength() const;
-
-    /**
-     * Removes and returns the first extension header of this datagram
-     */
-    virtual Ipv6ExtensionHeader *removeFirstExtensionHeader();
-
-    /**
-     * Removes and returns the first extension header with the given type.
-     */
-    virtual Ipv6ExtensionHeader *removeExtensionHeader(IpProtocolId extensionType);
-    // implements NetworkHeaderBase functions:
-  
-#if (OMNETPP_BUILDNUM < 1530)
-    Ipv6ExtensionHeader * removeExtensionHeader(size_t k) { return dropExtensionHeader(k); }
-    void appendExtensionHeader(Ipv6ExtensionHeader * extensionHeader) { insertExtensionHeader(extensionHeader); }
-#endif
 
     virtual B getSerializedSize() const override;
     
@@ -265,7 +253,6 @@ cplusplus(SixLowPanIphc) {{
     
     virtual L3Address getSourceAddress() const override {return getOrigSrcAddr();}    
     virtual L3Address getDestinationAddress() const override {return getOrigDestAddr();}
-
     
 }}
 

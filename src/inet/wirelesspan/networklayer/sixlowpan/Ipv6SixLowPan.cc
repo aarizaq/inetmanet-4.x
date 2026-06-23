@@ -43,6 +43,7 @@
 #include "inet/linklayer/common/InterfaceTag_m.h"
 #include "inet/common/packet/ReassemblyBuffer.h"
 #include "inet/networklayer/ipv6/Ipv6ExtensionHeaders_m.h"
+#include "inet/networklayer/ipv6/Ipv6ExtensionHeaders.h"
 
 #ifdef INET_WITH_IPv6
 namespace inet {
@@ -344,20 +345,23 @@ void Ipv6SixLowPan::fragmentAndSend(Packet *packet, const NetworkInterface *ie, 
     }
 
     // create and send fragments
-    ipv6Header = packet->popAtFront<Ipv6Header>();
-    B headerLength = ipv6Header->calculateUnfragmentableHeaderByteLength();
+
+
+    B headerLength = IPv6_HEADER_BYTES;
     B payloadLength = packet->getDataLength();
     B fragmentLength = ((B(mtu) - headerLength - IPv6_FRAGMENT_HEADER_LENGTH) / 8) * 8;
     ASSERT(fragmentLength > B(0));
 
-    int noOfFragments = B(payloadLength + fragmentLength - B(1)).get() / B(fragmentLength).get();
+    int noOfFragments = (payloadLength + fragmentLength - B(1)).get<B>() / fragmentLength.get<B>();
     EV_INFO << "Breaking datagram into " << noOfFragments << " fragments\n";
     std::string fragMsgName = packet->getName();
     fragMsgName += "-frag-";
 
-    // FIXME is need to remove unfragmentable header extensions? see calculateUnfragmentableHeaderByteLength()
-
     unsigned int identification = curFragmentId++;
+    // The base header's protocolId currently points to the first ext header (or transport).
+    // We need to insert a Fragment Header into the chain.
+    IpProtocolId origNextHdr = ipv6Header->getProtocolId();
+
     for (B offset = B(0); offset < payloadLength; offset += fragmentLength) {
         bool lastFragment = (offset + fragmentLength >= payloadLength);
         B thisFragmentLength = lastFragment ? payloadLength - offset : fragmentLength;
@@ -366,17 +370,23 @@ void Ipv6SixLowPan::fragmentAndSend(Packet *packet, const NetworkInterface *ie, 
         if (lastFragment)
             curFragName += "-last";
         Packet *fragPk = new Packet(curFragName.c_str());
-        const auto& fragHdr = staticPtrCast<Ipv6Header>(ipv6Header->dupShared());
-        auto *fh = new Ipv6FragmentHeader();
+
+        // Create fragment header chunk
+        auto fh = makeShared<Ipv6FragmentHeader>();
         fh->setIdentification(identification);
         fh->setFragmentOffset(offset.get());
         fh->setMoreFragments(!lastFragment);
-        fragHdr->addExtensionHeader(fh);
-        fragHdr->setChunkLength(headerLength + fh->getByteLength()); // KLUDGE
-        fragPk->insertAtFront(fragHdr);
+        fh->setNextHeaderProtocol(origNextHdr);
+
+        // Base header points to Fragment Header
+        const auto& fragBaseHdr = staticPtrCast<Ipv6Header>(ipv6Header->dupShared());
+        fragBaseHdr->setProtocolId(IP_PROT_IPv6EXT_FRAGMENT);
+
+        fragPk->insertAtFront(fh);
+        fragPk->insertAtFront(fragBaseHdr);
         fragPk->insertAtBack(packet->peekDataAt(offset, thisFragmentLength));
 
-        ASSERT(fragPk->getDataLength() == headerLength + fh->getByteLength() + thisFragmentLength);
+        ASSERT(fragPk->getDataLength() == headerLength + IPv6_FRAGMENT_HEADER_LENGTH + thisFragmentLength);
 
         sendDatagramToOutput(fragPk, ie, nextHopAddr);
     }
@@ -838,10 +848,20 @@ Ipv6SixLowPan::compressLowPanIphc (Packet * packet, L3Address const &src, L3Addr
 
   EV_DEBUG << "Original packet: " << packet->str() << " Size " << packet->getByteLength() << " src: " << src << " dst: " << dst << endl;
   size = B(0);
+
+
   if (ipHeaderAux != nullptr) {
       auto ipHeader = removeNetworkProtocolHeader<Ipv6Header>(packet);
       auto iphcHeader = makeShared<SixLowPanIphc>();
       size += B(40); // original Ipv6 header.
+
+      IpProtocolId nextHdr = ipHeader->getProtocolId();
+      std::vector<Ptr<Ipv6ExtensionHeader>> headers;
+      while (isIpv6ExtensionHeader(nextHdr)) {
+          auto  header = packet->removeAtFront<Ipv6ExtensionHeader>();
+          headers.push_back(header);
+          nextHdr = header->getNextHeaderProtocol();
+      }
 
       iphcHeader->setProtocol(ipHeader->getProtocol());
 
@@ -871,16 +891,20 @@ Ipv6SixLowPan::compressLowPanIphc (Packet * packet, L3Address const &src, L3Addr
 
       // Compress header extensions
       iphcHeader->setNh(false);
-      for (size_t i = 0; i < ipHeader->getExtensionHeaderArraySize(); i++) {
-          auto extension = ipHeader->getExtensionHeader(i);
-          if (canCompressLowPanNhc((IpProtocolId)extension->getExtensionType())) {
+
+      packet->trim();
+
+      for (int i = headers.size()-1; i >= 0; i-- ) {
+          auto e = headers[i];
+          if (canCompressLowPanNhc((IpProtocolId)e->getExtensionType())) {
+              auto sizeb = e->getChunkLength();
+              if (sizeb > B(2)) {
+                  e->setChunkLength(sizeb-B(2));
+              }
               iphcHeader->setNh (true);
-              size += compressLowPanNhc (iphcHeader, extension);
+              size += e->getChunkLength();
           }
-          else {
-              iphcHeader->addExtensionHeader(extension->dup());
-              //size += extension->getByteLength();
-          }
+          packet->insertAtFront(Ptr<Ipv6ExtensionHeader>(e));
       }
 
       iphcHeader->setProtocol(ipHeader->getProtocol());
@@ -1519,12 +1543,29 @@ Ipv6SixLowPan::decompressLowPanIphc (Packet * packet, L3Address const &src, L3Ad
         break;
     }
     if (encoding->getNh()) {
-        // Compressed headers, first decompress EXT headers
-        for (size_t i = 0; i < encoding->getExtensionHeaderArraySize(); i++) {
-            if (decompressLowPanNhc(ipHeader, encoding->getExtensionHeaderForUpdate(i))==B(0)) {
-                ipHeader->appendExtensionHeader(encoding->getExtensionHeaderForUpdate(i)->dup());
-            }
+
+        IpProtocolId nextHdr = ipHeader->getProtocolId();
+        std::vector<Ptr<Ipv6ExtensionHeader>> headers;
+        while (isIpv6ExtensionHeader(nextHdr)) {
+            auto  header = packet->removeAtFront<Ipv6ExtensionHeader>();
+            headers.push_back(header);
+            nextHdr = header->getNextHeaderProtocol();
         }
+        packet->trim();
+
+        // Compressed headers, first decompress EXT headers
+        for (size_t i = 0; i < headers.size(); i++) {
+            uint8_t headerType = headers[i]->getExtensionType();
+            if ((headerType == IpProtocolId::IP_PROT_IPv6EXT_HOP ) ||
+                    (headerType == IpProtocolId::IP_PROT_IPv6EXT_ROUTING) ||
+                    (headerType == IpProtocolId::IP_PROT_IPv6EXT_ROUTING) ||
+                    (headerType == IpProtocolId::IP_PROT_IPv6EXT_DEST)) {
+                headers[i]->setChunkLength(headers[i]->getChunkLength()+B(2));
+            }
+            packet->insertAtFront(Ptr<Ipv6ExtensionHeader>(headers[i]));
+          }
+
+
 
         // check next protocol
         auto prot = encoding->getProtocolId();
@@ -1540,65 +1581,14 @@ Ipv6SixLowPan::decompressLowPanIphc (Packet * packet, L3Address const &src, L3Ad
         }
 
     }
-    else {
-        for (size_t i = 0; i < encoding->getExtensionHeaderArraySize(); i++) {
-            ipHeader->appendExtensionHeader(encoding->getExtensionHeaderForUpdate(i)->dup());
-        }
-    }
-    ipHeader->setChunkLength(B(ipHeader->calculateHeaderByteLength()));
+
+    ipHeader->setChunkLength(IPv6_HEADER_BYTES);
     ipHeader->setPayloadLength (B(packet->getByteLength()));
     packet->insertAtFront(ipHeader);
     EV << "Rebuilt packet:  " << packet->str() << " Size " << packet->getByteLength () << endl;
     return false;
 }
 
-B
-Ipv6SixLowPan::compressLowPanNhc (Ptr<SixLowPanIphc> &header, const Ipv6ExtensionHeader *extension)
-{
-
-  //SixLowPanNhcExtension nhcHeader;
-  B size = B(0);
-
-  if (extension->getByteLength() >= B(0xff)) {
-      EV << "LOWPAN_NHC MUST NOT be used to encode IPv6 Extension Headers " << endl <<
-                    "that have more than 255 octets following the Length field after compression. " << endl <<
-                    "Packet uncompressed." << endl;
-      return size;
-  }
-
-  uint8_t headerType = extension->getExtensionType();
-  if ((headerType == IpProtocolId::IP_PROT_IPv6EXT_HOP ) ||
-          (headerType == IpProtocolId::IP_PROT_IPv6EXT_ROUTING) ||
-          (headerType == IpProtocolId::IP_PROT_IPv6EXT_ROUTING) ||
-          (headerType == IpProtocolId::IP_PROT_IPv6EXT_DEST)) {
-      auto extHeader = extension->dup();
-      size = extension->getByteLength();
-      if (extension->getByteLength() > B(2))
-          extHeader->setByteLength(extension->getByteLength()-B(2));
-      header->appendExtensionHeader(extHeader);
-    }
-  else {
-      throw cRuntimeError("Unexpected Extension Header");
-  }
-  return size;
-}
-
-B
-Ipv6SixLowPan::decompressLowPanNhc (Ptr<Ipv6Header> &header, const Ipv6ExtensionHeader *extension)
-{
-    B size = B(0);
-    uint8_t headerType = extension->getExtensionType();
-    if ((headerType == IpProtocolId::IP_PROT_IPv6EXT_HOP ) ||
-            (headerType == IpProtocolId::IP_PROT_IPv6EXT_ROUTING) ||
-            (headerType == IpProtocolId::IP_PROT_IPv6EXT_ROUTING) ||
-            (headerType == IpProtocolId::IP_PROT_IPv6EXT_DEST)) {
-        auto extHeader = extension->dup();
-        size = extension->getByteLength();
-        extHeader->setByteLength(extension->getByteLength()+B(2));
-        header->appendExtensionHeader(extHeader);
-    }
-    return size;
-}
 
 B
 Ipv6SixLowPan::compressLowPanUdpNhc (Packet * packet, bool omitChecksum)
