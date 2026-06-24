@@ -35,6 +35,8 @@ module SixLowPanNetworkLayer like INetworkLayer
         bool hasMld = default(false);
         bool forwarding = default(false);
         bool multicastForwarding = default(false);
+        *.mipv6Module = hasMipv6 ? absPath(".mipv6") : "";
+        *.mldModule = hasMld ? absPath(".mld") : "";
         string interfaceTableModule;
         *.forwarding = this.forwarding;
         *.multicastForwarding = this.multicastForwarding;
