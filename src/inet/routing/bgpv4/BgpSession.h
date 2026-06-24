@@ -67,17 +67,20 @@ public:
     virtual ~BgpSession();
 
     void startConnection();
-    void restartsHoldTimer();
-    void restartsKeepAliveTimer();
-    void restartsConnectRetryTimer(bool start = true);
+    void scheduleReconnect();
+    void cancelReconnect();
+    void restartHoldTimer();
+    void restartKeepAliveTimer();
+    void restartConnectRetryTimer();
+    void stopConnectRetryTimer();
 
     void sendOpenMessage();
-    void sendUpdateMessage(std::vector<BgpUpdatePathAttributes *>& content, BgpUpdateNlri& NLRI);
+    void sendUpdateMessage(std::vector<BgpUpdatePathAttributes *>& content, BgpUpdateNlri& nlri);
     void sendNotificationMessage();
     void sendKeepAliveMessage();
 
-    void listenConnectionFromPeer() { bgpRouter.listenConnectionFromPeer(_info.sessionID); }
-    void openTCPConnectionToPeer() { bgpRouter.openTCPConnectionToPeer(_info.sessionID); }
+    void listenConnectionFromPeer() { bgpRouter.listenConnectionFromPeer(_info.sessionId); }
+    void openTcpConnectionToPeer() { bgpRouter.openTcpConnectionToPeer(_info.sessionId); }
     SessionId findAndStartNextSession(BgpSessionType type) { return bgpRouter.findNextSession(type, true); }
 
     // setters for creating and editing the information in the Bgp session:
@@ -87,7 +90,6 @@ public:
     void setNextHopSelf(bool nextHopSelf) { _info.nextHopSelf = nextHopSelf; }
     void setLocalPreference(int localPreference) { _info.localPreference = localPreference; }
     void setSocket(TcpSocket *socket) { delete _info.socket; _info.socket = socket; }
-    void setSocketListen(TcpSocket *socket) { delete _info.socketListen; _info.socketListen = socket; }
 
     // getters for accessing session information:
     simtime_t getStartEventTime() const { return _StartEventTime; }
@@ -96,22 +98,20 @@ public:
     simtime_t getKeepAliveTime() const { return _keepAliveTime; }
     void getStatistics(unsigned int *statTab);
     bool isEstablished() const { return _info.sessionEstablished; }
-    SessionId getSessionID() const { return _info.sessionID; }
+    SessionId getSessionId() const { return _info.sessionId; }
     BgpSessionType getType() const { return _info.sessionType; }
     static const std::string getTypeString(BgpSessionType sessionType);
     NetworkInterface *getLinkIntf() const { return _info.linkIntf; }
     bool getCheckConnection() const { return _info.checkConnection; }
-    bool isLifecycleNode() const { return bgpRouter.isLifecycleNode(); }
     Ipv4Address getPeerAddr() const { return _info.peerAddr; }
     bool getNextHopSelf() const { return _info.nextHopSelf; }
     int getLocalPreference() const { return _info.localPreference; }
     TcpSocket *getSocket() const { return _info.socket; }
-    TcpSocket *getSocketListen() const { return _info.socketListen; }
     int getEbgpMultihop() const { return _info.ebgpMultihop; }
-    IIpv4RoutingTable *getIPRoutingTable() const { return bgpRouter.getIPRoutingTable(); }
-    std::vector<BgpRoutingTableEntry *> getBGPRoutingTable() const { return bgpRouter.getBGPRoutingTable(); }
-    Macho::Machine<fsm::TopState>& getFSM() const { return *_fsm; }
-    void updateSendProcess(BgpRoutingTableEntry *entry) const { return bgpRouter.updateSendProcess(NEW_SESSION_ESTABLISHED, _info.sessionID, entry); }
+    IIpv4RoutingTable *getIpRoutingTable() const { return bgpRouter.getIpRoutingTable(); }
+    std::vector<BgpRoutingTableEntry *> getBgpRoutingTable() const { return bgpRouter.getBgpRoutingTable(); }
+    Macho::Machine<fsm::TopState>& getFsm() const { return *_fsm; }
+    void updateSendProcess(BgpRoutingTableEntry *entry) const { return bgpRouter.updateSendProcess(NEW_SESSION_ESTABLISHED, _info.sessionId, entry); }
     bool isRouteExcluded(const Ipv4Route& rtEntry) const { return bgpRouter.isRouteExcluded(rtEntry); }
 };
 

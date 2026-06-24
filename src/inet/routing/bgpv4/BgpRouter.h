@@ -42,8 +42,12 @@ class INET_API BgpRouter : public TcpSocket::BufferingCallback
     };
     redistributeOspfType_t redistributeOspfType = {};
     SocketMap _socketMap;
+    // A single shared listening socket per router accepts all incoming BGP connections
+    // on TCP_PORT (wildcard bind) and demuxes them to sessions by peer address in
+    // processMessageFromTcp(). RFC 4271: a BGP speaker listens for connections on port 179.
+    TcpSocket *listeningSocket = nullptr;
     SessionId _currSessionId = 0;
-    std::map<SessionId, BgpSession *> _BGPSessions;
+    std::map<SessionId, BgpSession *> _bgpSessions;
     uint32_t numEgpSessions = 0;
     uint32_t numIgpSessions = 0;
     Ipv4Address internalAddress = Ipv4Address::UNSPECIFIED_ADDRESS;
@@ -65,7 +69,7 @@ class INET_API BgpRouter : public TcpSocket::BufferingCallback
     RouterId getRouterId() { return rt->getRouterId(); }
     void setAsId(AsId myAsId) { this->myAsId = myAsId; }
     AsId getAsId() { return myAsId; }
-    int getNumBgpSessions() { return _BGPSessions.size(); }
+    int getNumBgpSessions() { return _bgpSessions.size(); }
     int getNumEgpSessions() { return numEgpSessions; }
     int getNumIgpSessions() { return numIgpSessions; }
     void setDefaultConfig();
@@ -85,14 +89,13 @@ class INET_API BgpRouter : public TcpSocket::BufferingCallback
     SessionId createEbgpSession(const char *peerAddr, SessionInfo& externalInfo);
     SessionId createIbgpSession(const char *peerAddr);
     void setTimer(SessionId id, simtime_t *delayTab);
-    void setSocketListen(SessionId id);
     void addToAdvertiseList(Ipv4Address address);
     void addToPrefixList(std::string nodeName, BgpRoutingTableEntry *entry);
     void addToAsList(std::string nodeName, AsId id);
     void setNextHopSelf(Ipv4Address peer, bool nextHopSelf);
     void setLocalPreference(Ipv4Address peer, int localPref);
     bool isExternalAddress(const Ipv4Route& rtEntry);
-    void processMessageFromTCP(cMessage *msg);
+    void processMessageFromTcp(cMessage *msg);
 
     void printOpenMessage(const BgpOpenMessage& msg);
     void printUpdateMessage(const BgpUpdateMessage& msg);
@@ -115,21 +118,20 @@ class INET_API BgpRouter : public TcpSocket::BufferingCallback
 
     friend class BgpSession;
     // functions used by the BgpSession class
-    void getScheduleAt(simtime_t t, cMessage *msg) { bgpModule->scheduleAt(t, msg); }
-    void getCancelAndDelete(cMessage *msg) { bgpModule->cancelAndDelete(msg); }
-    cMessage *getCancelEvent(cMessage *msg) { return bgpModule->cancelEvent(msg); }
-    IIpv4RoutingTable *getIPRoutingTable() { return rt; }
-    std::vector<BgpRoutingTableEntry *> getBGPRoutingTable() { return bgpRoutingTable; }
-    bool isLifecycleNode() const;
+    void scheduleAt(simtime_t t, cMessage *msg) { bgpModule->scheduleAt(t, msg); }
+    void cancelAndDelete(cMessage *msg) { bgpModule->cancelAndDelete(msg); }
+    cMessage *cancelEvent(cMessage *msg) { return bgpModule->cancelEvent(msg); }
+    IIpv4RoutingTable *getIpRoutingTable() { return rt; }
+    std::vector<BgpRoutingTableEntry *> getBgpRoutingTable() { return bgpRoutingTable; }
 
     /**
      * \brief active listenSocket for a given session (used by fsm)
      */
-    void listenConnectionFromPeer(SessionId sessionID);
+    void listenConnectionFromPeer(SessionId sessionId);
     /**
      * \brief active TcpConnection for a given session (used by fsm)
      */
-    void openTCPConnectionToPeer(SessionId sessionID);
+    void openTcpConnectionToPeer(SessionId sessionId);
     /**
      * \brief RFC 4271, 9.2 : Update-Send Process / Sent or not new UPDATE messages to its peers
      */
@@ -146,7 +148,7 @@ class INET_API BgpRouter : public TcpSocket::BufferingCallback
     void processMessage(const BgpKeepAliveMessage& msg);
     void processMessage(const BgpUpdateMessage& msg);
 
-    bool deleteBGPRoutingEntry(BgpRoutingTableEntry *entry);
+    bool deleteBgpRoutingEntry(BgpRoutingTableEntry *entry);
 
     /**
      * \brief RFC 4271: 9.1. : Decision Process used when an UPDATE message is received
