@@ -97,6 +97,18 @@ void BgpSession::scheduleReconnect()
     _ptrStartEvent->setContextPointer(this);
 }
 
+void BgpSession::scheduleStartRetry()
+{
+    // The internal (iBGP) peer is not reachable yet because the IGP has not finished
+    // converging. Re-attempt the session start after a short delay instead of failing;
+    // each retry re-checks reachability (see Idle::ManualStart).
+    if (_ptrStartEvent == nullptr)
+        _ptrStartEvent = new cMessage("BGP Start", START_EVENT_KIND);
+    if (!_ptrStartEvent->isScheduled())
+        bgpRouter.scheduleAt(simTime() + 1, _ptrStartEvent);
+    _ptrStartEvent->setContextPointer(this);
+}
+
 void BgpSession::cancelReconnect()
 {
     // Once (re-)established, drop any pending reconnect so a stale Start event cannot later
@@ -135,9 +147,32 @@ void BgpSession::sendOpenMessage()
     const auto& openMsg = makeShared<BgpOpenMessage>();
     openMsg->setMyAS(_info.ASValue);
     openMsg->setHoldTime(_holdTime);
-    openMsg->setBgpIdentifier(_info.socket->getLocalAddress().toIpv4());
+    // BGP Identifier is a 4-octet router id; for IPv6 it cannot be the (IPv6) local address
+    openMsg->setBgpIdentifier(bgpRouter.isIpv6() ? bgpRouter.getRouterId() : _info.socket->getLocalAddress().toIpv4());
 
-    EV_INFO << "Sending BGP Open message to " << _info.peerAddr.str(false)
+    // For an IPv6 session, advertise the Multiprotocol Extensions capability (RFC 4760 /
+    // RFC 5492) so the peer learns we use the IPv6 (AFI=2, SAFI=1) address family. IPv4
+    // unicast is BGP's default address family (RFC 4271), so for IPv4 sessions the OPEN
+    // carries no capabilities (and stays byte-identical to the pre-MP-BGP encoding).
+    if (bgpRouter.isIpv6()) {
+        auto *mpCap = new BgpCapabilityMultiprotocol();
+        mpCap->setAfi(2); // IPv6
+        mpCap->setSafi(1); // unicast
+        auto *capsParam = new BgpOptionalParameterCapabilities();
+        capsParam->setCapabilityArraySize(1);
+        capsParam->setCapability(0, mpCap);
+        // parameter value = the capability list: capCode(1) + capLen(1) + value(capabilityLength)
+        capsParam->setParameterValueLength(2 + mpCap->getCapabilityLength());
+        openMsg->setOptionalParameterArraySize(1);
+        openMsg->setOptionalParameter(0, capsParam);
+        // optional parameters total = paramType(1) + paramLen(1) + parameter value
+        unsigned short optParamsLength = 2 + capsParam->getParameterValueLength();
+        openMsg->setOptionalParametersLength(optParamsLength);
+        openMsg->setTotalLength((BGP_HEADER_OCTETS + BGP_OPEN_OCTETS).get<B>() + optParamsLength);
+        openMsg->setChunkLength(BGP_HEADER_OCTETS + BGP_OPEN_OCTETS + B(optParamsLength));
+    }
+
+    EV_INFO << "Sending BGP Open message to " << _info.peerAddr.str()
             << " on interface " << _info.linkIntf->getInterfaceName()
             << "[" << _info.linkIntf->getInterfaceId() << "] with contents:\n";
     bgpRouter.printOpenMessage(*openMsg);
@@ -169,7 +204,37 @@ void BgpSession::sendUpdateMessage(std::vector<BgpUpdatePathAttributes *>& conte
     updateMsg->addChunkLength(B(1 + (nlri.length + 7) / 8));
     updateMsg->setTotalLength(updateMsg->getChunkLength().get<B>());
 
-    EV_INFO << "Sending BGP Update message to " << _info.peerAddr.str(false)
+    EV_INFO << "Sending BGP Update message to " << _info.peerAddr.str()
+            << " on interface " << _info.linkIntf->getInterfaceName()
+            << "[" << _info.linkIntf->getInterfaceId() << "] with contents:\n";
+    bgpRouter.printUpdateMessage(*updateMsg);
+
+    Packet *pk = new Packet("BgpUpdate");
+    pk->insertAtFront(updateMsg);
+
+    _info.socket->send(pk);
+    _updateMsgSent++;
+}
+
+void BgpSession::sendUpdateMessage(std::vector<BgpUpdatePathAttributes *>& content)
+{
+    // MP-BGP UPDATE (RFC 4760): reachability rides in an MP_REACH_NLRI path attribute, so the
+    // legacy NLRI field is left empty.
+    const auto& updateMsg = makeShared<BgpUpdateMessage>();
+
+    updateMsg->setWithDrawnRoutesLength(0);
+
+    size_t attrLength = 0;
+    updateMsg->setPathAttributesArraySize(content.size());
+    for (size_t i = 0; i < content.size(); i++) {
+        attrLength += computePathAttributeBytes(*content[i]);
+        updateMsg->setPathAttributes(i, content[i]);
+    }
+    updateMsg->setTotalPathAttributeLength(attrLength);
+    updateMsg->addChunkLength(B(attrLength));
+    updateMsg->setTotalLength(updateMsg->getChunkLength().get<B>());
+
+    EV_INFO << "Sending BGP Update message to " << _info.peerAddr.str()
             << " on interface " << _info.linkIntf->getInterfaceName()
             << "[" << _info.linkIntf->getInterfaceId() << "] with contents:\n";
     bgpRouter.printUpdateMessage(*updateMsg);
@@ -187,7 +252,7 @@ void BgpSession::sendNotificationMessage()
 
 //    const auto& updateMsg = makeShared<BgpNotificationMessage>();
 
-//    EV_INFO << "Sending BGP Notification message to " << _info.peerAddr.str(false)
+//    EV_INFO << "Sending BGP Notification message to " << _info.peerAddr.str()
 //            << " on interface " << _info.linkIntf->getInterfaceName()
 //            << "[" << _info.linkIntf->getInterfaceId() << "] with contents:\n";
 
@@ -202,7 +267,7 @@ void BgpSession::sendKeepAliveMessage()
 {
     const auto& keepAliveMsg = makeShared<BgpKeepAliveMessage>();
 
-    EV_INFO << "Sending BGP Keep-alive message to " << _info.peerAddr.str(false)
+    EV_INFO << "Sending BGP Keep-alive message to " << _info.peerAddr.str()
             << " on interface " << _info.linkIntf->getInterfaceName()
             << "[" << _info.linkIntf->getInterfaceId() << "] \n";
     bgpRouter.printKeepAliveMessage(*keepAliveMsg);
@@ -242,7 +307,7 @@ std::ostream& operator<<(std::ostream& out, const BgpSession& entry)
         << "sessionType: " << entry.getTypeString(entry.getType()) << " "
         << "established: " << (entry.isEstablished() == true ? "true" : "false") << " "
         << "state: " << entry.getFsm().currentState().name() << " "
-        << "peer: " << entry.getPeerAddr().str(false) << " "
+        << "peer: " << entry.getPeerAddr().str() << " "
         << "nextHopSelf: " << (entry.getNextHopSelf() == true ? "true" : "false") << " "
         << "startEventTime: " << entry.getStartEventTime() << " "
         << "connectionRetryTime: " << entry.getConnectionRetryTime() << " "

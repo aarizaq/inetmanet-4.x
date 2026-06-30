@@ -68,6 +68,11 @@ public:
 
     void startConnection();
     void scheduleReconnect();
+    // Retry starting this session shortly; used for an iBGP session whose peer is not
+    // reachable yet because the IGP (e.g. OSPFv3) has not finished converging.
+    void scheduleStartRetry();
+    // True if the routing table currently has a route towards this session's peer.
+    bool isPeerReachable() const { return bgpRouter.getIpRoutingTable()->getOutputInterfaceForDestination(_info.peerAddr) != nullptr; }
     void cancelReconnect();
     void restartHoldTimer();
     void restartKeepAliveTimer();
@@ -76,6 +81,7 @@ public:
 
     void sendOpenMessage();
     void sendUpdateMessage(std::vector<BgpUpdatePathAttributes *>& content, BgpUpdateNlri& nlri);
+    void sendUpdateMessage(std::vector<BgpUpdatePathAttributes *>& content); // MP-BGP UPDATE (no legacy NLRI)
     void sendNotificationMessage();
     void sendKeepAliveMessage();
 
@@ -103,16 +109,17 @@ public:
     static const std::string getTypeString(BgpSessionType sessionType);
     NetworkInterface *getLinkIntf() const { return _info.linkIntf; }
     bool getCheckConnection() const { return _info.checkConnection; }
-    Ipv4Address getPeerAddr() const { return _info.peerAddr; }
+    L3Address getPeerAddr() const { return _info.peerAddr; }
     bool getNextHopSelf() const { return _info.nextHopSelf; }
     int getLocalPreference() const { return _info.localPreference; }
     TcpSocket *getSocket() const { return _info.socket; }
     int getEbgpMultihop() const { return _info.ebgpMultihop; }
-    IIpv4RoutingTable *getIpRoutingTable() const { return bgpRouter.getIpRoutingTable(); }
-    std::vector<BgpRoutingTableEntry *> getBgpRoutingTable() const { return bgpRouter.getBgpRoutingTable(); }
+    IRoutingTable *getIpRoutingTable() const { return bgpRouter.getIpRoutingTable(); }
+    std::vector<BgpRouteInfo *> getBgpRoutingTable() const { return bgpRouter.getBgpRoutingTable(); }
+    BgpRouteInfo *createBgpRoutingTableEntry(const IRoute *from) const { return bgpRouter.createBgpRoutingTableEntry(from); }
     Macho::Machine<fsm::TopState>& getFsm() const { return *_fsm; }
-    void updateSendProcess(BgpRoutingTableEntry *entry) const { return bgpRouter.updateSendProcess(NEW_SESSION_ESTABLISHED, _info.sessionId, entry); }
-    bool isRouteExcluded(const Ipv4Route& rtEntry) const { return bgpRouter.isRouteExcluded(rtEntry); }
+    void updateSendProcess(BgpRouteInfo *entry) const { return bgpRouter.updateSendProcess(NEW_SESSION_ESTABLISHED, _info.sessionId, entry); }
+    bool isRouteExcluded(const IRoute& rtEntry) const { return bgpRouter.isRouteExcluded(rtEntry); }
 };
 
 std::ostream& operator<<(std::ostream& out, const BgpSession& entry);

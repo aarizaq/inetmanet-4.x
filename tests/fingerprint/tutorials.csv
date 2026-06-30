@@ -12,7 +12,7 @@
 /tutorials/configurator/,            -f omnetpp.ini -c Step7C -r 0,                             500s,           0000-0000/tplx;0000-0000/~tNl;0000-0000/~tND;0000-0000/tyf, PASS,
 /tutorials/configurator/,            -f omnetpp.ini -c Step8A -r 0,                             100s,           84ac-6cbf/tplx;5611-cffd/~tNl;ebe4-55d1/~tND;d3f3-ed4c/tyf, PASS,    wireless EthernetMac Ipv4   # Step8A extended
 /tutorials/configurator/,            -f omnetpp.ini -c Step8B -r 0,                             100s,           e6d7-97c8/tplx;5611-cffd/~tNl;13f1-f991/~tND;af16-1150/tyf, PASS,    wireless EthernetMac Ipv4
-/tutorials/configurator/,            -f omnetpp.ini -c Step9 -r 0,                              100s,           cd78-fa1c/tplx;1374-346a/~tNl;c423-d956/~tND;89c6-26b6/tyf, PASS,    wireless EthernetMac Ipv4
+/tutorials/configurator/,            -f omnetpp.ini -c Step9 -r 0,                              100s,           cd78-fa1c/tplx;1374-346a/~tNl;c423-d956/~tND;c38c-98ef/tyf, PASS,    wireless EthernetMac Ipv4
 /tutorials/configurator/,            -f omnetpp.ini -c Step10A -r 0,                            100s,           4b6f-7cd9/tplx;0000-0000/~tNl;0000-0000/~tND;095d-75bd/tyf, PASS,   wireless # Step10A extended
 /tutorials/configurator/,            -f omnetpp.ini -c Step10B -r 0,                            100s,           4b6f-7cd9/tplx;0000-0000/~tNl;0000-0000/~tND;4d60-fcf9/tyf, PASS,   wireless # Step10B extended
 /tutorials/configurator/,            -f omnetpp.ini -c Step10C -r 0,                            100s,           71f5-b341/tplx;4a61-20ba/~tNl;7612-50df/~tND;f078-56fe/tyf, PASS,    wireless Ipv4
@@ -44,12 +44,12 @@
 /tutorials/bgp/,                -f omnetpp.ini -c Step3 -r 0,                         1000s,           9887-ad2d/tplx;624c-828e/~tNl;3ea4-502e/~tND;7bfc-4f53/tyf, PASS,
 /tutorials/bgp/,                -f omnetpp.ini -c Step1 -r 0,                         1000s,           0b8e-54dc/tplx;31cf-7de1/~tNl;cc58-4ab4/~tND;bf25-b616/tyf, PASS,
 /tutorials/bgp/,                -f omnetpp.ini -c Step4a -r 0,                         1000s,           c5a4-e0e2/tplx;c6cc-46dd/~tNl;960b-d1be/~tND;47c2-6656/tyf, PASS,
-/tutorials/bgp/,                -f omnetpp.ini -c Step5 -r 0,                         1000s,           f88c-92d8/tplx;d3d7-716f/~tNl;9d57-ae6a/~tND;fdfb-b263/tyf, PASS,
+/tutorials/bgp/,                -f omnetpp.ini -c Step5 -r 0,                         1000s,           e6e6-5451/tplx;6880-2d0c/~tNl;ba0b-0051/~tND;73bc-1909/tyf, PASS,
 /tutorials/bgp/,                -f omnetpp.ini -c Step5a -r 0,                         1000s,           a64e-bfeb/tplx;0566-9b3d/~tNl;a24d-629a/~tND;82bc-d170/tyf, PASS,
-/tutorials/bgp/,                -f omnetpp.ini -c Step5b -r 0,                         1000s,           358f-4214/tplx;4bba-914e/~tNl;7694-dc7e/~tND;de21-9cac/tyf, PASS,
-/tutorials/bgp/,                -f omnetpp.ini -c Step6 -r 0,                         1000s,           dae5-0e2e/tplx;0780-4079/~tNl;7bab-a744/~tND;f7a8-d3e4/tyf, PASS,
-/tutorials/bgp/,                -f omnetpp.ini -c Step7 -r 0,                         1000s,           f477-26bf/tplx;59c3-8d83/~tNl;121f-92aa/~tND;2158-76b1/tyf, PASS,
-/tutorials/bgp/,                -f omnetpp.ini -c Step8 -r 0,                         1000s,           a763-4f74/tplx;ab17-65d8/~tNl;3229-49b9/~tND;255a-eba4/tyf, PASS,
+/tutorials/bgp/,                -f omnetpp.ini -c Step5b -r 0,                         1000s,           b7f1-8303/tplx;ae09-5fb5/~tNl;c9dc-9c42/~tND;1886-c325/tyf, PASS,
+/tutorials/bgp/,                -f omnetpp.ini -c Step6 -r 0,                         1000s,           460e-5e97/tplx;e9bc-5a19/~tNl;c3e9-2e77/~tND;d341-30ea/tyf, PASS,
+/tutorials/bgp/,                -f omnetpp.ini -c Step7 -r 0,                         1000s,           3141-cd00/tplx;f068-1e19/~tNl;c24b-b7a9/~tND;0157-a97b/tyf, PASS,
+/tutorials/bgp/,                -f omnetpp.ini -c Step8 -r 0,                         1000s,           341b-7461/tplx;f93c-d626/~tNl;896a-d046/~tND;4368-88b2/tyf, PASS,
 /tutorials/bgp/,                -f omnetpp.ini -c Step9 -r 0,                         1000s,           eebc-9d6b/tplx;4d97-3660/~tNl;8dc6-9281/~tND;3460-8876/tyf, PASS,
 /tutorials/bgp/,                -f omnetpp.ini -c Step10 -r 0,                         1000s,           129b-12aa/tplx;d2cb-3b1d/~tNl;e811-a1c7/~tND;4b35-7726/tyf, PASS,
 /tutorials/bgp/,                -f omnetpp.ini -c Step11 -r 0,                         1000s,           cf37-6279/tplx;3c95-e619/~tNl;075f-f8e0/~tND;ccd2-5d2a/tyf, PASS,
@@ -91,13 +91,13 @@
 /tutorials/ospf/,                -f omnetpp.ini -c Step25 -r 0,                         1000s,           dae5-8e27/tplx;09f0-c133/~tNl;9229-92b2/~tND;2aba-5b80/tyf, PASS,
 
 /tutorials/stp/,                -f omnetpp.ini -c Step1 -r 0,                         20s,           c524-4a7d/tplx;da7a-d614/~tNl;f855-b824/~tND;9d6b-f859/tyf, PASS,
-/tutorials/stp/,                -f omnetpp.ini -c Step2 -r 0,                         100s,           7075-73aa/tplx;9677-fd43/~tNl;7c52-b6e5/~tND;f09b-1a0e/tyf, PASS,
-/tutorials/stp/,                -f omnetpp.ini -c Step3 -r 0,                         100s,           97a4-b4c4/tplx;bb57-2169/~tNl;2f2f-ff0b/~tND;da5d-bb70/tyf, PASS,
-/tutorials/stp/,                -f omnetpp.ini -c Step4 -r 0,                         200s,           5d1b-0a1d/tplx;6e00-91fc/~tNl;e0b2-961c/~tND;6d76-562d/tyf, PASS,
-/tutorials/stp/,                -f omnetpp.ini -c Step5 -r 0,                         30s,           e532-6fe2/tplx;307f-1661/~tNl;3763-048b/~tND;1775-37e6/tyf, PASS,
-/tutorials/stp/,                -f omnetpp.ini -c Step6 -r 0,                         200s,           746d-2bae/tplx;fcdb-a9f4/~tNl;f70d-068d/~tND;02d2-9d18/tyf, PASS,
-/tutorials/stp/,                -f omnetpp.ini -c Step7 -r 0,                         200s,           c58d-a6bd/tplx;d94e-d843/~tNl;4ffa-952f/~tND;4e5d-f89e/tyf, PASS,
-/tutorials/stp/,                -f omnetpp.ini -c Step8 -r 0,                         200s,           5437-7a13/tplx;ba09-643c/~tNl;8b84-ffff/~tND;b168-1ea8/tyf, PASS,
+/tutorials/stp/,                -f omnetpp.ini -c Step2 -r 0,                         100s,           7075-73aa/tplx;9677-fd43/~tNl;d5c6-e256/~tND;13ef-6d39/tyf, PASS,
+/tutorials/stp/,                -f omnetpp.ini -c Step3 -r 0,                         100s,           97a4-b4c4/tplx;bb57-2169/~tNl;0be4-eb61/~tND;4bc5-6e53/tyf, PASS,
+/tutorials/stp/,                -f omnetpp.ini -c Step4 -r 0,                         200s,           5d1b-0a1d/tplx;6e00-91fc/~tNl;0d6d-f8e7/~tND;4ee4-8c94/tyf, PASS,
+/tutorials/stp/,                -f omnetpp.ini -c Step5 -r 0,                         30s,           e532-6fe2/tplx;307f-1661/~tNl;b7f2-8b1e/~tND;9551-0c8f/tyf, PASS,
+/tutorials/stp/,                -f omnetpp.ini -c Step6 -r 0,                         200s,           746d-2bae/tplx;fcdb-a9f4/~tNl;e9a5-d9c5/~tND;6680-1960/tyf, PASS,
+/tutorials/stp/,                -f omnetpp.ini -c Step7 -r 0,                         200s,           c58d-a6bd/tplx;d94e-d843/~tNl;bcca-45cf/~tND;6460-56ff/tyf, PASS,
+/tutorials/stp/,                -f omnetpp.ini -c Step8 -r 0,                         200s,           5437-7a13/tplx;ba09-643c/~tNl;21b4-6b6d/~tND;fb90-00c4/tyf, PASS,
 
 # /tutorials/visualization/,           -f oldomnetpp.ini -c VisualizationTutorial01 -r 0,         500s,           0000-0000/tplx, PASS,   # old omnetpp.ini
 # /tutorials/visualization/,           -f oldomnetpp.ini -c VisualizationTutorial02 -r 0,         500s,           0000-0000/tplx, PASS,

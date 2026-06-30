@@ -9,6 +9,7 @@ import inet.common.INETDefs;
 import inet.common.Units;
 import inet.common.packet.chunk.Chunk;
 import inet.networklayer.contract.ipv4.Ipv4Address;
+import inet.networklayer.common.L3Address;
 import inet.routing.bgpv4.BgpCommon;
 
 namespace inet::bgp;
@@ -75,11 +76,43 @@ class BgpOptionalParameterBase
     unsigned short parameterValueLength;
 }
 
-//TODO add accepted BgpOptionalParameter variants
-
 class BgpOptionalParameterRaw extends BgpOptionalParameterBase
 {
     char value[];
+}
+
+//
+// Base for a BGP capability advertised inside a Capabilities optional parameter
+// (RFC 5492). On the wire: Capability Code (1 octet) + Capability Length (1 octet)
+// + Capability Value (Capability Length octets).
+//
+class BgpCapabilityBase
+{
+    @packetData;
+    uint8_t capabilityCode;
+    uint8_t capabilityLength;   // length (in octets) of the capability value
+}
+
+//
+// Multiprotocol Extensions capability (RFC 4760, section 8); advertises one
+// (AFI, SAFI) pair the speaker supports. AFI=1 IPv4, AFI=2 IPv6; SAFI=1 unicast.
+//
+class BgpCapabilityMultiprotocol extends BgpCapabilityBase
+{
+    capabilityCode = 1;
+    capabilityLength = 4;
+    uint16_t afi;               // Address Family Identifier
+    uint8_t reserved = 0;       // 1 octet, sent as 0
+    uint8_t safi;               // Subsequent Address Family Identifier
+}
+
+//
+// Capabilities Optional Parameter (RFC 5492); carries one or more capabilities.
+//
+class BgpOptionalParameterCapabilities extends BgpOptionalParameterBase
+{
+    parameterType = 2;          // Capabilities (RFC 5492)
+    BgpCapabilityBase *capability[] @owned;
 }
 
 //
@@ -108,6 +141,8 @@ enum BgpUpdateAttributeTypeCode
     LOCAL_PREF = 5;
     ATOMIC_AGGREGATE = 6;
     AGGREGATOR = 7;
+    MP_REACH_NLRI = 14;     // RFC 4760 (Multiprotocol Extensions)
+    MP_UNREACH_NLRI = 15;   // RFC 4760 (Multiprotocol Extensions)
 }
 
 class BgpUpdatePathAttributes extends cObject
@@ -204,6 +239,41 @@ struct BgpUpdateNlri
     // uint32_t pathIdentifier      // specified in RFC 7911, optional 4 octets, wireshark detect existing of this field with heuristical algorithm
     uint8_t length = 0; // length of prefix in bits, 1 octet
     Ipv4Address prefix; // 1-4 octets, based on length ((length + 7) / 8)
+}
+
+// Address-family-generic NLRI used by the MP-BGP attributes (RFC 4760). The prefix is an
+// L3Address so the same structure carries IPv6 (and, in principle, other AFI) reachability.
+struct BgpUpdateNlri6
+{
+    @packetData;
+    uint8_t length = 0; // length of prefix in bits, 1 octet
+    L3Address prefix;   // 1..N octets on the wire, based on length ((length + 7) / 8)
+}
+
+// MP_REACH_NLRI (RFC 4760 Section 3, Type code 14): carries reachable NLRI for a non-IPv4
+// address family (here IPv6 unicast: AFI=2, SAFI=1) together with that family's next hop.
+class BgpUpdatePathAttributesMpReachNlri extends BgpUpdatePathAttributes
+{
+    typeCode = MP_REACH_NLRI;
+    optionalBit = true;
+    transitiveBit = false;
+    uint16_t afi;           // Address Family Identifier (2 = IPv6)
+    uint8_t safi;           // Subsequent Address Family Identifier (1 = unicast)
+    uint8_t nextHopLength;  // length of the next-hop network address in octets (16 for an IPv6 global address)
+    L3Address nextHop;      // next-hop network address
+    // (1 reserved octet on the wire, RFC 4760)
+    BgpUpdateNlri6 nlri[];  // Network Layer Reachability Information
+}
+
+// MP_UNREACH_NLRI (RFC 4760 Section 4, Type code 15): withdraws NLRI for a non-IPv4 family.
+class BgpUpdatePathAttributesMpUnreachNlri extends BgpUpdatePathAttributes
+{
+    typeCode = MP_UNREACH_NLRI;
+    optionalBit = true;
+    transitiveBit = false;
+    uint16_t afi;
+    uint8_t safi;
+    BgpUpdateNlri6 withdrawnRoutes[];
 }
 
 //

@@ -459,7 +459,7 @@ void Ipv6::routePacket(Packet *packet, const NetworkInterface *destIE, const Net
         EV_INFO << "local delivery\n";
 
         numLocalDeliver++;
-        localDeliver(packet, fromIE);
+        localDeliver(packet);
         return;
     }
 
@@ -538,7 +538,32 @@ void Ipv6::routePacket(Packet *packet, const NetworkInterface *destIE, const Net
         }
     }
 
+    // FORWARD netfilter hook: only for datagrams being forwarded (received from the
+    // network); locally-originated ones already passed the LOCAL_OUT hook. Mirrors Ipv4
+    // (routeUnicastPacket). The routing decision is reduced to packet tags only when the
+    // datagram is actually queued, so the common (ACCEPT) path is byte-for-byte unchanged.
+    if (!fromHL) {
+        INetfilter::IHook::Result verdict = datagramForwardHook(packet);
+        if (verdict == INetfilter::IHook::QUEUE) {
+            packet->addTagIfAbsent<InterfaceReq>()->setInterfaceId(interfaceId);
+            packet->addTagIfAbsent<NextHopAddressReq>()->setNextHopAddress(nextHop);
+            return;
+        }
+        if (verdict != INetfilter::IHook::ACCEPT)
+            return; // DROP (datagram already deleted) or STOLEN
+    }
+
     resolveMACAddressAndSendPacket(packet, interfaceId, nextHop, fromHL);
+}
+
+void Ipv6::routePacketFinish(Packet *packet)
+{
+    // FORWARD reinject continuation: recover the routing decision from the tags set in
+    // routePacket() when the datagram was queued. Only forwarded datagrams reach the
+    // FORWARD hook, so fromHL is false.
+    int interfaceId = packet->getTag<InterfaceReq>()->getInterfaceId();
+    Ipv6Address nextHop = getNextHop(packet);
+    resolveMACAddressAndSendPacket(packet, interfaceId, nextHop, false);
 }
 
 void Ipv6::resolveMACAddressAndSendPacket(Packet *packet, int interfaceId, Ipv6Address nextHop, bool fromHL)
@@ -633,7 +658,7 @@ void Ipv6::routeMulticastPacket(Packet *packet, const NetworkInterface *destIE, 
     {
         EV_INFO << "local delivery of multicast packet\n";
         numLocalDeliver++;
-        localDeliver(packet->dup(), fromIE);
+        localDeliver(packet->dup());
     }
 
     // forward only if forwarding is enabled on this node
@@ -720,7 +745,7 @@ void Ipv6::routeMulticastPacket(Packet *packet, const NetworkInterface *destIE, 
     delete packet;
 }
 
-void Ipv6::localDeliver(Packet *packet, const NetworkInterface *fromIE)
+void Ipv6::localDeliver(Packet *packet)
 {
     auto ipv6Header = packet->peekAtFront<Ipv6Header>();
 
@@ -762,6 +787,19 @@ void Ipv6::localDeliver(Packet *packet, const NetworkInterface *fromIE)
         // Re-peek header from the reassembled packet (old reference is stale)
         ipv6Header = packet->peekAtFront<Ipv6Header>();
     }
+
+    // LOCAL_IN netfilter hook: fires after reassembly and before extension-header
+    // processing -- the point at which an inbound IPsec hook strips AH/ESP and restores
+    // the inner protocol. The continuation (localDeliverFinish) is packet-only so a
+    // QUEUE'd datagram can be resumed by reinjectQueuedDatagram(). (cf. Ipv4.cc)
+    if (datagramLocalInHook(packet) == INetfilter::IHook::ACCEPT)
+        localDeliverFinish(packet);
+}
+
+void Ipv6::localDeliverFinish(Packet *packet)
+{
+    const NetworkInterface *fromIE = getSourceInterfaceFrom(packet);
+    auto ipv6Header = packet->peekAtFront<Ipv6Header>();
 
     // check for extension headers
     if (!processExtensionHeaders(packet)) {
@@ -991,15 +1029,25 @@ void Ipv6::fragmentPostRouting(Packet *packet, const NetworkInterface *ie, const
             return;
         }
     }
-    const NetworkInterface *fromIe = fromHL ? nullptr : ift->getInterfaceById(packet->getTag<InterfaceInd>()->getInterfaceId());
-    L3Address nextHopAddr_(nextHopAddr);
-    if (datagramPostRoutingHook(packet, fromIe, ie, nextHopAddr_) == INetfilter::IHook::ACCEPT) {
-        fragmentAndSend(packet, ie, nextHopAddr_.toMac(), fromHL);
-    }
+    // Reduce the (already resolved) egress decision to packet tags so that the
+    // POST_ROUTING continuation -- fragmentAndSend(), possibly reached via a hook's
+    // QUEUE/reinject -- can recover it from the packet alone (cf. IPv4). MAC resolution
+    // has already happened (in resolveMACAddressAndSendPacket), so the POST_ROUTING hook
+    // cannot redirect the next hop; that is correct, as it is past the routing decision.
+    packet->addTagIfAbsent<InterfaceReq>()->setInterfaceId(ie->getInterfaceId());
+    packet->addTagIfAbsent<MacAddressReq>()->setDestAddress(nextHopAddr);
+    if (datagramPostRoutingHook(packet) == INetfilter::IHook::ACCEPT)
+        fragmentAndSend(packet);
 }
 
-void Ipv6::fragmentAndSend(Packet *packet, const NetworkInterface *ie, const MacAddress& nextHopAddr, bool fromHL)
+void Ipv6::fragmentAndSend(Packet *packet)
 {
+    // The egress decision was reduced to packet tags by fragmentPostRouting(); recover
+    // it here so this function (the POST_ROUTING reinject continuation) is packet-only.
+    const NetworkInterface *ie = ift->getInterfaceById(packet->getTag<InterfaceReq>()->getInterfaceId());
+    MacAddress nextHopAddr = packet->getTag<MacAddressReq>()->getDestAddress();
+    // a forwarded packet carries an InterfaceInd tag; a locally-originated one does not
+    bool fromHL = (packet->findTag<InterfaceInd>() == nullptr);
     auto ipv6Header = packet->peekAtFront<Ipv6Header>();
     // hop counter check
     if (ipv6Header->getHopLimit() <= 0) {
@@ -1294,26 +1342,37 @@ void Ipv6::reinjectQueuedDatagram(const Packet *packet)
         if (iter->packet == packet) {
             Packet *datagram = iter->packet;
             switch (iter->hookType) {
-                case INetfilter::IHook::LOCALOUT:
-                    datagramLocalOut(datagram, iter->outIE, iter->nextHopAddr);
+                case INetfilter::IHook::LOCALOUT: {
+                    // Resume exactly as the LOCAL_OUT hook's ACCEPT path would (see
+                    // handleMessageFromHL/handleMessageWhenUp): recover the pinned output
+                    // interface (InterfaceReq, e.g. set by ND or a tunnel) and the requested
+                    // next hop (NextHopAddressReq) from the datagram's tags. Passing null/
+                    // unspecified instead would force re-routing and can hit an unspecified
+                    // next hop (e.g. for a NeighbourAdvertisement sent to an on-link peer).
+                    const auto& ifReq = datagram->findTag<InterfaceReq>();
+                    const NetworkInterface *destIE = ifReq ? ift->getInterfaceById(ifReq->getInterfaceId()) : nullptr;
+                    datagramLocalOut(datagram, destIE, getNextHop(datagram));
                     break;
+                }
 
                 case INetfilter::IHook::PREROUTING:
-                    preroutingFinish(datagram, iter->inIE, iter->outIE, iter->nextHopAddr);
+                    // Resume exactly as the PRE_ROUTING hook's ACCEPT path would: fromIE from
+                    // the InterfaceInd tag (a reinjected multicast datagram needs a non-null
+                    // fromIE), no pinned output interface, next hop from the NextHopAddressReq
+                    // tag (routePacket recomputes it when unspecified).
+                    preroutingFinish(datagram, getSourceInterfaceFrom(datagram), nullptr, getNextHop(datagram));
                     break;
 
                 case INetfilter::IHook::POSTROUTING:
-//                    fragmentAndSend(datagram, iter->outIE, iter->nextHopAddr);
-                    throw cRuntimeError("Re-injection of datagram queued for POSTROUTING hook not implemented");
+                    fragmentAndSend(datagram);
                     break;
 
                 case INetfilter::IHook::LOCALIN:
-//                    reassembleAndDeliverFinish(datagram);
-                    throw cRuntimeError("Re-injection of datagram queued for LOCALIN hook not implemented");
+                    localDeliverFinish(datagram);
                     break;
 
                 case INetfilter::IHook::FORWARD:
-                    throw cRuntimeError("Re-injection of datagram queued for FORWARD hook not implemented");
+                    routePacketFinish(datagram);
                     break;
 
                 default:
@@ -1378,7 +1437,7 @@ INetfilter::IHook::Result Ipv6::datagramForwardHook(Packet *packet)
     return INetfilter::IHook::ACCEPT;
 }
 
-INetfilter::IHook::Result Ipv6::datagramPostRoutingHook(Packet *packet, const NetworkInterface *inIE, const NetworkInterface *& outIE, L3Address& nextHopAddr)
+INetfilter::IHook::Result Ipv6::datagramPostRoutingHook(Packet *packet)
 {
     for (auto& elem : hooks) {
         IHook::Result r = elem.second->datagramPostRoutingHook(packet);
@@ -1404,7 +1463,7 @@ INetfilter::IHook::Result Ipv6::datagramPostRoutingHook(Packet *packet, const Ne
     return INetfilter::IHook::ACCEPT;
 }
 
-INetfilter::IHook::Result Ipv6::datagramLocalInHook(Packet *packet, const NetworkInterface *inIE)
+INetfilter::IHook::Result Ipv6::datagramLocalInHook(Packet *packet)
 {
     for (auto& elem : hooks) {
         IHook::Result r = elem.second->datagramLocalInHook(packet);

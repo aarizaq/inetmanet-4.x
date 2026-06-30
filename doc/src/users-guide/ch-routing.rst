@@ -166,11 +166,8 @@ parameter.
 
    **.bgpConfig = xmldoc("BGPConfig.xml")
 
-The configuration file may contain ``<TimerParams>``, ``<AS>``, and
-``Session`` elements at the top level.
-
--  ``<TimerParams>``: allows specifying various timing parameters for
-   the routers.
+The configuration file may contain ``<AS>`` and ``<Session>`` elements
+at the top level.
 
 -  ``<AS>``: defines Autonomous Systems, routers, and rules to be
    applied.
@@ -179,17 +176,22 @@ The configuration file may contain ``<TimerParams>``, ``<AS>``, and
    must contain exactly two ``<Router exterAddr="x.x.x.x"/>``
    elements.
 
+The BGP timers are module parameters of the :ned:`Bgp` module, not part of
+the XML: :par:`connectRetryTime` (default 120s), :par:`holdTime` (180s),
+:par:`keepAliveTime` (60s) and :par:`startDelay` (the base session-startup
+delay). For example:
+
+.. code-block:: ini
+
+   **.bgp.holdTime = 90s
+
+(Earlier versions configured these in a ``<TimerParams>`` XML element, which
+is no longer accepted.)
+
 .. code-block:: xml
 
    <BGPConfig xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
      xsi:schemaLocation="BGP.xsd">
-
-     <TimerParams>
-       <connectRetryTime> 120 </connectRetryTime>
-       <holdTime> 180 </holdTime>
-       <keepAliveTime> 60 </keepAliveTime>
-       <startDelay> 15 </startDelay>
-     </TimerParams>
 
      <AS id="60111">
        <Router interAddr="172.1.10.255"/> <!--Router A1-->
@@ -244,3 +246,25 @@ Inside ``<AS>`` elements, various rules can be specified:
 
 -  DenyASOUT: deny routes learned by AS in OUT traffic (AS id must be
    specified as the body of the element.)
+
+BGP over IPv6 (MP-BGP)
+~~~~~~~~~~~~~~~~~~~~~~~
+
+BGP can also run over IPv6 and carry IPv6 routes, using the Multiprotocol
+Extensions of RFC 4760. To configure an IPv6 BGP speaker, set the
+:par:`addressFamily` parameter of the :ned:`Bgp` module to ``"ipv6"``, point its
+:par:`routingTableModule` at the node's IPv6 routing table, and set the
+:par:`routerId` parameter -- the 4-octet BGP Identifier (RFC 4271/6286), which must
+be configured explicitly because an IPv6-only router has no IPv4 address to derive it
+from. The addresses in the BGP configuration file are then IPv6 addresses, and IPv6
+reachability is exchanged in ``MP_REACH_NLRI`` / ``MP_UNREACH_NLRI`` path attributes.
+A single :ned:`Bgp` instance serves one address family.
+
+.. code-block:: ini
+
+   *.routerX.hasBgp = true
+   *.routerX.hasIpv6 = true
+   *.routerX.bgp.addressFamily = "ipv6"
+   *.routerX.bgp.routingTableModule = "^.ipv6.routingTable"
+   *.routerX.bgp.routerId = "1.1.1.1"
+
