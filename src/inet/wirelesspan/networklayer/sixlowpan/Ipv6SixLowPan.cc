@@ -283,11 +283,13 @@ void Ipv6SixLowPan::handleMessage(cMessage *msg)
     Ipv6::handleMessage(msg);
 }
 
-void Ipv6SixLowPan::fragmentAndSend(Packet *packet, const NetworkInterface *ie, const MacAddress& nextHopAddr, bool fromHL)
+void Ipv6SixLowPan::fragmentAndSend(Packet *packet)
 {
-
+    const NetworkInterface *ie = ift->getInterfaceById(packet->getTag<InterfaceReq>()->getInterfaceId());
+    MacAddress nextHopAddr = packet->getTag<MacAddressReq>()->getDestAddress();
+    bool fromHL = (packet->findTag<InterfaceInd>() == nullptr);
     if (listSixLowPanInterfaces.empty() || !checkSixLowPanInterface(ie)) {
-        Ipv6::fragmentAndSend(packet, ie, nextHopAddr, fromHL);
+        Ipv6::fragmentAndSend(packet);
         return;
     }
 
