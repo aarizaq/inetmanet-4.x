@@ -43,17 +43,12 @@ network ExplicitAddressTest6
 %inifile: omnetpp.ini
 
 [General]
+record-vector-results = false
 network = ExplicitAddressTest6
 sim-time-limit = 5s
 cmdenv-express-mode = false
 cmdenv-log-prefix = "%C: "
 ned-path = .;../../../../src
-
-#omnetpp 5.0 - 5.1 compatibility:
-eventlog-file = "${resultdir}/${configname}-${runnumber}.elog"
-output-scalar-file = "${resultdir}/${configname}-${runnumber}.sca"
-output-vector-file = "${resultdir}/${configname}-${runnumber}.vec"
-snapshot-file = "${resultdir}/${configname}-${runnumber}.sna"
 
 # Assign explicit full addresses to the two interfaces; dump them so the test
 # can assert they were applied.

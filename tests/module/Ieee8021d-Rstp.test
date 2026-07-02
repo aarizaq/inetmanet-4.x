@@ -71,13 +71,10 @@ sim-time-limit = 50s
 cmdenv-express-mode = false
 ned-path = .;../../../../src;../../lib
 
-#omnetpp 5.0 - 5.1 compatibility:
-eventlog-file = "${resultdir}/${configname}-${runnumber}.elog"
-output-scalar-file = "${resultdir}/${configname}-${runnumber}.sca"
-output-vector-file = "${resultdir}/${configname}-${runnumber}.vec"
-snapshot-file = "${resultdir}/${configname}-${runnumber}.sna"
-
-**.vector-recording = false
+record-vector-results = false
+**.stpTester.cmdenv-log-level = trace
+**.cmdenv-log-level = off
+cmdenv-event-banners = false
 **.agingTime = 1s
 network = LargeNet
 

@@ -7,16 +7,11 @@ Testing PR-SCTP: prMethod=PR_TTL prValue=0.5 se lifetime
 %inifile: omnetpp.ini
 
 [General]
+record-vector-results = false
 network = inet.test.moduletest.lib.SctpFeatureTest
 cmdenv-express-mode = true
 cmdenv-log-finalization = true
 ned-path = .;../../../../src;../../lib
-
-#omnetpp 5.0 - 5.1 compatibility:
-eventlog-file = "${resultdir}/${configname}-${runnumber}.elog"
-output-scalar-file = "${resultdir}/${configname}-${runnumber}.sca"
-output-vector-file = "${resultdir}/${configname}-${runnumber}.vec"
-snapshot-file = "${resultdir}/${configname}-${runnumber}.sna"
 
 **.testing = false
 **.testTimeout = 0s

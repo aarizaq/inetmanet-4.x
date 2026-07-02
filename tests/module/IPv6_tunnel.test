@@ -39,15 +39,12 @@ network Ipv6TunnelTestNetwork
 %inifile: omnetpp.ini
 
 [General]
+record-vector-results = false
 network = Ipv6TunnelTestNetwork
 ned-path = ../../../../src
 sim-time-limit = 5s
 cmdenv-express-mode = false
 cmdenv-log-prefix = "%C: "
-
-eventlog-file = "${resultdir}/${configname}-${runnumber}.elog"
-output-scalar-file = "${resultdir}/${configname}-${runnumber}.sca"
-output-vector-file = "${resultdir}/${configname}-${runnumber}.vec"
 
 **.ipv6.configurator.networkConfiguratorModule = "configurator"
 **.configurator.dumpAddresses = true

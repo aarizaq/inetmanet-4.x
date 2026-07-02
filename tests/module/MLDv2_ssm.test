@@ -63,6 +63,7 @@ network Mldv2SsmNetwork
 %inifile: omnetpp.ini
 
 [General]
+record-vector-results = false
 ned-path = .;../../../../src
 network = Mldv2SsmNetwork
 sim-time-limit = 10s
@@ -71,11 +72,6 @@ cmdenv-log-prefix = "%C: "
 
 # Fix RNG seed for deterministic behavior of uniform(0, maxRespDelay) in the host timer
 seed-set = 0
-
-eventlog-file = "${resultdir}/${configname}-${runnumber}.elog"
-output-scalar-file = "${resultdir}/${configname}-${runnumber}.sca"
-output-vector-file = "${resultdir}/${configname}-${runnumber}.vec"
-snapshot-file = "${resultdir}/${configname}-${runnumber}.sna"
 
 # Pin addresses so the receiver's multicastSources can name S1 deterministically.
 *.configurator.config = xmldoc("config.xml")

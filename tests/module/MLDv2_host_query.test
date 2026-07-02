@@ -21,18 +21,13 @@ EXCLUDE state instead of the IS_IN expected here.
 
 %inifile: omnetpp.ini
 [General]
+record-vector-results = false
 ned-path = .;../../../../src;../../lib
 sim-time-limit=300s
 cmdenv-express-mode = false
 
 # Fix RNG seed: the host's General-Query response delay is uniform(0, maxRespDelay)
 seed-set = 0
-
-#omnetpp 5.0 - 5.1 compatibility:
-eventlog-file = "${resultdir}/${configname}-${runnumber}.elog"
-output-scalar-file = "${resultdir}/${configname}-${runnumber}.sca"
-output-vector-file = "${resultdir}/${configname}-${runnumber}.vec"
-snapshot-file = "${resultdir}/${configname}-${runnumber}.sna"
 
 network = inet.test.moduletest.lib.TestMLDNetwork
 **.mld.typename = "Mldv2"

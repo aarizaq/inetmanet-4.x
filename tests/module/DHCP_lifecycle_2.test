@@ -9,16 +9,11 @@ before its first success.
 
 %inifile: omnetpp.ini
 [General]
+record-vector-results = false
 network = LifecycleTest
 ned-path = .;../../../../src;../../lib
 cmdenv-express-mode = false
 sim-time-limit = 300s
-
-#omnetpp 5.0 - 5.1 compatibility:
-eventlog-file = "${resultdir}/${configname}-${runnumber}.elog"
-output-scalar-file = "${resultdir}/${configname}-${runnumber}.sca"
-output-vector-file = "${resultdir}/${configname}-${runnumber}.vec"
-snapshot-file = "${resultdir}/${configname}-${runnumber}.sna"
 
 **.hasStatus = true
 **.scenarioManager.script = xmldoc("scenario.xml")

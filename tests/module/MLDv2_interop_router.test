@@ -16,17 +16,12 @@ EXCLUDE{} (the v2 source info is ignored).
 
 %inifile: omnetpp.ini
 [General]
+record-vector-results = false
 ned-path = .;../../../../src;../../lib
 sim-time-limit=30s
 cmdenv-express-mode = false
 
 seed-set = 0
-
-#omnetpp 5.0 - 5.1 compatibility:
-eventlog-file = "${resultdir}/${configname}-${runnumber}.elog"
-output-scalar-file = "${resultdir}/${configname}-${runnumber}.sca"
-output-vector-file = "${resultdir}/${configname}-${runnumber}.vec"
-snapshot-file = "${resultdir}/${configname}-${runnumber}.sna"
 
 network = inet.test.moduletest.lib.TestMLDNetwork
 **.mld.typename = "Mldv2"

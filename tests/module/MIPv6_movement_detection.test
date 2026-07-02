@@ -13,6 +13,11 @@ possible via the Router Solicitation sent on L2 (re)association.
 %#--------------------------------------------------------------------------------------------------------------
 %inifile: omnetpp.ini
 [General]
+record-vector-results = false
+**.mipv6.cmdenv-log-level = trace
+**.app[*].cmdenv-log-level = trace
+**.cmdenv-log-level = off
+cmdenv-event-banners = false
 ned-path = .;../../../../src;../../lib
 network = inet.test.moduletest.lib.Mipv6Network
 sim-time-limit = 60s
@@ -108,12 +113,6 @@ seed-set = 1
 **.constraintAreaMinY = 0m
 **.constraintAreaMaxX = 850m
 **.constraintAreaMaxY = 850m
-
-#omnetpp 5.0 - 5.1 compatibility:
-eventlog-file = "${resultdir}/${configname}-${runnumber}.elog"
-output-scalar-file = "${resultdir}/${configname}-${runnumber}.sca"
-output-vector-file = "${resultdir}/${configname}-${runnumber}.vec"
-snapshot-file = "${resultdir}/${configname}-${runnumber}.sna"
 
 %#--------------------------------------------------------------------------------------------------------------
 %subst: /omnetpp:://

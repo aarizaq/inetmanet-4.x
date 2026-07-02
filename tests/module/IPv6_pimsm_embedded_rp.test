@@ -57,17 +57,12 @@ network PimSmEmbeddedRpTest6
 %inifile: omnetpp.ini
 
 [General]
+record-vector-results = false
 network = PimSmEmbeddedRpTest6
 sim-time-limit = 60s
 cmdenv-express-mode = false
 cmdenv-log-prefix = "%C: "
 ned-path = .;../../../../src
-
-#omnetpp 5.0 - 5.1 compatibility:
-eventlog-file = "${resultdir}/${configname}-${runnumber}.elog"
-output-scalar-file = "${resultdir}/${configname}-${runnumber}.sca"
-output-vector-file = "${resultdir}/${configname}-${runnumber}.vec"
-snapshot-file = "${resultdir}/${configname}-${runnumber}.sna"
 
 # RP owns the embedded RP address aaaa:2:66::1 (decoded from the group below) on
 # its link toward DR_R; that link uses the encoded prefix aaaa:2:66::/64. Every

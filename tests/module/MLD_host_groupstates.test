@@ -92,6 +92,7 @@ network MldHostGroupstatesNetwork
 %inifile: omnetpp.ini
 
 [General]
+record-vector-results = false
 ned-path = ../../../../src
 network = MldHostGroupstatesNetwork
 sim-time-limit = 30s
@@ -100,11 +101,6 @@ cmdenv-log-prefix = "%C: "
 
 # Fix RNG seed for deterministic behavior of uniform(0, maxRespTime) in startHostTimer
 seed-set = 0
-
-eventlog-file = "${resultdir}/${configname}-${runnumber}.elog"
-output-scalar-file = "${resultdir}/${configname}-${runnumber}.sca"
-output-vector-file = "${resultdir}/${configname}-${runnumber}.vec"
-snapshot-file = "${resultdir}/${configname}-${runnumber}.sna"
 
 # Enable MLD on all nodes
 **.ipv6.hasMld = true

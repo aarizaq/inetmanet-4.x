@@ -35,6 +35,7 @@ network DadFailureNetwork
 %#--------------------------------------------------------------------------------------------------------------
 %inifile: omnetpp.ini
 [General]
+record-vector-results = false
 ned-path = ../../../../src
 network = DadFailureNetwork
 sim-time-limit = 5s
@@ -49,12 +50,6 @@ cmdenv-log-prefix = "%C: "
 **.eth[*].queue.typename = "EthernetQosQueue"
 **.eth[*].queue.dataQueue.typename = "DropTailQueue"
 **.eth[*].queue.dataQueue.packetCapacity = 10
-
-#omnetpp 5.0 - 5.1 compatibility:
-eventlog-file = "${resultdir}/${configname}-${runnumber}.elog"
-output-scalar-file = "${resultdir}/${configname}-${runnumber}.sca"
-output-vector-file = "${resultdir}/${configname}-${runnumber}.vec"
-snapshot-file = "${resultdir}/${configname}-${runnumber}.sna"
 
 %#--------------------------------------------------------------------------------------------------------------
 %subst: /omnetpp:://
