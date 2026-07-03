@@ -87,33 +87,37 @@ void SceneCanvasVisualizer::refreshAxis(double axisLength)
     auto xLabel = check_and_cast<cLabelFigure *>(axisLayer->getFigure(3));
     auto yLabel = check_and_cast<cLabelFigure *>(axisLayer->getFigure(4));
     auto zLabel = check_and_cast<cLabelFigure *>(axisLayer->getFigure(5));
-    xAxis->setStart(canvasProjection->computeCanvasPoint(Coord::ZERO));
-    yAxis->setStart(canvasProjection->computeCanvasPoint(Coord::ZERO));
-    zAxis->setStart(canvasProjection->computeCanvasPoint(Coord::ZERO));
-    xAxis->setEnd(canvasProjection->computeCanvasPoint(Coord(axisLength, 0, 0)));
-    yAxis->setEnd(canvasProjection->computeCanvasPoint(Coord(0, axisLength, 0)));
-    zAxis->setEnd(canvasProjection->computeCanvasPoint(Coord(0, 0, axisLength)));
-    xLabel->setPosition(canvasProjection->computeCanvasPoint(Coord(axisLength, 0, 0)));
-    yLabel->setPosition(canvasProjection->computeCanvasPoint(Coord(0, axisLength, 0)));
-    zLabel->setPosition(canvasProjection->computeCanvasPoint(Coord(0, 0, axisLength)));
+    xAxis->setStart(canvasProjection->computeCanvasPoint(Coord::ZERO, false));
+    yAxis->setStart(canvasProjection->computeCanvasPoint(Coord::ZERO, false));
+    zAxis->setStart(canvasProjection->computeCanvasPoint(Coord::ZERO, false));
+    xAxis->setEnd(canvasProjection->computeCanvasPoint(Coord(axisLength, 0, 0), false));
+    yAxis->setEnd(canvasProjection->computeCanvasPoint(Coord(0, axisLength, 0), false));
+    zAxis->setEnd(canvasProjection->computeCanvasPoint(Coord(0, 0, axisLength), false));
+    xLabel->setPosition(canvasProjection->computeCanvasPoint(Coord(axisLength, 0, 0), false));
+    yLabel->setPosition(canvasProjection->computeCanvasPoint(Coord(0, axisLength, 0), false));
+    zLabel->setPosition(canvasProjection->computeCanvasPoint(Coord(0, 0, axisLength), false));
 }
 
 void SceneCanvasVisualizer::handleParameterChange(const char *name)
 {
     if (!hasGUI()) return;
-    if (!strcmp(name, "viewAngle")) {
-        bool invertY;
-        canvasProjection->setRotation(parseViewAngle(par("viewAngle"), invertY));
-        canvasProjection->setScale(parse2D(par("viewScale"), invertY));
-        // TODO update all visualizers
-    }
-    else if (!strcmp(name, "viewScale")) {
-        canvasProjection->setScale(parse2D(par("viewScale")));
-        // TODO update all visualizers
-    }
-    else if (!strcmp(name, "viewTranslation")) {
-        canvasProjection->setTranslation(parse2D(par("viewTranslation")));
-        // TODO update all visualizers
+    // when a map projection is installed (e.g. by a GeoMapCanvasVisualizer) it owns the canvas affine;
+    // overriding rotation/scale/translation here would corrupt the equirectangular mapping
+    if (canvasProjection->getMapProjection() == nullptr) {
+        if (!strcmp(name, "viewAngle")) {
+            bool invertY;
+            canvasProjection->setRotation(parseViewAngle(par("viewAngle"), invertY));
+            canvasProjection->setScale(parse2D(par("viewScale"), invertY));
+            // TODO update all visualizers
+        }
+        else if (!strcmp(name, "viewScale")) {
+            canvasProjection->setScale(parse2D(par("viewScale")));
+            // TODO update all visualizers
+        }
+        else if (!strcmp(name, "viewTranslation")) {
+            canvasProjection->setTranslation(parse2D(par("viewTranslation")));
+            // TODO update all visualizers
+        }
     }
     double axisLength = par("axisLength");
     if (!std::isnan(axisLength))
