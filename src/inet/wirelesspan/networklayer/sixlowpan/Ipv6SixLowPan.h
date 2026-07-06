@@ -116,7 +116,7 @@ protected:
       //virtual int numInitStages() const override { return NUM_INIT_STAGES; }
       virtual void initialize(int) override;
       virtual void handleMessage(cMessage *msg) override;
-      virtual void fragmentAndSend(Packet *packet);
+      virtual void fragmentAndSend(Packet *packet) override;
       virtual void sendDatagramToOutput(Packet *packet, const NetworkInterface *destIE, const MacAddress& macAddr) override;
       // Handle incoming sixLowPan packets
       virtual bool handleMessageFromNetwork(Packet *packet);
