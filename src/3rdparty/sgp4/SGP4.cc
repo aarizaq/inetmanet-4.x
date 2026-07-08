@@ -338,11 +338,12 @@ namespace SGP4Funcs
 				// nodep used without a trigonometric function ahead
 				if ((nodep < 0.0) && (opsmode == 'a'))
 					nodep = nodep + twopi;
-				if (fabs(xnoh - nodep) > pi)
+				if (fabs(xnoh - nodep) > pi) {
 					if (nodep < xnoh)
 						nodep = nodep + twopi;
 					else
 						nodep = nodep - twopi;
+				}
 				mp = mp + pl;
 				argpp = xls - mp - cosip * nodep;
 			}
@@ -1013,7 +1014,7 @@ namespace SGP4Funcs
 		)
 	{
 		const double twopi = 2.0 * pi;
-		int iretn, iret;
+		int iretn;
 		double delt, ft, theta, x2li, x2omi, xl, xldot, xnddt, xndt, xomi, g22, g32,
 			g44, g52, g54, fasx2, fasx4, fasx6, rptim, step2, stepn, stepp;
 
@@ -1073,7 +1074,6 @@ namespace SGP4Funcs
 				delt = stepn;
 
 			iretn = 381; // added for do loop
-			iret = 0; // added for loop
 			while (iretn == 381)
 			{
 				/* ------------------- dot terms calculated ------------- */
@@ -1113,7 +1113,6 @@ namespace SGP4Funcs
 				// sgp4fix move end checks to end of routine
 				if (fabs(t - atime) >= stepp)
 				{
-					iret = 0;
 					iretn = 381;
 				}
 				else // exit here
@@ -1361,7 +1360,7 @@ namespace SGP4Funcs
 
 	bool sgp4init
 		(
-		gravconsttype whichconst, char opsmode, const char satn[5], const double epoch,
+		gravconsttype whichconst, char opsmode, const char satn[9], const double epoch,
 		const double xbstar, const double xndot, const double xnddot, const double xecco, const double xargpo,
 		const double xinclo, const double xmo, const double xno_kozai,
 		const double xnodeo, elsetrec& satrec
@@ -2232,11 +2231,11 @@ namespace SGP4Funcs
 			longstr1[68] = '0';
 #ifdef _MSC_VER // chk if compiling in MSVS c++
 		sscanf_s(longstr1, "%2d %5s %1c %10s %2d %12lf %11lf %7lf %2d %7lf %2d %2d %6ld ",
-			&cardnumb, &satrec.satnum, 6 * sizeof(char), &satrec.classification, sizeof(char), &satrec.intldesg, 11 * sizeof(char), &satrec.epochyr,
+			&cardnumb, satrec.satnum, 6 * sizeof(char), &satrec.classification, sizeof(char), satrec.intldesg, 11 * sizeof(char), &satrec.epochyr,
 			&satrec.epochdays, &satrec.ndot, &satrec.nddot, &nexp, &satrec.bstar, &ibexp, &satrec.ephtype, &satrec.elnum);
 #else
 		sscanf(longstr1, "%2d %5s %1c %10s %2d %12lf %11lf %7lf %2d %7lf %2d %2d %6ld ",
-			&cardnumb, &satrec.satnum, &satrec.classification, &satrec.intldesg, &satrec.epochyr,
+			&cardnumb, satrec.satnum, &satrec.classification, satrec.intldesg, &satrec.epochyr,
 			&satrec.epochdays, &satrec.ndot, &satrec.nddot, &nexp, &satrec.bstar,
 			&ibexp, &satrec.ephtype, &satrec.elnum);
 #endif
@@ -2250,12 +2249,12 @@ namespace SGP4Funcs
 				{
 #ifdef _MSC_VER
 					sscanf_s(longstr2, "%2d %5s %9lf %9lf %8lf %9lf %9lf %10lf %6ld %lf %lf %lf \n",
-						&cardnumb, &satrec.satnum, 6 * sizeof(char), &satrec.inclo,
+						&cardnumb, satrec.satnum, 6 * sizeof(char), &satrec.inclo,
 						&satrec.nodeo, &satrec.ecco, &satrec.argpo, &satrec.mo, &satrec.no_kozai,
 						&satrec.revnum, &startmfe, &stopmfe, &deltamin);
 #else
 					sscanf(longstr2, "%2d %5s %9lf %9lf %8lf %9lf %9lf %10lf %6ld %lf %lf %lf \n",
-						&cardnumb, &satrec.satnum, &satrec.inclo,
+						&cardnumb, satrec.satnum, &satrec.inclo,
 						&satrec.nodeo, &satrec.ecco, &satrec.argpo, &satrec.mo, &satrec.no_kozai,
 						&satrec.revnum, &startmfe, &stopmfe, &deltamin);
 #endif
@@ -2264,12 +2263,12 @@ namespace SGP4Funcs
 				{
 #ifdef _MSC_VER
 					sscanf_s(longstr2, "%2d %5s %9lf %9lf %8lf %9lf %9lf %10lf %6ld \n",
-						&cardnumb, &satrec.satnum, 6 * sizeof(char), &satrec.inclo,
+						&cardnumb, satrec.satnum, 6 * sizeof(char), &satrec.inclo,
 						&satrec.nodeo, &satrec.ecco, &satrec.argpo, &satrec.mo, &satrec.no_kozai,
 						&satrec.revnum);
 #else
 					sscanf(longstr2, "%2d %5s %9lf %9lf %8lf %9lf %9lf %10lf %6ld \n",
-						&cardnumb, &satrec.satnum, &satrec.inclo,
+						&cardnumb, satrec.satnum, &satrec.inclo,
 						&satrec.nodeo, &satrec.ecco, &satrec.argpo, &satrec.mo, &satrec.no_kozai,
 						&satrec.revnum);
 #endif
@@ -2280,12 +2279,12 @@ namespace SGP4Funcs
 				{
 #ifdef _MSC_VER
 					sscanf_s(longstr2, "%2d %5s %9lf %9lf %8lf %9lf %9lf %11lf %6ld %lf %lf %lf \n",
-						&cardnumb, &satrec.satnum, 6 * sizeof(char), &satrec.inclo,
+						&cardnumb, satrec.satnum, 6 * sizeof(char), &satrec.inclo,
 						&satrec.nodeo, &satrec.ecco, &satrec.argpo, &satrec.mo, &satrec.no_kozai,
 						&satrec.revnum, &startmfe, &stopmfe, &deltamin);
 #else
 					sscanf(longstr2, "%2d %5s %9lf %9lf %8lf %9lf %9lf %11lf %6ld %lf %lf %lf \n",
-						&cardnumb, &satrec.satnum, &satrec.inclo,
+						&cardnumb, satrec.satnum, &satrec.inclo,
 						&satrec.nodeo, &satrec.ecco, &satrec.argpo, &satrec.mo, &satrec.no_kozai,
 						&satrec.revnum, &startmfe, &stopmfe, &deltamin);
 #endif
@@ -2294,12 +2293,12 @@ namespace SGP4Funcs
 				{
 #ifdef _MSC_VER
 					sscanf_s(longstr2, "%2d %5s %9lf %9lf %8lf %9lf %9lf %11lf %6ld \n",
-						&cardnumb, &satrec.satnum, 6 * sizeof(char), &satrec.inclo,
+						&cardnumb, satrec.satnum, 6 * sizeof(char), &satrec.inclo,
 						&satrec.nodeo, &satrec.ecco, &satrec.argpo, &satrec.mo, &satrec.no_kozai,
 						&satrec.revnum);
 #else
 					sscanf(longstr2, "%2d %5s %9lf %9lf %8lf %9lf %9lf %11lf %6ld \n",
-						&cardnumb, &satrec.satnum, &satrec.inclo,
+						&cardnumb, satrec.satnum, &satrec.inclo,
 						&satrec.nodeo, &satrec.ecco, &satrec.argpo, &satrec.mo, &satrec.no_kozai,
 						&satrec.revnum);
 #endif
@@ -2688,7 +2687,7 @@ namespace SGP4Funcs
 	*
 	*  this function solves keplers equation when the true anomaly is known.
 	*    the mean and eccentric, parabolic, or hyperbolic anomaly is also found.
-	*    the parabolic limit at 168ø is arbitrary. the hyperbolic anomaly is also
+	*    the parabolic limit at 168 is arbitrary. the hyperbolic anomaly is also
 	*    limited. the hyperbolic sine is used because it's not double valued.
 	*
 	*  author        : david vallado                  719-573-2600   27 may 2002
@@ -2701,8 +2700,8 @@ namespace SGP4Funcs
 	*    nu          - true anomaly                   -2pi to 2pi rad
 	*
 	*  outputs       :
-	*    e0          - eccentric anomaly              0.0  to 2pi rad       153.02 ø
-	*    m           - mean anomaly                   0.0  to 2pi rad       151.7425 ø
+	*    e0          - eccentric anomaly              0.0  to 2pi rad       153.02
+	*    m           - mean anomaly                   0.0  to 2pi rad       151.7425
 	*
 	*  locals        :
 	*    e1          - eccentric anomaly, next value  rad

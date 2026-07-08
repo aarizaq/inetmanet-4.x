@@ -310,9 +310,9 @@ class SimulationProject:
     def collect_ini_file_simulation_configs(self, ini_path):
         def get_sim_time_limit(config_dicts, config):
             config_dict = config_dicts[config]
-            if "sim_time_limit" in config_dict:
+            if config_dict.get("sim_time_limit") is not None:
                 return config_dict["sim_time_limit"]
-            if "extends" in config_dict:
+            if config_dict.get("extends") is not None:
                 extends = config_dict["extends"]
                 for base_config in extends.split(","):
                     if base_config in config_dicts:
@@ -321,7 +321,20 @@ class SimulationProject:
                             return sim_time_limit
             return config_dicts["General"].get("sim_time_limit")
         def create_config_dict(config):
-            return {"config": config, "abstract": False, "emulation": False, "expected_result": "DONE", "user_interface": None, "description": None, "network": None}
+            # All keys default to None so the parse loop below can implement first-wins
+            # uniformly (assign only while still None), matching OMNeT++'s ini resolution
+            # for duplicate keys within a section. The real defaults (False / "DONE") are
+            # applied at the consumption site further down.
+            return {"config": config, "abstract": None, "emulation": None, "expected_result": None, "user_interface": None, "description": None, "network": None, "extends": None, "sim_time_limit": None}
+        def set_first(config_dict, line, key, value=r"(.*)", convert=lambda s: s, allow_comment=False):
+            # Derive the ini key ("sim_time_limit" -> "sim-time-limit") from the dict key so
+            # the two can never drift, and keep only the FIRST occurrence within a section
+            # (first-wins, matching OMNeT++'s resolution). allow_comment=True also matches a
+            # commented-out (#...) directive line.
+            prefix = r"#? *" if allow_comment else r" *"
+            match = re.match(prefix + key.replace("_", "-") + r" *= *" + value, line)
+            if match and config_dict.get(key) is None:
+                config_dict[key] = convert(match.group(1))
         num_runs_fast_regex = re.compile(r"(?m).*^\s*(include\s+.*\.ini|repeat\s*=\s*[0-9]+|.*\$\{.*\})")
         configuration_class_regex = re.compile(r"\s*configuration-class\s*=\s*(\w+)")
         simulation_configs = []
@@ -338,31 +351,15 @@ class SimulationProject:
                 config = match.group(2) or match.group(3)
                 config_dict = create_config_dict(config)
                 config_dicts[config] = config_dict
-            match = re.match(r"#? *abstract *= *(\w+)", line)
-            if match:
-                config_dict["abstract"] = bool(match.group(1))
-            match = re.match(r"#? *emulation *= *(\w+)", line)
-            if match:
-                config_dict["emulation"] = bool(match.group(1))
-            match = re.match(r"#? *expected-result *= *\"(\w+)\"", line)
-            if match:
-                config_dict["expected_result"] = match.group(1)
+            set_first(config_dict, line, "abstract", r"(\w+)", bool, allow_comment=True)
+            set_first(config_dict, line, "emulation", r"(\w+)", bool, allow_comment=True)
+            set_first(config_dict, line, "expected_result", r"\"(\w+)\"", allow_comment=True)
             line = re.sub(r"(.*)#.*", "//1", line).strip()
-            match = re.match(r" *extends *= *(\w+)", line)
-            if match:
-                config_dict["extends"] = match.group(1)
-            match = re.match(r" *user-interface *= \"*(\w+)\"", line)
-            if match:
-                config_dict["user_interface"] = match.group(1)
-            match = re.match(r"description *= *\"(.*)\"", line)
-            if match:
-                config_dict["description"] = match.group(1)
-            match = re.match(r"network *= *(.*)", line)
-            if match:
-                config_dict["network"] = match.group(1)
-            match = re.match(r"sim-time-limit *= *(.*)", line)
-            if match:
-                config_dict["sim_time_limit"] = match.group(1)
+            set_first(config_dict, line, "extends", r"(\w+)")
+            set_first(config_dict, line, "user_interface", r"\"*(\w+)\"")
+            set_first(config_dict, line, "description", r"\"(.*)\"")
+            set_first(config_dict, line, "network")
+            set_first(config_dict, line, "sim_time_limit")
         general_config_dict = config_dicts["General"]
         for config, config_dict in config_dicts.items():
             config = config_dict["config"]
@@ -394,9 +391,9 @@ class SimulationProject:
             sim_time_limit = get_sim_time_limit(config_dicts, config)
             description = config_dict["description"]
             description_abstract = (re.search(r"\((a|A)bstract\)", description) is not None) if description else False
-            abstract = (config_dict["network"] is None and config_dict["config"] == "General") or config_dict["abstract"] or description_abstract
-            emulation = config_dict["emulation"]
-            expected_result = config_dict["expected_result"]
+            abstract = (config_dict["network"] is None and config_dict["config"] == "General") or bool(config_dict["abstract"]) or description_abstract
+            emulation = config_dict["emulation"] or False
+            expected_result = config_dict["expected_result"] or "DONE"
             user_interface = config_dict["user_interface"] or general_config_dict["user_interface"]
             simulation_config = SimulationConfig(self, os.path.relpath(working_directory, self.get_full_path(".")), ini_file=ini_file, config=config, sim_time_limit=sim_time_limit, num_runs=num_runs, abstract=abstract, emulation=emulation, expected_result=expected_result, user_interface=user_interface, description=description)
             simulation_configs.append(simulation_config)
