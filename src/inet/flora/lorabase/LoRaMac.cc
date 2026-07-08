@@ -115,6 +115,7 @@ void LoRaMac::initialize(int stage)
 
         // initialize watches
         WATCH(fsm);
+        WATCH_EXPR("fsmState", fsm.getStateName());
         WATCH(backoffPeriod);
         WATCH(retryCounter);
         WATCH(numRetry);
