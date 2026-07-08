@@ -2001,22 +2001,7 @@
         compileFlags = "-DINET_WITH_FLORACODE"
         linkerFlags = ""
         />        
-    <feature
-        id="ClodNetSim"
-        name="ClodNetSim"
-        description = "ClodNetSim++ model"
-        initiallyEnabled = "false"
-        requires = ""
-        labels = ""
-        nedPackages = "
-                       inet.greencloudsimulator
-                       inet.examples.cloudNetSim
-                      "
-        extraSourceFolders = ""
-        compileFlags = "-DINET_WITH_CLOUDNETSIM"
-        linkerFlags = ""
-        />
-		<feature
+	<feature
         id="iCanCloud"
         name="iCanCloud"
         description = "iCanCloud model"
