@@ -38,8 +38,6 @@ class INET_API Rx : public SimpleModule, public IRx
     physicallayer::IRadioSignal::SignalPart receivedPart = physicallayer::IRadioSignal::SIGNAL_PART_NONE;
     bool mediumFree = true; // cached state
 
-    simtime_t timeMediumFree;
-    simtime_t lastFree;
   protected:
     virtual int numInitStages() const override { return NUM_INIT_STAGES; }
     virtual void initialize(int stage) override;
@@ -48,12 +46,6 @@ class INET_API Rx : public SimpleModule, public IRx
     virtual bool isFcsOk(Packet *packet) const;
     virtual void recomputeMediumFree();
     std::string getRxStatusTxt() const;
-
-    virtual void finish() override {
-        if (mediumFree)
-            timeMediumFree += (simTime() - lastFree);
-        recordScalar("Idle Time", timeMediumFree/simTime());
-    }
 
   public:
     Rx();

@@ -138,8 +138,12 @@ class StatisticalTestTask(SimulationTestTask):
                     sorted_df = df.loc[df["relative_error"].abs().sort_values(ascending=False).index]
                     scalar_result_csv_file_name = re.sub(r".sca$", ".csv", stored_scalar_result_file_name)
                     sorted_df.to_csv(scalar_result_csv_file_name, float_format="%.17g")
-                    id = df["relative_error"].idxmax()
-                    if math.isnan(id):
+                    non_na_relative_error = df["relative_error"].dropna()
+                    if non_na_relative_error.empty:
+                        id = next(iter(df.index), None)
+                    else:
+                        id = df["relative_error"].idxmax()
+                    if id is None or (isinstance(id, float) and math.isnan(id)):
                         id = next(iter(df.index), None)
                     reason = df.loc[id].to_string()
                     reason = re.sub(r" +", " = ", reason)
