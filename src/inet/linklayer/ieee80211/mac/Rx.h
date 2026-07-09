@@ -50,9 +50,12 @@ class INET_API Rx : public SimpleModule, public IRx
     std::string getRxStatusTxt() const;
 
     virtual void finish() override {
-        if (mediumFree)
-            timeMediumFree += (simTime() - lastFree);
-        recordScalar("Idle Time", timeMediumFree/simTime());
+        SimpleModule::finish();
+        if (simTime() > 0) {
+            if (mediumFree)
+               timeMediumFree += (simTime() - lastFree);
+            recordScalar("Idle Time", timeMediumFree/simTime());
+        }
     }
 
   public:
