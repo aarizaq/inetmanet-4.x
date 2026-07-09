@@ -143,8 +143,6 @@ class StatisticalTestTask(SimulationTestTask):
                         id = next(iter(df.index), None)
                     else:
                         id = df["relative_error"].idxmax()
-                    if id is None or (isinstance(id, float) and math.isnan(id)):
-                        id = next(iter(df.index), None)
                     reason = df.loc[id].to_string()
                     reason = re.sub(r" +", " = ", reason)
                     reason = re.sub(r"\n", ", ", reason)
