@@ -104,7 +104,18 @@ Ospfv3Interface::Ospfv3InterfaceFaState Ospfv3Interface::getState() const
 
 void Ospfv3Interface::reset()
 {
-    EV_DEBUG << "Resetting interface " << this->getIntName() << " - not implemented yet!\n";
+    EV_DEBUG << "Resetting interface " << this->getIntName() << "\n";
+    Ospfv3Process *process = this->getArea()->getInstance()->getProcess();
+    process->clearTimer(helloTimer);
+    process->clearTimer(waitTimer);
+    process->clearTimer(acknowledgementTimer);
+    setDesignatedID(Ipv4Address::UNSPECIFIED_ADDRESS);
+    setBackupID(Ipv4Address::UNSPECIFIED_ADDRESS);
+    setDesignatedIP(Ipv6Address::UNSPECIFIED_ADDRESS);
+    setBackupIP(Ipv6Address::UNSPECIFIED_ADDRESS);
+    long neighborCount = neighbors.size();
+    for (long i = 0; i < neighborCount; i++)
+        neighbors[i]->processEvent(Ospfv3Neighbor::KILL_NEIGHBOR);
 } // reset
 
 bool Ospfv3Interface::hasAnyNeighborInState(int state) const
@@ -181,6 +192,7 @@ bool Ospfv3Interface::ageDatabase()
 
             lsaKey.linkStateID = lsa->getHeader().getLinkStateID();
             lsaKey.advertisingRouter = lsa->getHeader().getAdvertisingRouter();
+            lsaKey.LSType = lsa->getHeader().getLsaType();
 
             if (!isOnAnyRetransmissionList(lsaKey) &&
                 (
@@ -292,7 +304,6 @@ void Ospfv3Interface::processHelloPacket(Packet *packet)
     const auto& hello = packet->peekAtFront<Ospfv3HelloPacket>();
     bool neighborChanged = false;
     bool backupSeen = false;
-    (void)backupSeen; // FIXME set but not used variable
     bool neighborsDRStateChanged = false;
     bool drChanged = false;
     bool shouldRebuildRoutingTable = false;
@@ -511,6 +522,11 @@ void Ospfv3Interface::processHelloPacket(Packet *packet)
              */
             if (i == neighborsNeighborCount) {
                 neighbor->processEvent(Ospfv3Neighbor::ONEWAY_RECEIVED);
+            }
+
+            if (backupSeen) {
+                EV_DEBUG << "Backup Designated Router seen in Hello packet\n";
+                this->processEvent(Ospfv3InterfaceEvent::BACKUP_SEEN_EVENT);
             }
 
             if (neighborChanged) {
@@ -852,7 +868,8 @@ void Ospfv3Interface::processLSR(Packet *packet, Ospfv3Neighbor *neighbor)
             }
             else {
                 error = true;
-                EV_DEBUG << "Somehow I got here...BAD_LINK_STATE_REQUEST\n ";
+                EV_DEBUG << "Requested LSA type " << lsaKey.LSType << " ID " << lsaKey.linkStateID
+                         << " advertised by " << lsaKey.advertisingRouter << " is not in the database -> BadLSReq\n";
                 neighbor->processEvent(Ospfv3Neighbor::BAD_LINK_STATE_REQUEST);
                 break;
             }
@@ -1185,6 +1202,26 @@ void Ospfv3Interface::processLSU(Packet *packet, Ospfv3Neighbor *neighbor)
                     EV_DEBUG << "Flooding the LSA out\n";
                     if (currentLSA->getHeader().getLsaType() != LINK_LSA)
                         ackFlags.floodedBackOut = this->getArea()->getInstance()->getProcess()->floodLSA(currentLSA, areaID, this, neighbor);
+                    else {
+                        // Link-LSAs have link-local flooding scope, so the area flooding path above is
+                        // skipped for them. That path is also where a received LSA is cleared from
+                        // neighbors' link state request lists; do that cleanup here for Link-LSAs,
+                        // otherwise a requested Link-LSA is installed but never removed from the request
+                        // list and the neighbor's Loading state never completes.
+                        LSAKeyType linkLsaKey;
+                        linkLsaKey.linkStateID = currentLSA->getHeader().getLinkStateID();
+                        linkLsaKey.advertisingRouter = currentLSA->getHeader().getAdvertisingRouter();
+                        linkLsaKey.LSType = currentLSA->getHeader().getLsaType();
+                        long linkNeighborCount = this->getNeighborCount();
+                        for (long ni = 0; ni < linkNeighborCount; ni++) {
+                            Ospfv3Neighbor *linkNeighbor = this->getNeighbor(ni);
+                            if (linkNeighbor->getState() < Ospfv3Neighbor::EXCHANGE_STATE)
+                                continue;
+                            Ospfv3LsaHeader *requestedHeader = linkNeighbor->findOnRequestList(linkLsaKey);
+                            if ((requestedHeader != nullptr) && !(currentLSA->getHeader() < (*requestedHeader)))
+                                linkNeighbor->removeFromRequestList(linkLsaKey);
+                        }
+                    }
 
                     // if this is BACKBONE area, flood Inter-Area-Prefix LSAs to other areas
                     if ((currentLSA->getHeader().getLsaType() == INTER_AREA_PREFIX_LSA) &&
@@ -1259,6 +1296,14 @@ void Ospfv3Interface::processLSU(Packet *packet, Ospfv3Neighbor *neighbor)
                     }
                     continue;
                 }
+                // RFC 2328 Section 13, step 7: the received LSA is not newer than the database
+                // copy, yet it is still on this neighbor's link state request list -- the Database
+                // Exchange process is out of sync, so restart it. (OSPFv3 inherits the flooding
+                // procedure from OSPFv2 per RFC 5340 Section 4.5.2.)
+                if (neighbor->isLSAOnRequestList(lsaKey)) {
+                    neighbor->processEvent(Ospfv3Neighbor::BAD_LINK_STATE_REQUEST);
+                    break;
+                }
                 if (ackFlags.lsaIsDuplicate) {
                     if (neighbor->isLinkStateRequestListEmpty(lsaKey)) {
                         neighbor->removeFromRetransmissionList(lsaKey);
@@ -1303,6 +1348,7 @@ void Ospfv3Interface::processLSAck(Packet *packet, Ospfv3Neighbor *neighbor)
             LSAKeyType lsaKey;
             lsaKey.linkStateID = lsaHeader.getLinkStateID();
             lsaKey.advertisingRouter = lsaHeader.getAdvertisingRouter();
+            lsaKey.LSType = lsaHeader.getLsaType();
 
             if ((lsaOnRetransmissionList = neighbor->findOnRetransmissionList(lsaKey)) != nullptr) {
                 if (operator==(lsaHeader, lsaOnRetransmissionList->getHeader())) {
