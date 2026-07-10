@@ -27,6 +27,7 @@ class INET_API Rx : public SimpleModule, public IRx
 {
   public:
     static simsignal_t navChangedSignal;
+    static simsignal_t idleTimeSignal;
 
   protected:
     std::vector<IContention *> contentions;
@@ -54,7 +55,7 @@ class INET_API Rx : public SimpleModule, public IRx
         if (simTime() > 0) {
             if (mediumFree)
                timeMediumFree += (simTime() - lastFree);
-            recordScalar("Idle Time", timeMediumFree/simTime());
+            emit(idleTimeSignal, timeMediumFree/simTime());
         }
     }
 
