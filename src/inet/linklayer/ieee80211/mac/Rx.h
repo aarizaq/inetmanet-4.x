@@ -27,7 +27,6 @@ class INET_API Rx : public SimpleModule, public IRx
 {
   public:
     static simsignal_t navChangedSignal;
-    static simsignal_t idleTimeSignal;
 
   protected:
     std::vector<IContention *> contentions;
@@ -52,11 +51,8 @@ class INET_API Rx : public SimpleModule, public IRx
 
     virtual void finish() override {
         SimpleModule::finish();
-        if (simTime() > 0) {
-            if (mediumFree)
-               timeMediumFree += (simTime() - lastFree);
-            emit(idleTimeSignal, timeMediumFree/simTime());
-        }
+        if (simTime() > 0 && mediumFree)
+            timeMediumFree += (simTime() - lastFree);
     }
 
   public:
@@ -77,4 +73,3 @@ class INET_API Rx : public SimpleModule, public IRx
 } // namespace inet
 
 #endif
-
