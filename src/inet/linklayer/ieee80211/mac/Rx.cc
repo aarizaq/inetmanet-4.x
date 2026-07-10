@@ -19,8 +19,9 @@ namespace ieee80211 {
 using namespace inet::physicallayer;
 
 simsignal_t Rx::navChangedSignal = cComponent::registerSignal("navChanged");
+#ifdef IDLETIME
 simsignal_t Rx::idleTimeSignal = cComponent::registerSignal("idleTime");
-
+#endif
 Define_Module(Rx);
 
 Rx::Rx()
@@ -164,6 +165,7 @@ void Rx::recomputeMediumFree()
     if (mediumFree != oldMediumFree) {
         for (auto contention : contentions)
             contention->mediumStateChanged(mediumFree);
+#ifdef IDLETIME
         if (mediumFree)
             lastFree = simTime();
         else {
@@ -171,6 +173,7 @@ void Rx::recomputeMediumFree()
             if (simTime() > 0)
                 emit(idleTimeSignal, timeMediumFree/simTime());
         }
+#endif
     }
 }
 

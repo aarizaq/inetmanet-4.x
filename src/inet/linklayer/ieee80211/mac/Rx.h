@@ -27,7 +27,6 @@ class INET_API Rx : public SimpleModule, public IRx
 {
   public:
     static simsignal_t navChangedSignal;
-    static simsignal_t idleTimeSignal;
 
   protected:
     std::vector<IContention *> contentions;
@@ -49,7 +48,8 @@ class INET_API Rx : public SimpleModule, public IRx
     virtual bool isFcsOk(Packet *packet) const;
     virtual void recomputeMediumFree();
     std::string getRxStatusTxt() const;
-
+#ifdef IDLETIME
+    static simsignal_t idleTimeSignal;
     virtual void finish() override {
         SimpleModule::finish();
         if (simTime() > 0) {
@@ -58,6 +58,7 @@ class INET_API Rx : public SimpleModule, public IRx
             emit(idleTimeSignal, timeMediumFree/simTime());
         }
     }
+#endif
 
   public:
     Rx();

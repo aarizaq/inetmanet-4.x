@@ -23,9 +23,8 @@ simple Rx extends SimpleModule like IRx
         @class(Rx);
         displayStringTextFormat = default("{rxStatus}");
         @display("i=block/rx");
-        @signal[idleTime];
-
-        @statistic[IdleTime](title="Idle Time";source=idleTime;record=last;);
+       // @signal[idleTime];
+       // @statistic[IdleTime](title="Idle Time";source=idleTime;record=last;);
         @signal[navChanged](type=simtime_t);
         @signal[packetDropped](type=inet::Packet);
         @statistic[nav](title="network allocation vector"; source=navChanged; record=vector; interpolationmode=linear);
