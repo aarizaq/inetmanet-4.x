@@ -8,14 +8,16 @@
 #include "inet/common/ModuleAccess.h"
 #include "inet/common/Simsignals.h"
 #include "inet/linklayer/common/MacAddressTag_m.h"
-
 #ifdef INET_WITH_ETHERNET
 #include "inet/linklayer/ethernet/common/EthernetMacHeader_m.h"
 #endif // ifdef INET_WITH_ETHERNET
 
+#include "inet/linklayer/ieee80211/mac/contract/IFrameSequenceHandler.h"
+#include "inet/linklayer/ieee80211/mac/framesequence/FrameSequenceContext.h"
 #include "inet/linklayer/ieee80211/mac/Ieee80211Frame_m.h"
 #include "inet/linklayer/ieee80211/mac/Ieee80211SubtypeTag_m.h"
 #include "inet/linklayer/ieee80211/mgmt/Ieee80211MgmtAp.h"
+#include "inet/networklayer/common/NetworkInterface.h"
 #include "inet/physicallayer/wireless/ieee80211/packetlevel/Ieee80211Radio.h"
 
 namespace inet {
@@ -61,6 +63,7 @@ void Ieee80211MgmtAp::initialize(int stage)
         // subscribe for notifications
         cModule *radioModule = getModuleFromPar<cModule>(par("radioModule"), this);
         radioModule->subscribe(Ieee80211Radio::radioChannelChangedSignal, this);
+        getContainingNicModule(this)->subscribe(IFrameSequenceHandler::frameSequenceFinishedSignal, this);
 
         // start beacon timer (randomize startup time)
         beaconTimer = new cMessage("beaconTimer");
@@ -91,6 +94,34 @@ void Ieee80211MgmtAp::receiveSignal(cComponent *source, simsignal_t signalID, in
         EV << "updating channel number\n";
         channelNumber = value;
     }
+}
+
+void Ieee80211MgmtAp::receiveSignal(cComponent *source, simsignal_t signalID, cObject *obj, cObject *details)
+{
+    Enter_Method("%s", cComponent::getSignalName(signalID));
+
+    if (signalID == IFrameSequenceHandler::frameSequenceFinishedSignal) {
+        auto context = check_and_cast<FrameSequenceContext *>(obj);
+        if (context->getNumSteps() >= 2) {
+            auto transmitStep = dynamic_cast<ITransmitStep *>(context->getStepBeforeLast());
+            auto receiveStep = dynamic_cast<IReceiveStep *>(context->getLastStep());
+            if (transmitStep && receiveStep &&
+                transmitStep->getCompletion() == IFrameSequenceStep::Completion::ACCEPTED &&
+                receiveStep->getCompletion() == IFrameSequenceStep::Completion::ACCEPTED) {
+                auto responseHeader = dynamicPtrCast<const Ieee80211MgmtHeader>(transmitStep->getFrameToTransmit()->peekAtFront<Ieee80211MacHeader>());
+                if (responseHeader != nullptr && (responseHeader->getType() == ST_ASSOCIATIONRESPONSE || responseHeader->getType() == ST_REASSOCIATIONRESPONSE)) {
+                    auto ackHeader = receiveStep->getReceivedFrame()->peekAtFront<Ieee80211MacHeader>();
+                    if (ackHeader->getType() == ST_ACK) {
+                        if (responseHeader->getType() == ST_ASSOCIATIONRESPONSE && mib->bssAccessPointData.stations[responseHeader->getReceiverAddress()] != Ieee80211Mib::ASSOCIATED)
+                            sendAssocNotification(responseHeader->getReceiverAddress());
+                        mib->bssAccessPointData.stations[responseHeader->getReceiverAddress()] = Ieee80211Mib::ASSOCIATED;
+                    }
+                }
+            }
+        }
+    }
+    else
+        Ieee80211MgmtApBase::receiveSignal(source, signalID, obj, details);
 }
 
 Ieee80211MgmtAp::StaInfo *Ieee80211MgmtAp::lookupSenderSTA(const Ptr<const Ieee80211MgmtHeader>& header)
@@ -144,8 +175,10 @@ void Ieee80211MgmtAp::handleAuthenticationFrame(Packet *packet, const Ptr<const 
     // receives authentication frame number 1 from STA, which will cause the AP to return an Auth-Error
     // making the MN STA to start the handover process all over again.
     if (frameAuthSeq == 1) {
-        if (mib->bssAccessPointData.stations[sta->address] == Ieee80211Mib::ASSOCIATED)
+        if (mib->bssAccessPointData.stations[sta->address] == Ieee80211Mib::ASSOCIATED) {
             sendDisAssocNotification(sta->address);
+            mib->releaseAssociationId(sta->address);
+        }
         mib->bssAccessPointData.stations[sta->address] = Ieee80211Mib::NOT_AUTHENTICATED;
         sta->authSeqExpected = 1;
     }
@@ -179,8 +212,10 @@ void Ieee80211MgmtAp::handleAuthenticationFrame(Packet *packet, const Ptr<const 
 
     // update status
     if (isLast) {
-        if (mib->bssAccessPointData.stations[sta->address] == Ieee80211Mib::ASSOCIATED)
+        if (mib->bssAccessPointData.stations[sta->address] == Ieee80211Mib::ASSOCIATED) {
             sendDisAssocNotification(sta->address);
+            mib->releaseAssociationId(sta->address);
+        }
         mib->bssAccessPointData.stations[sta->address] = Ieee80211Mib::AUTHENTICATED; // TODO only when ACK of this frame arrives
         EV << "STA authenticated\n";
     }
@@ -199,8 +234,10 @@ void Ieee80211MgmtAp::handleDeauthenticationFrame(Packet *packet, const Ptr<cons
 
     if (sta) {
         // mark STA as not authenticated; alternatively, it could also be removed from staList
-        if (mib->bssAccessPointData.stations[sta->address] == Ieee80211Mib::ASSOCIATED)
+        if (mib->bssAccessPointData.stations[sta->address] == Ieee80211Mib::ASSOCIATED) {
             sendDisAssocNotification(sta->address);
+            mib->releaseAssociationId(sta->address);
+        }
         mib->bssAccessPointData.stations[sta->address] = Ieee80211Mib::NOT_AUTHENTICATED;
         sta->authSeqExpected = 1;
     }
@@ -223,15 +260,10 @@ void Ieee80211MgmtAp::handleAssociationRequestFrame(Packet *packet, const Ptr<co
 
     delete packet;
 
-    // mark STA as associated
-    if (mib->bssAccessPointData.stations[sta->address] != Ieee80211Mib::ASSOCIATED)
-        sendAssocNotification(sta->address);
-    mib->bssAccessPointData.stations[sta->address] = Ieee80211Mib::ASSOCIATED; // TODO this should only take place when MAC receives the ACK for the response
-
     // send OK response
     const auto& body = makeShared<Ieee80211AssociationResponseFrame>();
     body->setStatusCode(SC_SUCCESSFUL);
-    body->setAid(0); // TODO
+    body->setAid(mib->allocateAssociationId(sta->address));
     body->setSupportedRates(supportedRates);
     body->setChunkLength(B(2 + 2 + 2 + body->getSupportedRates().numRates + 2));
     sendManagementFrame("AssocResp-OK", body, ST_ASSOCIATIONRESPONSE, sta->address);
@@ -259,13 +291,10 @@ void Ieee80211MgmtAp::handleReassociationRequestFrame(Packet *packet, const Ptr<
 
     delete packet;
 
-    // mark STA as associated
-    mib->bssAccessPointData.stations[sta->address] = Ieee80211Mib::ASSOCIATED; // TODO this should only take place when MAC receives the ACK for the response
-
     // send OK response
     const auto& body = makeShared<Ieee80211ReassociationResponseFrame>();
     body->setStatusCode(SC_SUCCESSFUL);
-    body->setAid(0); // TODO
+    body->setAid(mib->allocateAssociationId(sta->address));
     body->setSupportedRates(supportedRates);
     body->setChunkLength(B(2 + (2 + ssid.length()) + (2 + supportedRates.numRates) + 6));
     sendManagementFrame("ReassocResp-OK", body, ST_REASSOCIATIONRESPONSE, sta->address);
@@ -282,8 +311,10 @@ void Ieee80211MgmtAp::handleDisassociationFrame(Packet *packet, const Ptr<const 
     delete packet;
 
     if (sta) {
-        if (mib->bssAccessPointData.stations[sta->address] == Ieee80211Mib::ASSOCIATED)
+        if (mib->bssAccessPointData.stations[sta->address] == Ieee80211Mib::ASSOCIATED) {
             sendDisAssocNotification(sta->address);
+            mib->releaseAssociationId(sta->address);
+        }
         mib->bssAccessPointData.stations[sta->address] = Ieee80211Mib::AUTHENTICATED;
     }
 }
@@ -348,10 +379,10 @@ void Ieee80211MgmtAp::stop()
 {
     cancelEvent(beaconTimer);
     staList.clear();
+    mib->bssAccessPointData.associationIds.clear();
     Ieee80211MgmtApBase::stop();
 }
 
 } // namespace ieee80211
 
 } // namespace inet
-
