@@ -1,0 +1,43 @@
+%description:
+802.11 infrastructure association FSM. [Required -- all generations]
+
+Connection setup observed at the STA MAC: the STA receives a Beacon from the AP, then
+completes open-system Authentication and Association. The frames are identical across
+b/a/g/n/ac, so this is a cross-generation test (run here on the 11ac config).
+
+%file: WifiAssociation.cc
+
+#include "ProtocolTest.h"
+
+namespace inet {
+namespace protocoltest {
+
+// Frame type (combined type+subtype byte): 0=Assoc Request, 1=Assoc Response,
+// 8=Beacon, 11=Authentication.
+Define_ProtocolTest(wifi_association)
+{
+    return ProtocolTest("wifi_association")
+        .once(on("sta1.wlan[0].mac").signal("packetReceivedFromLower")
+                  .packet("ieee80211mac.type == 8").describe("a Beacon from the AP").within(2.0))
+        .once(on("sta1.wlan[0].mac").signal("packetSentToLower")
+                  .packet("ieee80211mac.type == 11").describe("an Authentication request").within(2.0))
+        .once(on("sta1.wlan[0].mac").signal("packetReceivedFromLower")
+                  .packet("ieee80211mac.type == 11").describe("the Authentication response").within(2.0))
+        .once(on("sta1.wlan[0].mac").signal("packetSentToLower")
+                  .packet("ieee80211mac.type == 0").describe("an Association Request").within(2.0))
+        .once(on("sta1.wlan[0].mac").signal("packetReceivedFromLower")
+                  .packet("ieee80211mac.type == 1").describe("the Association Response").within(2.0));
+}
+
+} // namespace protocoltest
+} // namespace inet
+
+%inifile: test.ini
+
+[General]
+*.tester.testName = "wifi_association"
+include ../../ini/_ac.ini
+include ../../ini/_base.ini
+
+%contains: stdout
+PROTOCOLTEST wifi_association: PASS

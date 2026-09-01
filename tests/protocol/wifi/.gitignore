@@ -1,0 +1,9 @@
+# generated / machine-specific build artifacts
+work/
+Makefile
+makefrag
+out/
+*.so
+wifitests
+*_m.cc
+*_m.h
