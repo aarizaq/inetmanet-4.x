@@ -1,0 +1,122 @@
+%description:
+This example tests Q-Learning routing with three nodes: sender, relay, and receiver.
+The test verifies basic Q-Learning functionality including neighbor discovery and routing.
+%#--------------------------------------------------------------------------------------------------------------
+%file: test.ned
+import inet.networklayer.configurator.ipv4.Ipv4NetworkConfigurator;
+import inet.networklayer.ipv4.RoutingTableRecorder;
+import inet.node.qlearning.QLearningRouter;
+import inet.physicallayer.wireless.ieee80211.packetlevel.Ieee80211ScalarRadioMedium;
+import inet.common.scenario.ScenarioManager;
+
+network QLearningTest
+{
+    parameters:
+        @display("bgb=525,437");
+    submodules:
+        radioMedium: Ieee80211ScalarRadioMedium {
+            parameters:
+                @display("p=50,50");
+        }
+        configurator: Ipv4NetworkConfigurator {
+            parameters:
+                addDefaultRoutes = false;
+                addStaticRoutes = false;
+                addSubnetRoutes = false;
+                config = xml("<config><interface hosts='*' address='145.236.x.x' netmask='255.255.0.0'/></config>");
+                @display("p=50,100");
+        }
+        routingTableRecorder: RoutingTableRecorder {
+            parameters:
+                @display("p=50,150");
+        }
+        scenarioManager: ScenarioManager {
+            parameters:
+                script = default(xml("<scenario/>"));
+                @display("p=50,250");
+        }
+        sender: QLearningRouter {
+            parameters:
+                @display("i=device/pocketpc_s;r=,,#707070;p=270,51");
+        }
+        relay: QLearningRouter {
+            parameters:
+                @display("i=device/pocketpc_s;r=,,#707070;p=270,214");
+        }
+        receiver: QLearningRouter {
+            parameters:
+                @display("i=device/pocketpc_s;r=,,#707070;p=270,377");
+        }
+    connections allowunconnected:
+}
+
+%#--------------------------------------------------------------------------------------------------------------
+%inifile: omnetpp.ini
+[General]
+network = QLearningTest
+record-eventlog = true
+ned-path = .;../../../../src;../../lib
+
+#omnetpp 5.0 - 5.1 compatibility:
+eventlog-file = "${resultdir}/${configname}-${runnumber}.elog"
+output-scalar-file = "${resultdir}/${configname}-${runnumber}.sca"
+output-vector-file = "${resultdir}/${configname}-${runnumber}.vec"
+snapshot-file = "${resultdir}/${configname}-${runnumber}.sna"
+
+num-rngs = 3
+**.mobility.rng-0 = 1
+**.wlan[*].mac.rng-0 = 2
+sim-time-limit = 30s
+
+# Q-Learning parameters
+**.qlearn.learningRate = 0.5
+**.qlearn.discountFactor = 0.9
+**.qlearn.explorationRate = 0.2
+**.qlearn.helloInterval = 2s
+**.qlearn.routeTimeout = 10s
+
+# channel physical parameters
+*.radioMedium.mediumLimitCache.centerFrequency = 2.4GHz
+*.radioMedium.mediumLimitCache.maxTransmissionPower = 2.0mW
+
+# mobility
+*.*.mobility.typename = "StationaryMobility"
+**.mobility.constraintAreaMinZ = 0m
+**.mobility.constraintAreaMaxZ = 0m
+**.mobility.constraintAreaMinX = 0m
+**.mobility.constraintAreaMinY = 0m
+**.mobility.constraintAreaMaxX = 600m
+**.mobility.constraintAreaMaxY = 600m
+
+# Node positions
+*.sender.mobility.initialX = 100m
+*.sender.mobility.initialY = 200m
+*.relay.mobility.initialX = 300m
+*.relay.mobility.initialY = 200m
+*.receiver.mobility.initialX = 500m
+*.receiver.mobility.initialY = 200m
+
+# ping app (sender pings receiver)
+**.sender.numApps = 1
+**.sender.app[0].typename = "PingApp"
+**.sender.app[0].startTime = uniform(5s,8s)
+**.sender.app[0].printPing = true
+**.sender.app[0].destAddr = "receiver(ipv4)"
+
+# nic settings
+**.wlan[*].bitrate = 2Mbps
+
+**.wlan[*].mac.address = "auto"
+**.wlan[*].mac.queue.packetCapacity = 14
+**.wlan[*].mac.rtsThresholdBytes = 3000B
+
+**.wlan[*].radio.transmitter.power = 2mW
+**.wlan[*].radio.transmitter.headerLength = 4b
+**.wlan[*].radio.receiver.sensitivity = -85dBm
+**.wlan[*].radio.receiver.snirThreshold = 4dB
+
+%#--------------------------------------------------------------------------------------------------------------
+%postrun-command: grep "undisposed object:" test.out > test_undisposed.out || true
+%not-contains: test_undisposed.out
+undisposed object: (
+%#--------------------------------------------------------------------------------------------------------------
