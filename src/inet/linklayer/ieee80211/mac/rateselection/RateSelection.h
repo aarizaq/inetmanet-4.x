@@ -8,10 +8,12 @@
 #ifndef __INET_RATESELECTION_H
 #define __INET_RATESELECTION_H
 
+#include "inet/common/ModuleRefByPar.h"
 #include "inet/common/SimpleModule.h"
 #include "inet/linklayer/ieee80211/mac/contract/IRateControl.h"
 #include "inet/linklayer/ieee80211/mac/contract/IRateSelection.h"
 #include "inet/physicallayer/wireless/ieee80211/mode/Ieee80211ModeSet.h"
+#include "inet/linklayer/ieee80211/mib/Ieee80211Mib.h"
 
 namespace inet {
 namespace ieee80211 {
@@ -33,6 +35,7 @@ class INET_API RateSelection : public IRateSelection, public SimpleModule, publi
 {
   protected:
     IRateControl *dataOrMgmtRateControl = nullptr;
+    ModuleRefByPar<Ieee80211Mib> mib;
     const physicallayer::IIeee80211Mode *fastestMandatoryMode = nullptr;
 
     const physicallayer::Ieee80211ModeSet *modeSet = nullptr;
@@ -48,17 +51,37 @@ class INET_API RateSelection : public IRateSelection, public SimpleModule, publi
     const physicallayer::IIeee80211Mode *responseAckFrameMode = nullptr;
     const physicallayer::IIeee80211Mode *responseCtsFrameMode = nullptr;
 
+    // per-receiver unicast data-frame modes, resolved lazily from dataFrameBitratePerReceiver
+    std::map<MacAddress, const physicallayer::IIeee80211Mode *> perReceiverDataFrameMode;
+    bool perReceiverResolved = false;
+
   protected:
     virtual int numInitStages() const override { return NUM_INIT_STAGES; }
     virtual void initialize(int stage) override;
     virtual void receiveSignal(cComponent *source, simsignal_t signalID, cObject *obj, cObject *details) override;
 
+    // Builds perReceiverDataFrameMode on first use. Deferred out of initialize() because peer
+    // MAC addresses are assigned during INITSTAGE_LINK_LAYER with undefined intra-stage module
+    // ordering; the first transmitted data frame occurs after all init stages, so this is race-free.
+    virtual void ensurePerReceiverModesResolved();
+
     virtual const physicallayer::IIeee80211Mode *getMode(Packet *packet, const Ptr<const Ieee80211MacHeader>& header);
     virtual const physicallayer::IIeee80211Mode *computeControlFrameMode(const Ptr<const Ieee80211MacHeader>& header);
     virtual const physicallayer::IIeee80211Mode *computeDataOrMgmtFrameMode(const Ptr<const Ieee80211DataOrMgmtHeader>& dataOrMgmtHeader);
+    virtual const physicallayer::IIeee80211Mode *getPeerCompatibleMode(const MacAddress& peerAddress,
+            const physicallayer::IIeee80211Mode *mode) const;
 
   public:
     static void setFrameMode(Packet *packet, const Ptr<const Ieee80211MacHeader>& header, const physicallayer::IIeee80211Mode *mode);
+
+    // Emits datarateSelected on behalf of a coordination function. Unicast data frames are tagged
+    // with the name of the receiving station as a named details object, so that a
+    // demux(datarateSelected) result filter or a statistic visualizer can key a separate
+    // per-station series on it; this mirrors the condition under which a per-receiver configured
+    // rate applies, so the details always name the station whose rate is reported. Control,
+    // management and group-addressed frames carry no per-station data rate and are emitted without
+    // details: the aggregate datarateSelected statistic still records them, a bar chart ignores them.
+    static void emitDatarateSelected(cComponent *emitter, const Ptr<const Ieee80211MacHeader>& header, const physicallayer::IIeee80211Mode *mode);
 
     // A control response frame is a control frame that is transmitted as a response to the reception of a frame a SIFS
     // time after the PPDU containing the frame that elicited the response, e.g. a CTS in response to an RTS

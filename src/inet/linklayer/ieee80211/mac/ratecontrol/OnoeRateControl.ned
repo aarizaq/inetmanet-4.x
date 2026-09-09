@@ -20,9 +20,10 @@ simple OnoeRateControl extends SimpleModule like IRateControl
         @class(OnoeRateControl);
         double initialRate @unit(bps) = default(-1bps); // -1 means the fastest mandatory rate
         double interval @unit(s) = default(1s);
-        displayStringTextFormat = default("{currentMode}");
+        displayStringTextFormat = default("{numStations} stations");
         @display("i=block/cogwheel");
         @signal[datarateChanged];
-        @statistic[datarateChanged](title="datarate"; record=vector; interpolationmode=sample-hold);
+        @statistic[datarateChanged](title="datarate"; record=vector; interpolationmode=sample-hold); // aggregate rate over all stations (interleaved)
+        @statistic[dataratePerStation](title="data rate per station"; source=demux(datarateChanged); unit=bps; record=vector; interpolationmode=sample-hold); // one vector per receiver, demultiplexed by station
 }
 

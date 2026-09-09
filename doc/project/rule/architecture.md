@@ -37,7 +37,8 @@ Every rule in document order. The identifier links to the rule; the statement is
 | Rule | Statement |
 | --- | --- |
 | [AR-ORG-DOMAINS](#ar-org-domains) | Layered, domain-partitioned source tree with acyclic dependencies |
-| [AR-ORG-CONTRACTS](#ar-org-contracts) | Every extensible role is a separate contract (C++ + NED interface) |
+| [AR-ORG-CONTRACTS](#ar-org-contracts) | Every extensible role is a separate paired contract whose implementations preserve its caller-visible semantics |
+| [AR-ORG-CONTRACT-PURITY](#ar-org-contract-purity) | A contract declares the role and nothing else |
 | [AR-ORG-VIS-SPLIT](#ar-org-vis-split) | Model logic, visualization, and instrumentation live in separate packages |
 | [AR-ORG-KERNEL](#ar-org-kernel) | Build on the OMNeT++ kernel; do not reimplement or patch its facilities |
 
@@ -67,13 +68,14 @@ Every rule in document order. The identifier links to the rule; the statement is
 | [AR-COM-REGISTRY](#ar-com-registry) | Modules declare the protocols and services they provide in a global registry |
 | [AR-COM-DISPATCH](#ar-com-dispatch) | Address peers by protocol/service, not by wiring topology |
 | [AR-COM-SOCKETS](#ar-com-sockets) | Applications use socket-style callback APIs, not raw message exchange |
-| [AR-COM-DIRECT](#ar-com-direct) | Same-instant, same-node coordination uses direct C++ calls, not zero-time messages |
+| [AR-COM-DIRECT](#ar-com-direct) | Required same-instant, same-node coordination uses direct typed calls, not zero-time messages |
+| [AR-COM-NOTIFY](#ar-com-notify) | Behavior-driving signals publish completed facts, not commands or listener-ordered coordination |
 
 **Initialization & Lifecycle (AR-LIFE)**
 
 | Rule | Statement |
 | --- | --- |
-| [AR-LIFE-STAGES](#ar-life-stages) | A single global multi-stage initialization order that models slot into |
+| [AR-LIFE-STAGES](#ar-life-stages) | Models use the global initialization order and declare every stage they handle |
 | [AR-LIFE-OPERATIONS](#ar-life-operations) | Shutdown/restart/crash via a common lifecycle protocol, scriptable |
 
 **Composable Packet Processing (AR-QUEUE)**
@@ -106,6 +108,8 @@ Every rule in document order. The identifier links to the rule; the statement is
 | [AR-EXT-NOCORE](#ar-ext-nocore) | New protocols are added purely through existing contracts and registration points |
 | [AR-EXT-ATTACH](#ar-ext-attach) | Shared core structures are extended by attaching protocol-specific data |
 | [AR-EXT-FEATURES](#ar-ext-features) | Optional functionality is partitioned into independently disableable features |
+| [AR-EXT-MINIMAL-SURFACE](#ar-ext-minimal-surface) | A member is as private as its callers allow |
+| [AR-EXT-VIRTUAL-IS-A-PROMISE](#ar-ext-virtual-is-a-promise) | A function is virtual because someone overrides it, or because the class says what an override would do |
 
 **Build & Project Structure (AR-BUILD)**
 
@@ -118,7 +122,7 @@ Every rule in document order. The identifier links to the rule; the statement is
 
 | Rule | Statement |
 | --- | --- |
-| [AR-QUAL-FINGERPRINT](#ar-qual-fingerprint) | Behavioral regressions are guarded by trajectory fingerprints; baselines change in a reviewable step |
+| [AR-QUAL-FINGERPRINT](#ar-qual-fingerprint) | Behavioral regressions are guarded by trajectory fingerprints; a baseline changes in a deliberate, reviewable step |
 | [AR-QUAL-TESTS](#ar-qual-tests) | Contributions ship with tests in the category matching their nature |
 | [AR-QUAL-DETERMINISM](#ar-qual-determinism) | Model code is deterministic and exactly reproducible |
 | [AR-QUAL-NAMING](#ar-qual-naming) | Framework-wide naming conventions make a component's role legible from its name |
@@ -152,7 +156,8 @@ reasoned about without pulling in unrelated layers.
 
 ### AR-ORG-CONTRACTS
 
-**Every extensible role is a separate contract (C++ + NED interface)**
+**Every extensible role is a separate paired contract whose implementations preserve its
+caller-visible semantics.**
 
 Every role that is meant to be substitutable is defined first as a contract — a paired C++
 interface and NED `moduleinterface` — kept separate from the reusable base implementations
@@ -168,7 +173,74 @@ with confidence that it satisfies the same contract, and that the contract can b
 and reasoned about independently of any one implementation (`IInterfaceTable`, for example,
 lets the interface table be replaced without recompiling the modules that use it).
 
-*Enforced at T1 — NED `like`/`moduleinterface` + C++ virtuals; contract-package purity → lint (T3).*
+The paired contract also declares the meaning of each caller-visible operation and which outcome
+distinctions exist. Where applicable, those distinctions may include a valid empty result, absence
+or unsupported capability, invalid or out-of-range input, refusal, and failure. Implementations,
+adapters, and callers preserve every distinction that the contract declares. A default
+implementation, return value, or argument must not silently collapse or change those declared
+semantics according to the selected implementation or the caller's static type.
+
+*Enforced at T1 — NED `like`/`moduleinterface` + C++ virtuals; contract-package purity → lint (T3);
+T4 for semantic substitutability.*
+
+### AR-ORG-CONTRACT-PURITY
+
+**A contract declares the role and nothing else**
+
+A C++ interface or a NED `moduleinterface` states what an implementation must provide, and carries
+no code of its own. No utility function, no helper for implementors, no convenience for callers, and
+no policy — only the operations that make up the role, plus the identities its observations use.
+
+A contract has two audiences and it belongs to neither of them: the **implementor**, who must satisfy
+every member, and the **caller**, who may rely on every member. Every symbol in the contract is
+therefore a promise to both. A static helper is a promise to neither — an implementation cannot
+override it, a caller cannot substitute it, and it is in the header only because the header was a
+convenient namespace. It also drags the contract's dependencies along with it: the moment a helper
+touches a concrete frame or a concrete mode, every implementor of the interface, present and future,
+must compile against them.
+
+**In C++ the test is mechanical: a class named `I<Stem>` holds no method body.** Only pure virtual
+declarations (`= 0;`), a virtual destructor, and the declarations below. Not a no-op default
+(`virtual void f() {}`), not a one-line forwarder, not a `const_cast` convenience. The destructor is
+the one body a C++ interface cannot avoid, and it is the only one.
+
+**A default body is not a small exception; it is the failure mode.** `IIndicatorFigure::getNumSeries()`
+had a default body returning 1. When it was renamed to `getNumItems()`, every implementation outside
+INET kept compiling, its override was silently never called again, and each figure reported one item
+([pr-1125.md](../audit/report/pull-request/pr-1125.md) F-2). A pure virtual would have made every one
+of those a compile error. The default body is what turned a loud break into a quiet one — and it was
+put there, as such comments always say, "for backward compatibility".
+
+**Where a default goes: `<Stem>Base`.** INET already pairs 58 interfaces with a `<Stem>Base` class,
+and 206 `*Base` classes exist. That is the designed place for shared machinery and for a default an
+implementor may not care about. An implementor that wants the defaults extends the Base; one that
+implements the interface directly accepts that every new method is a compile error — which is the
+correct trade, because the *interface* stays honest and the *Base* absorbs evolution. There is no
+`*Default` suffix in INET and none should be introduced; the Base is the default.
+
+The line to draw is **behavior**, not file size. A contract may declare the identities its role's
+observations use — `static simsignal_t datarateSelectedSignal` is part of the vocabulary the contract
+defines, which is why seven contract headers under `linklayer/ieee80211/mac/contract/` each have a
+small `.cc` that does nothing but define theirs. The printable form of an enum the contract itself
+declares is the same case — `IRadio::getRadioModeName` names `IRadio::RadioMode`, and a caller and an
+implementor need the same word for it. A function with logic in it is a different thing, even when it
+is short.
+
+The tree already reads this way. A sweep of all 176 contract headers found eight static non-signal
+members, in two files, and every one is an enum-naming helper of that second kind
+([sweep/contract-purity.md](../audit/report/sweep/contract-purity.md)). This rule writes down what
+INET does; it does not ask for a change.
+
+Where does the helper go? If it serves the **implementors**, it belongs in the `*Base` class they
+already extend ([AR-ORG-CONTRACTS](#ar-org-contracts) keeps contract, base and concrete apart for
+exactly this). If it serves the **callers**, it belongs with the callers, or in a utility of its own.
+If it encodes a **policy** — when to attach details to a signal, which frames carry a per-station
+value — then it is a modeling decision, and it belongs to the module that owns that decision, not to
+the interface that names the role.
+
+*Enforced at T3 — [check-interfaces.sh](../enforcement/check-interfaces.sh) fails on any body, data
+member or non-virtual function in a class named `I<Stem>`, and on an `I<Stem>` class with no pure
+virtual at all; T4 for a NED `moduleinterface`, and for a helper hiding under another name.*
 
 ### AR-ORG-VIS-SPLIT
 
@@ -445,29 +517,56 @@ protocol behavior but makes the common case of *using* a protocol far simpler an
 
 ### AR-COM-DIRECT
 
-**Same-instant, same-node coordination uses direct C++ calls, not zero-time messages**
+**Required same-instant, same-node coordination uses direct typed calls, not zero-time messages**
 
-Coordination between submodules of the same node that happens at the same simulation instant is
-expressed as direct, typed C++ calls, not as messages sent with zero delay.
+When one submodule requires another to perform a command or answer a query at the same simulation
+instant, the interaction is expressed as a direct, typed C++ call, not as a message sent with zero
+delay.
 
-Message passing models communication that takes simulation time or crosses the physical medium;
-using `send()` or `scheduleAt(simTime())` for control flow that occurs at the same instant between
-sibling submodules is a category error that inflates the event count, obscures causality, and
-forces even trivial passthroughs to carry message classes and dispatch code they do not need. For
-same-instant intra-node coordination INET uses direct calls through typed references and the
-service/socket and queueing APIs, with `Enter_Method` establishing the correct module context,
-reserving genuine events for things that actually advance simulation time. This keeps the event
-trajectory meaningful — each event corresponds to something that "happens" in the network — so
-that fingerprints reflect real behavior rather than internal plumbing, and it avoids the
-boilerplate of turning a direct call into a round-trip through the scheduler.
-
-## Initialization & Lifecycle (AR-LIFE)
+Message passing models an interaction whose delivery is itself a simulator event, whether because
+time passes, the physical medium is crossed, or an explicit event boundary matters. Using `send()`
+or `scheduleAt(simTime())` merely to disguise same-instant control flow between sibling submodules
+is a category error that inflates the event count, obscures causality, and forces even trivial
+passthroughs to carry message classes and dispatch code they do not need. For required same-instant
+intra-node coordination INET uses direct calls through typed references and the service/socket and
+queueing APIs, with `Enter_Method` establishing the correct module context. A fire-and-forget
+announcement of a completed fact to independent consumers follows AR-COM-NOTIFY. This separation
+reserves scheduler events for modeled deliveries and event boundaries, keeps the event trajectory
+meaningful, and avoids turning procedure calls into scheduler plumbing.
 
 *Enforced at T3+T4 — lint for `scheduleAt(simTime())`/zero-delay send + agent review; runtime zero-delay hook (T2).*
 
+### AR-COM-NOTIFY
+
+**Behavior-driving signals publish completed facts, not commands or listener-ordered coordination**
+
+A module may emit a declared signal to announce a completed occurrence or state change to zero or
+more independent consumers. Emission is synchronous and fire-and-forget: the publisher restores its
+own invariants before `emit()`, completes its operation without requiring a particular listener,
+reply or acknowledgement, and does not transfer ownership. A behavioral listener may drive its own
+reaction through the ordinary model contracts; when that listener is a module, it establishes its
+module context with `Enter_Method` or `Enter_Method_Silent`. It treats object and details payloads
+as borrowed and immutable, does not retain them beyond the callback unless the declared contract
+guarantees a longer lifetime, and does not depend on its position in the listener invocation order
+or on replay. Successive emissions retain normal simulator causality and may form an ordered stream
+of facts.
+
+The signal name and payload type are declared in NED, and the subscription source, scope and
+lifecycle are explicit in configuration or initialization. Because names are global and signals
+propagate through the module hierarchy, a listener subscribes at the narrowest useful scope and
+filters the source wherever unrelated emitters can merge. A command, query, return value, required
+handshake, ownership transfer, buffering, modeled delay, or coordination whose correctness depends
+on relative invocation order among consumers uses a typed direct or service API, or messages and
+gates when it belongs to the simulated event trajectory.
+
+*Enforced at T1/T2+T4 — NED signal/type checking + kernel listener-list checks + agent review of notification semantics.*
+
+## Initialization & Lifecycle (AR-LIFE)
+
 ### AR-LIFE-STAGES
 
-**A single global multi-stage initialization order that models slot into**
+**Models slot into one global multi-stage initialization order, and their effective stage count
+covers every stage they handle.**
 
 Cross-module initialization follows one globally defined stage sequence; each stage has a
 documented contract, and new models slot into existing stages rather than inventing their own
@@ -482,7 +581,15 @@ the node's `InterfaceTable` in the link-layer stage. A new protocol does not inv
 bring-up protocol; it declares what it needs in each existing stage. This shared contract is what
 lets independently authored modules initialize correctly in one another's presence.
 
-*Enforced at T1/T2 — `INITSTAGE_*` / `Define_InitStage_Dependency` (compiler) + runtime ordering.*
+The effective `numInitStages()` of a concrete module includes its inherited implementation. It must
+return a count greater than the highest stage handled by that module or any of its base classes. A
+derived `initialize(stage)` that handles a later stage than its inherited count therefore overrides
+`numInitStages()` and preserves the base requirement as well as its own. Otherwise OMNeT++ never
+calls the apparently valid later-stage branch, and compilation gives no warning.
+
+*Enforced at T1/T2+T4 — `INITSTAGE_*` / `Define_InitStage_Dependency` compile and runtime ordering
+checks apply; initialization tests exercise the required stage; agent review compares the effective
+inherited `numInitStages()` with every handled stage.*
 
 ### AR-LIFE-OPERATIONS
 
@@ -555,6 +662,10 @@ producer of an event is decoupled from every consumer of it, so adding a new sta
 visualizer requires no change to the protocol, and — crucially — the act of observing is guaranteed
 not to perturb the simulation. This one-way, subscribe-from-outside discipline is the mechanism
 behind both AR-ORG-VIS-SPLIT and the user-facing neutrality guarantee.
+
+This rule governs observational consumers. The same declared signal may also have behavioral
+listeners under AR-COM-NOTIFY, but attaching or removing a recorder, visualizer or analyzer must not
+alter those listeners or any modeled state transition.
 
 *Enforced at T1/T2 — NED `@signal`/`@statistic` (compiler) + fingerprint neutrality.*
 
@@ -704,6 +815,67 @@ contracts and registries so that a disabled feature leaves the rest compilable a
 what lets a user build exactly the subset they need and keeps the framework from collapsing into one
 monolithic must-build-everything blob.
 
+### AR-EXT-MINIMAL-SURFACE
+
+**A member is as private as its callers allow**
+
+A function is `public` because something outside the class calls it, `protected` because a subclass
+does, and `private` otherwise. Visibility is decided by the callers that exist, not by the callers
+that might.
+
+Every public member is a promise to every user of the class, inside the tree and out: *this will
+keep existing, keep its meaning, and keep its signature*. A member made public without a caller is a
+promise made for nothing, and it costs what every promise costs — it cannot be renamed, removed or
+re-signed without a release note ([RR-BREAK-MIGRATE](release.md#rr-break-migrate)) and a deprecation
+cycle ([RR-DEPRECATE-FIRST](release.md#rr-deprecate-first)). Making it public later, when a caller
+appears, costs nothing. The asymmetry decides the default.
+
+Two shapes need a second look rather than a verdict. **A public function whose only caller is a
+test** is either a test of behavior that happens to need a seam, or a test reaching into the
+implementation; the second kind pins the implementation and breaks on every refactor
+([TR-CAT-MATCH](testing.md#tr-cat-match)). **A public setter on a value that is otherwise built once**
+is usually a value type asking to be immutable. Both are questions for the author, not findings.
+
+**An override is exempt.** Its visibility is fixed by the base class, and changing it there is a
+different decision.
+
+*Enforced at T3 — `opp_summarize_changes --usage` marks every added public function that nothing
+calls, or that only a test calls; T4 for the answer.*
+
+### AR-EXT-VIRTUAL-IS-A-PROMISE
+
+**A function is virtual because someone overrides it, or because the class says what an override
+would do**
+
+`virtual` is not a modifier; it is a contract. It says *a subclass may replace this, and I will call
+the replacement* — and once said, it cannot be unsaid: removing `virtual` silently stops calling
+every override outside the tree, which is the same quiet break as a default body in an interface
+([AR-ORG-CONTRACT-PURITY](#ar-org-contract-purity)). So a virtual is either **fulfilling** a promise
+— it overrides a base — or **making** one, and a promise made is a promise documented.
+
+INET has 9986 virtual member declarations against 6503 non-virtual — 60 % — because OMNeT++ models
+are extended by subclassing, and a model author cannot know which step a user will need to replace.
+That is a real reason, and it is why this rule does not say *never*. It says: **make it on purpose**.
+A new virtual that nothing in the tree overrides, on a function whose comment does not say what an
+override is for, is a promise made by reflex. It also drags the class toward the inheritance-based
+extension that [AR-MOD-COMPOSITION](#ar-mod-composition) argues against — the more of a class is
+virtual, the more its subclasses depend on its internals.
+
+The test a reviewer applies: *if a user overrode this, what would they be trying to do, and would the
+class still work?* If the answer is a sentence, put it in the comment and keep the `virtual`. If the
+answer is "I don't know", it is not an extension point yet.
+
+**A private helper is the common case.** A step of an algorithm that is `virtual` so the algorithm
+could in principle be varied is a `private` non-virtual until someone varies it. The
+[template-method](#ar-mod-composition) shape — a non-virtual public entry that calls private
+virtuals — is the disciplined form of the same idea, and it names its extension points by making
+*only* those virtual.
+
+*Enforced at T3 — `opp_summarize_changes --usage` marks every added virtual that nothing in the tree
+overrides and that does not itself override; T4 for whether the comment says what an override is
+for. A framework hook fulfilled — `initialize`, `handleMessage`, `receiveSignal`, `stop` — is never
+marked.*
+
 ## Build & Project Structure (AR-BUILD)
 
 *Enforced at T3 — `inet_featuretool` dependency validation + feature-matrix build.*
@@ -748,19 +920,21 @@ and is expressed the same declarative way.
 
 ### AR-QUAL-FINGERPRINT
 
-**Behavioral regressions are guarded by trajectory fingerprints; baselines change in a reviewable step**
+**Behavioral regressions are guarded by trajectory fingerprints; a baseline changes in a deliberate,
+reviewable step**
 
-Behavioral regressions are guarded by simulation-trajectory fingerprints, and changes that
-intentionally alter behavior update the recorded expectations in a separate, reviewable step.
+Behavioral regressions are guarded by simulation-trajectory fingerprints, and a change that alters
+behavior on purpose updates the recorded expectations in the same step, with a stated reason.
 
 A fingerprint is a hash over the simulation's event trajectory (module paths, timing, packet data,
 per configurable "ingredients"), so any unintended change in behavior shows up as a broken
 fingerprint test on CI and in pull requests. INET extends the standard OMNeT++ ingredients with
 network-aware ones (a cross-node communication filter, node/interface path, packet data) so a
 fingerprint can be scoped to exactly the behavior under test. When a change legitimately alters
-behavior, the workflow is to regenerate and commit the updated baseline CSVs as a distinct, reviewable
-patch — never to quietly weaken the test — so that "the fingerprint changed" is always a conscious,
-auditable decision. This regime is only meaningful because model behavior is deterministic
+behavior, the workflow is to regenerate the baseline CSVs and to commit them together with the source
+change that moves them, under a message that says which behavior moved and why the new values are
+right — never to quietly weaken the test — so that "the fingerprint changed" is always a conscious,
+auditable decision ([PR-SPLIT-BASELINE](pull-request.md#pr-split-baseline)). This regime is only meaningful because model behavior is deterministic
 (AR-QUAL-DETERMINISM).
 
 *Enforced at T2 ✔ — fingerprint tests on CI.*
@@ -895,4 +1069,3 @@ judgment (is a fidelity level worth adding?) to a human. Which gate covers which
 inventory of [enforcement/README.md](../enforcement/README.md).
 
 *Enforced at T3 — the gate inventory itself; measured by how many rules above reach T1 to T4.*
-

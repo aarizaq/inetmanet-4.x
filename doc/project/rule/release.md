@@ -1,6 +1,6 @@
 # Release rules
 
-> **Kind:** rule · **Status:** current · **Seal:** by rule · **Owns:** `RR-*` · **Stands on:** [accepted-requirements.md](../requirement/accepted-requirements.md), [testing.md](testing.md)
+> **Kind:** rule · **Status:** current · **Seal:** by rule · **Owns:** `RR-*` · **Stands on:** [accepted-requirements.md](../requirement/accepted-requirements.md), [decisions.md](../design/decisions.md), [testing.md](testing.md)
 
 What a release owes its users. INET is a model library that other people's published results depend
 on: a simulation run against version 4.5 must still be reproducible after 4.6 ships, or the result
@@ -21,6 +21,7 @@ A rule has a stable identifier `RR-<AREA>`, and the identifier is the heading:
 | [RR-WHATSNEW](#rr-whatsnew) | A user-visible change earns a WHATSNEW entry, written for a user |
 | [RR-FINGERPRINT-NOTE](#rr-fingerprint-note) | A release that moves a trajectory says so |
 | [RR-FEATURE-STABLE](#rr-feature-stable) | A feature identifier is part of the interface |
+| [RR-NUMERIC-STABLE](#rr-numeric-stable) | An externally exposed enum value or named numeric code has an explicit stable assignment |
 | [RR-RELEASE-GREEN](#rr-release-green) | A release is cut from a green tree with every feature built |
 
 ## The rules
@@ -88,7 +89,7 @@ whose results differ after an upgrade must be able to find out, in one place, wh
 one of the ones that changed on purpose. Without this note the only honest answer to *why are my
 numbers different?* is *nobody knows*.
 
-*Enforced at T4 — agent review against the baseline commits in the release range.*
+*Enforced at T4 — agent review against the commits that move a baseline in the release range.*
 
 ### RR-FEATURE-STABLE
 
@@ -100,6 +101,21 @@ live example: four feature ids break the naming rules, and repairing them change
 rename must be coordinated with a release rather than done quietly.
 
 *Enforced at T3 — `inet_featuretool`; T5 for the coordination.*
+
+### RR-NUMERIC-STABLE
+
+**An enum value or named numeric code exposed outside its implementation has an explicit stable
+assignment.**
+
+The external boundary includes serialization, registered reflection, NED or other configuration,
+signals, statistics and results, persistence, and external tooling when they carry that enum or
+named code. Once such a value crosses one of these boundaries, changing its established number or
+meaning is a breaking change governed by [RR-BREAK-MIGRATE](#rr-break-migrate). Enum values and
+named numeric codes used only inside one implementation and never exposed through such a boundary
+are exempt and may be renumbered with that implementation. Dynamic identifiers and numeric
+measurements are not categorical codes and are outside this rule.
+
+*Enforced at T4 — agent review.*
 
 ### RR-RELEASE-GREEN
 

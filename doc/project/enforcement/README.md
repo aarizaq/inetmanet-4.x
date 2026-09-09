@@ -1,6 +1,6 @@
 # Enforcement
 
-> **Kind:** reference · **Status:** current · **Seal:** none · **Owns:** — · **Stands on:** [architecture.md](../rule/architecture.md), [naming.md](../rule/naming.md), [pull-request.md](../rule/pull-request.md), [sealing.md](../rule/sealing.md)
+> **Kind:** reference · **Status:** current · **Seal:** none · **Owns:** — · **Stands on:** [architecture.md](../rule/architecture.md), [naming.md](../rule/naming.md), [quality.md](../rule/quality.md), [pull-request.md](../rule/pull-request.md), [release.md](../rule/release.md), [sealing.md](../rule/sealing.md)
 
 The machinery that checks the rules. This document holds two things: the **tier ladder**, which every
 rule document cites, and the **gate inventory**, which lists the checks that really exist.
@@ -23,9 +23,9 @@ line of its section. This document does not repeat those tiers, because two copi
 | **T5** | **A human decides.** Genuine design judgment and final sign-off. Is a fidelity level worth adding? Does this read as one system? |
 
 T4 needs its own discipline, and [checklist/general.md](checklist/general.md) states it: **precision
-over recall**. The reviewer flags only a clear violation, asks a question when it is unsure, and
-never re-flags a deviation that a ledger already records. A noisy gate gets ignored, and an ignored
-gate enforces nothing.
+over recall**. The reviewer flags only a clear violation, asks a question only for a plausible rule
+conflict requiring human judgment, and never re-flags a deviation that a ledger already records. A
+noisy gate gets ignored, and an ignored gate enforces nothing.
 
 ## The gate inventory
 
@@ -36,19 +36,25 @@ measured.
 | Gate | Tier | Runs | Covers |
 | --- | --- | --- | --- |
 | the C++ compiler and the NED toolchain | T1 | every build | the contract, composition, chunk, tag, signal, socket, queueing and lifecycle APIs |
-| [check-architecture.sh](check-architecture.sh) | T3 | by hand; not yet in CI | `AR-ORG-DOMAINS`, `AR-ORG-VIS-SPLIT` over the `#include` graph |
+| [check-architecture.sh](check-architecture.sh) | T3 | by hand; not yet in CI | `AR-ORG-DOMAINS`, `AR-ORG-VIS-SPLIT`, `AR-COM-SOCKETS`, and the source-level part of `AR-QUAL-DETERMINISM` |
 | [check-cpp.sh](check-cpp.sh) | T3 | by hand; not yet in CI | the C++ half of `NR-*` and the bug and modernization rules of `QR-*`, through the root [`.clang-tidy`](../../../.clang-tidy) |
-| [check-naming.sh](check-naming.sh) | T3 | by hand; not yet in CI | the mechanical half of `NR-*`: file names, package names, generated pairs, icon names |
+| [check-naming.sh](check-naming.sh) | T3 | by hand; not yet in CI | the path and asset half of `NR-*`: directory names, generated pairs, icon names, workflow names |
+| [check-ned-msg-naming.py](check-ned-msg-naming.py) | T3 | by hand; not yet in CI | declaration-level `NR-*`: NED/MSG package and file/type agreement, casing, fields, signals/statistics, and gate names |
 | [check-commits.sh](check-commits.sh) | T3 | by hand; not yet in CI | `PR-SPLIT-WHITESPACE`, `PR-SPLIT-MOVE`, `PR-SPLIT-BASELINE`, `PR-SERIES-ORDER`, `PR-SERIES-LINEAR`, `PR-MSG-SUBJECT`, `PR-MSG-FACTS` |
+| [check-interfaces.sh](check-interfaces.sh) | T3 | by hand; not yet in CI | the `I<Stem>` promise of `NR-CPP-TYPE` and `AR-ORG-CONTRACT-PURITY`: a C++ interface holds no implementation |
 | [check-seals.sh](check-seals.sh) | T3 | by hand; not yet in CI | `SR-FLAG-PLACEMENT`, `SR-FLAG-COVERAGE`, and the generated index of [seal-list.md](../audit/seal-list.md) |
-| [checklist/general.md](checklist/general.md) | T4 | by an agent, on every change | the semantic architecture rules |
+| [check-source-seals.sh](check-source-seals.sh) | T3 | pull-request CI and by hand | source-path `SR-*`: recursive and generated-file seal coverage from [seal-list.md](../audit/seal-list.md) |
+| [checklist/general.md](checklist/general.md) | T4 | by an agent, on every change | the semantic project rules listed in the checklist |
 | [checklist/ieee80211.md](checklist/ieee80211.md) | T4 | by an agent, on an 802.11 diff | `AR-WLAN-*` |
-| the test suites | T2 | GitHub Actions, twelve workflows | `TR-*`, `AR-QUAL-FINGERPRINT`, `AR-QUAL-DETERMINISM` |
+| the test suites | T2 | GitHub Actions test workflows | `TR-*`, `AR-QUAL-FINGERPRINT`, `AR-QUAL-DETERMINISM` |
 | `inet_featuretool` | T3 | the feature workflow | `AR-EXT-FEATURES` |
 
-**Nothing in this folder runs in CI yet.** That is the honest state, and it is the first thing to
-repair. `.github/workflows/` holds twelve test workflows and no rule gate. Every `T3` row above is a
-script a person must remember to run, which is the weakest form of every rule it covers.
+The pull-request [enforcement-tests workflow](../../../.github/workflows/enforcement-tests.yml) runs
+the checker regressions without privileged credentials. The trusted
+[sealing workflow](../../../.github/workflows/check-sealing.yml) runs base-branch checker code over
+the exact pull-request head and routes sealed hits through protected approval. The other `T3` gates
+above are still by hand; a person must remember to run them, which is the weakest form of every rule
+they cover.
 
 ## How to run them
 
@@ -57,11 +63,45 @@ script a person must remember to run, which is the weakest form of every rule it
 doc/project/enforcement/check-architecture.sh              # the whole tree
 doc/project/enforcement/check-architecture.sh src/inet/common/packet   # one subtree
 doc/project/enforcement/check-cpp.sh src/inet/linklayer/ethernet
-doc/project/enforcement/check-naming.sh
+doc/project/enforcement/check-naming.sh --base origin/master  # final branch check
+doc/project/enforcement/check-naming.sh src/inet/linklayer    # complete subtree audit
+python3 doc/project/enforcement/check-ned-msg-naming.py       # working-tree declarations
+python3 doc/project/enforcement/check-ned-msg-naming.py --staged
+python3 doc/project/enforcement/check-ned-msg-naming.py --base origin/master
 doc/project/enforcement/check-commits.sh origin/master..HEAD
-doc/project/enforcement/check-seals.sh                     # check
-doc/project/enforcement/check-seals.sh --write             # check and rewrite the index
+doc/project/enforcement/check-interfaces.sh                # every I<Stem> class holds no body
+doc/project/enforcement/check-source-seals.sh --diff       # changed source paths against seals
+doc/project/enforcement/check-source-seals.sh --base origin/master  # committed branch paths
+doc/project/enforcement/check-source-seals.sh --base <base-sha> --head <head-sha>
+doc/project/enforcement/check-source-seals.sh src/inet/foo/Foo.cc
+doc/project/enforcement/check-seals.sh                    # document flags and generated index
+doc/project/enforcement/check-seals.sh --write            # check and rewrite the index
+python3 -m unittest discover -s doc/project/enforcement -p 'test_*.py'
 ```
+
+The NED/MSG checker is diff-focused by default: it checks added, copied, renamed, and untracked
+files completely, and checks only added lines in modified files. `--staged` reads the index.
+`--base <ref>` compares the merge base of `<ref>` and `HEAD` with the committed `HEAD` tree; use it
+for the final branch check. Explicit `.ned`/`.msg` files and directories are scanned completely, and
+`--scope src/inet/<path>` restricts a diff mode without including sibling subtrees. The naming
+wrapper selects branch mode for `--base` and a complete recursive declaration scan for an explicit
+subtree. The source-seal gate defaults to the working-tree diff when no option is supplied; use
+`--staged` or explicit source paths as needed. Its `--base <ref>` mode checks the committed branch
+from `merge-base(<ref>, HEAD)` and reads the seal registry from that merge base, so removing a seal
+inside the branch cannot hide a source change. `--head <ref>` lets trusted base-branch workflow code
+inspect another exact commit without checking it out. The protected workflow alone adds
+`--ci-approved` after its required reviewer approves that base/head range; pull-request content must
+never supply the option. `check-seals.sh` checks document flags, while
+`check-source-seals.sh` checks paths under `src/inet/`. These gates return `2` for invalid usage or a
+missing canonical input; do not substitute a skill-package copy when a canonical gate is unavailable.
+
+The repository environment named `sealed-source-change` is part of that fail-closed path. Configure
+required reviewers, prevent self-review and administrator bypass, and set its environment variable
+`SEALED_SOURCE_APPROVAL` to `granted`. Without that exact variable the approval job fails even if an
+unprotected environment was created accidentally. Require `check-sealing.yml` itself through an
+organization ruleset's **Require workflows to pass before merging** rule, pinned to the trusted base
+branch. A name-only required status is not the authority, because another pull-request workflow can
+emit the same job name.
 
 [guide/run-the-gates.md](../guide/run-the-gates.md) says which of them to run before a push, and in
 which order.

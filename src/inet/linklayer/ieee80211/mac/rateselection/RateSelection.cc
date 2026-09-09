@@ -10,6 +10,8 @@
 #include "inet/common/ModuleAccess.h"
 #include "inet/common/Simsignals.h"
 #include "inet/linklayer/ieee80211/mac/contract/IRateControl.h"
+#include "inet/linklayer/ieee80211/mac/rateselection/Ieee80211PeerModeSelection.h"
+#include "inet/networklayer/common/L3AddressResolver.h"
 #include "inet/networklayer/common/NetworkInterface.h"
 #include "inet/physicallayer/wireless/ieee80211/mode/IIeee80211Mode.h"
 #include "inet/physicallayer/wireless/ieee80211/mode/Ieee80211ModeSet.h"
@@ -25,6 +27,7 @@ Define_Module(RateSelection);
 void RateSelection::initialize(int stage)
 {
     if (stage == INITSTAGE_LOCAL) {
+        mib.reference(this, "mibModule", true);
         getContainingNicModule(this)->subscribe(modesetChangedSignal, this);
     }
     else if (stage == INITSTAGE_LINK_LAYER) {
@@ -60,6 +63,27 @@ void RateSelection::initialize(int stage)
     }
 }
 
+void RateSelection::ensurePerReceiverModesResolved()
+{
+    if (perReceiverResolved)
+        return;
+    perReceiverResolved = true;
+    auto perReceiverBitrate = check_and_cast<cValueMap *>(par("dataFrameBitratePerReceiver").objectValue());
+    for (auto& [path, value] : perReceiverBitrate->getFields()) {
+        auto module = findModuleByPath(path.c_str());
+        if (module == nullptr)
+            throw cRuntimeError("dataFrameBitratePerReceiver: cannot resolve receiver interface module path '%s'", path.c_str());
+        auto networkInterface = check_and_cast<NetworkInterface *>(module);
+        try {
+            auto mode = modeSet->getMode(bps(value.doubleValueInUnit("bps")), Hz(par("dataFrameBandwidth")), par("dataFrameNumSpatialStreams"));
+            perReceiverDataFrameMode[networkInterface->getMacAddress()] = mode;
+        }
+        catch (const cRuntimeError& e) {
+            throw cRuntimeError("dataFrameBitratePerReceiver: cannot use rate '%s' for receiver '%s': %s", value.str().c_str(), path.c_str(), e.what());
+        }
+    }
+}
+
 const IIeee80211Mode *RateSelection::getMode(Packet *packet, const Ptr<const Ieee80211MacHeader>& header)
 {
     const auto& modeReqTag = packet->findTag<Ieee80211ModeReq>();
@@ -80,22 +104,24 @@ const IIeee80211Mode *RateSelection::getMode(Packet *packet, const Ptr<const Iee
 const IIeee80211Mode *RateSelection::computeResponseAckFrameMode(Packet *packet, const Ptr<const Ieee80211DataOrMgmtHeader>& dataOrMgmtHeader)
 {
     if (responseAckFrameMode)
-        return responseAckFrameMode;
+        return getPeerCompatibleMode(dataOrMgmtHeader->getTransmitterAddress(), responseAckFrameMode);
     else {
         auto mode = getMode(packet, dataOrMgmtHeader);
         ASSERT(modeSet->containsMode(mode));
-        return modeSet->getIsMandatory(mode) ? mode : modeSet->getSlowerMandatoryMode(mode); // TODO BSSBasicRateSet
+        auto responseMode = modeSet->getIsMandatory(mode) ? mode : modeSet->getSlowerMandatoryMode(mode); // TODO BSSBasicRateSet
+        return getPeerCompatibleMode(dataOrMgmtHeader->getTransmitterAddress(), responseMode);
     }
 }
 
 const IIeee80211Mode *RateSelection::computeResponseCtsFrameMode(Packet *packet, const Ptr<const Ieee80211RtsFrame>& rtsFrame)
 {
     if (responseCtsFrameMode)
-        return responseCtsFrameMode;
+        return getPeerCompatibleMode(rtsFrame->getTransmitterAddress(), responseCtsFrameMode);
     else {
         auto mode = getMode(packet, rtsFrame);
         ASSERT(modeSet->containsMode(mode));
-        return modeSet->getIsMandatory(mode) ? mode : modeSet->getSlowerMandatoryMode(mode); // TODO BSSBasicRateSet
+        auto responseMode = modeSet->getIsMandatory(mode) ? mode : modeSet->getSlowerMandatoryMode(mode); // TODO BSSBasicRateSet
+        return getPeerCompatibleMode(rtsFrame->getTransmitterAddress(), responseMode);
     }
 }
 
@@ -114,16 +140,28 @@ const IIeee80211Mode *RateSelection::computeResponseCtsFrameMode(Packet *packet,
 //
 const IIeee80211Mode *RateSelection::computeDataOrMgmtFrameMode(const Ptr<const Ieee80211DataOrMgmtHeader>& dataOrMgmtHeader)
 {
+    // Per-receiver override for originated unicast data frames (see dataFrameBitratePerReceiver).
+    // Wins over the interface-wide dataFrameMode / rate control; group-addressed and management
+    // frames are left to the existing rules below.
+    if (dynamicPtrCast<const Ieee80211DataHeader>(dataOrMgmtHeader) && !dataOrMgmtHeader->getReceiverAddress().isMulticast()) {
+        ensurePerReceiverModesResolved();
+        auto it = perReceiverDataFrameMode.find(dataOrMgmtHeader->getReceiverAddress());
+        if (it != perReceiverDataFrameMode.end())
+            return getPeerCompatibleMode(dataOrMgmtHeader->getReceiverAddress(), it->second);
+    }
     if (dataOrMgmtHeader->getReceiverAddress().isMulticast() && multicastFrameMode)
-        return multicastFrameMode;
+        return getPeerCompatibleMode(dataOrMgmtHeader->getReceiverAddress(), multicastFrameMode);
     if (dynamicPtrCast<const Ieee80211DataHeader>(dataOrMgmtHeader) && dataFrameMode)
-        return dataFrameMode;
+        return getPeerCompatibleMode(dataOrMgmtHeader->getReceiverAddress(), dataFrameMode);
     if (dynamicPtrCast<const Ieee80211MgmtHeader>(dataOrMgmtHeader) && mgmtFrameMode)
-        return mgmtFrameMode;
-    if (dataOrMgmtRateControl)
-        return dataOrMgmtRateControl->getRate();
+        return getPeerCompatibleMode(dataOrMgmtHeader->getReceiverAddress(), mgmtFrameMode);
+    // Rate control adapts to the feedback of one peer, and a group-addressed frame has no peer:
+    // it is never acknowledged, so nothing would ever correct a rate chosen for it. Group-addressed
+    // frames therefore take a mandatory rate, as the clause above requires.
+    if (dataOrMgmtRateControl && !dataOrMgmtHeader->getReceiverAddress().isMulticast())
+        return getPeerCompatibleMode(dataOrMgmtHeader->getReceiverAddress(), dataOrMgmtRateControl->getRate(dataOrMgmtHeader->getReceiverAddress()));
     else
-        return fastestMandatoryMode;
+        return getPeerCompatibleMode(dataOrMgmtHeader->getReceiverAddress(), fastestMandatoryMode);
 }
 
 // 802.11-1999 Std.
@@ -135,7 +173,7 @@ const IIeee80211Mode *RateSelection::computeDataOrMgmtFrameMode(const Ptr<const 
 const IIeee80211Mode *RateSelection::computeControlFrameMode(const Ptr<const Ieee80211MacHeader>& header)
 {
     // TODO BSSBasicRateSet
-    return fastestMandatoryMode;
+    return getPeerCompatibleMode(header->getReceiverAddress(), fastestMandatoryMode);
 }
 
 const IIeee80211Mode *RateSelection::computeMode(Packet *packet, const Ptr<const Ieee80211MacHeader>& header)
@@ -166,6 +204,26 @@ void RateSelection::setFrameMode(Packet *packet, const Ptr<const Ieee80211MacHea
 {
     ASSERT(mode != nullptr);
     packet->addTagIfAbsent<Ieee80211ModeReq>()->setMode(mode);
+}
+
+void RateSelection::emitDatarateSelected(cComponent *emitter, const Ptr<const Ieee80211MacHeader>& header, const IIeee80211Mode *mode)
+{
+    double rate = mode->getDataMode()->getNetBitrate().get<bps>();
+    auto dataHeader = dynamicPtrCast<const Ieee80211DataHeader>(header);
+    // naming the station sweeps the network, so skip it if nothing listens anyway
+    if (dataHeader != nullptr && !dataHeader->getReceiverAddress().isMulticast() && emitter->mayHaveListeners(IRateSelection::datarateSelectedSignal)) {
+        cNamedObject details(L3AddressResolver().getHostNameWithMacAddress(dataHeader->getReceiverAddress()).c_str());
+        emitter->emit(IRateSelection::datarateSelectedSignal, rate, &details);
+    }
+    else
+        emitter->emit(IRateSelection::datarateSelectedSignal, rate);
+}
+
+const IIeee80211Mode *RateSelection::getPeerCompatibleMode(const MacAddress& peerAddress, const IIeee80211Mode *mode) const
+{
+    if (mode == nullptr || peerAddress.isMulticast() || !mib || mode->getHtMcsIndex() < 0)
+        return mode;
+    return selectPeerCompatibleMode(modeSet, mib->findPeerHtState(peerAddress), mode, peerAddress);
 }
 
 } // namespace ieee80211

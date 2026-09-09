@@ -70,22 +70,22 @@ section indexes them so the registry stays one place to look.
 | --- | --- | ---: | ---: | ---: |
 | `audit/architecture-exceptions.md` | by row | 0 | 0 | 0 |
 | `audit/naming-exceptions.md` | by row | 0 | 0 | 0 |
-| `design/decisions.md` | by decision | 0 | 0 | 17 |
+| `design/decisions.md` | by decision | 0 | 0 | 20 |
 | `design/node-anatomy.md` | by section | 0 | 0 | 6 |
 | `design/packet-anatomy.md` | by section | 0 | 0 | 5 |
 | `design/protocol-anatomy.md` | by section | 0 | 0 | 5 |
 | `design/rejected-designs.md` | by decision | 0 | 0 | 10 |
-| `design/test-anatomy.md` | by section | 0 | 0 | 5 |
+| `design/test-anatomy.md` | by section | 0 | 0 | 6 |
 | `domain/ieee80211.md` | by rule | 0 | 0 | 14 |
 | `requirement/accepted-requirements.md` | by requirement, complete | 0 | 27 | 0 |
-| `rule/architecture.md` | by rule | 0 | 0 | 40 |
+| `rule/architecture.md` | by rule | 0 | 0 | 44 |
 | `rule/documentation.md` | whole | 0 | 0 | 1 |
 | `rule/naming.md` | by rule | 0 | 0 | 23 |
 | `rule/pull-request.md` | by rule | 0 | 0 | 20 |
-| `rule/quality.md` | by rule | 0 | 0 | 13 |
-| `rule/release.md` | by rule | 0 | 0 | 8 |
+| `rule/quality.md` | by rule | 0 | 0 | 14 |
+| `rule/release.md` | by rule | 0 | 0 | 9 |
 | `rule/sealing.md` | whole | 0 | 0 | 1 |
-| `rule/testing.md` | by rule | 0 | 0 | 13 |
+| `rule/testing.md` | by rule | 0 | 0 | 14 |
 <!-- END SEAL INDEX -->
 
 Nothing is closed yet, and that is the honest state: no document in this set has been audited against

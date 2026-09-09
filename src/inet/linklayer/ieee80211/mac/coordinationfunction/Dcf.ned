@@ -30,9 +30,11 @@ module Dcf extends Module like IDcf
     parameters:
         string rxModule;
         string txModule;
+        string mibModule = default("^.^.mib");
 
         *.rateSelectionModule = "^.rateSelection";
         *.rxModule = "^." + this.rxModule;
+        *.mibModule = default(absPath(this.mibModule));
 
         @class(Dcf);
         displayStringTextFormat = default("{frameSequenceInfo}");
@@ -41,6 +43,7 @@ module Dcf extends Module like IDcf
         @signal[packetReceivedFromPeer](type=inet::Packet);
         @signal[linkBroken](type=inet::Packet);
         @signal[packetDropped](type=inet::Packet);
+        @signal[frameTransmissionOutcome](type=inet::Packet);
         @signal[frameSequenceStarted];
         @signal[frameSequenceFinished];
         @signal[datarateSelected](type=double);

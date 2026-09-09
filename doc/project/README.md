@@ -46,10 +46,18 @@ history/       How did the current state come to be?
 2. **New to the code base** — [design/repository-layout.md](design/repository-layout.md), then
    [design/decisions.md](design/decisions.md).
 3. **About to add a protocol** — [guide/add-a-protocol.md](guide/add-a-protocol.md).
-4. **About to review** — [guide/review-a-pull-request.md](guide/review-a-pull-request.md) and
-   [enforcement/checklist/general.md](enforcement/checklist/general.md).
-5. **Asking "why does INET not do X?"** — [design/rejected-designs.md](design/rejected-designs.md).
-6. **Writing in this folder** — [rule/documentation.md](rule/documentation.md).
+4. **About to review code** — [guide/review-a-code-change.md](guide/review-a-code-change.md), then
+   [guide/review-a-pull-request.md](guide/review-a-pull-request.md) as well for a branch or pull
+   request. Use the [general checklist](enforcement/checklist/general.md), plus the
+   [IEEE 802.11 checklist](enforcement/checklist/ieee80211.md) when applicable, for rule compliance.
+5. **Diagnosing a failed run or implausible result** —
+   [guide/diagnose-a-simulation.md](guide/diagnose-a-simulation.md).
+6. **Comparing or plotting simulation results** —
+   [guide/analyze-simulation-results.md](guide/analyze-simulation-results.md).
+7. **Asking "why does INET not do X?"** — [design/rejected-designs.md](design/rejected-designs.md).
+8. **About to derive protocol tests from a standard** —
+   [guide/derive-tests-from-a-standard.md](guide/derive-tests-from-a-standard.md).
+9. **Writing in this folder** — [rule/documentation.md](rule/documentation.md).
 
 ## Every document
 
@@ -85,12 +93,19 @@ In the order of the chain.
 | [audit/seal-list.md](audit/seal-list.md) | ledger | — | Which paths are sealed, against which audit? |
 | [audit/report/](audit/README.md) | report | — | What did one audit find, on one date? |
 | [evidence/claim-coverage.md](evidence/claim-coverage.md) | measurement | — | Which test demonstrates each requirement? |
+| [evidence/standard/](evidence/standard/rfc791/catalog.md) | what | `<DOC>-*` | Which clause of one standard document is checkable? One folder per document. |
+| [evidence/protocol/](evidence/protocol/ipv4/features.md) | what · procedure | `<PROTO>-F-*` | Which features does a protocol have, and how is each one checked? One folder per protocol, free of INET names. |
+| [evidence/model/](evidence/model/ipv4/coverage.md) | ledger · report · decision | — | What did the run show, what does the model claim, and which test category fits? One folder per protocol. |
 | [guide/contribute-a-change.md](guide/contribute-a-change.md) | procedure | — | The nine steps from scope to seal. |
 | [guide/add-a-protocol.md](guide/add-a-protocol.md) | procedure | — | How do I add a protocol without touching the core? |
 | [guide/audit-a-subsystem.md](guide/audit-a-subsystem.md) | procedure | — | How do I audit a directory and take it to a seal? |
+| [guide/review-a-code-change.md](guide/review-a-code-change.md) | procedure | — | How do I review a code change for correctness and rule compliance? |
 | [guide/review-a-pull-request.md](guide/review-a-pull-request.md) | procedure | — | How do I audit a branch against the `PR-*` rules? |
 | [guide/change-a-baseline.md](guide/change-a-baseline.md) | procedure | — | How do I change a recorded expectation? |
+| [guide/derive-tests-from-a-standard.md](guide/derive-tests-from-a-standard.md) | procedure | — | How do I turn a protocol standard into protocol tests? |
 | [guide/run-the-gates.md](guide/run-the-gates.md) | procedure | — | What do I run before a push? |
+| [guide/diagnose-a-simulation.md](guide/diagnose-a-simulation.md) | procedure | — | How do I explain a failed run or implausible result with reproducible evidence? |
+| [guide/analyze-simulation-results.md](guide/analyze-simulation-results.md) | procedure | — | How do I compare, summarize, and plot simulation results without false repetitions? |
 | [history/design-history.md](history/design-history.md) | history | — | How did the current state come to be? |
 
 ## The header

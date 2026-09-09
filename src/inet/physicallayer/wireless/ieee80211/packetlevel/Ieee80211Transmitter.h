@@ -44,6 +44,9 @@ class INET_API Ieee80211Transmitter : public FlatTransmitterBase
     virtual void setChannel(const Ieee80211Channel *channel);
     virtual void setChannelNumber(int channelNumber);
 
+    virtual const Ieee80211Channel *getChannel() const { return channel; }
+    virtual bool isHtChannelWidthSupported(Hz channelWidth) const;
+
     virtual const ITransmission *createTransmission(const IRadio *radio, const Packet *packet, simtime_t startTime) const override;
 };
 
@@ -52,4 +55,3 @@ class INET_API Ieee80211Transmitter : public FlatTransmitterBase
 } // namespace inet
 
 #endif
-

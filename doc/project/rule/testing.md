@@ -23,6 +23,7 @@ Every test rule in document order.
 | Rule | Statement |
 | --- | --- |
 | [TR-CAT-MATCH](#tr-cat-match) | The test category matches the kind of claim the change makes |
+| [TR-FOCUSED-EVIDENCE](#tr-focused-evidence) | Validation runs the directly related cases and records reproducible evidence |
 | [TR-SHIP-WITH](#tr-ship-with) | New behavior ships with its test, in the same pull request |
 | [TR-FP-NOT-ENOUGH](#tr-fp-not-enough) | A fingerprint is never the only test of new behavior |
 | [TR-VALIDATE-EXTERNAL](#tr-validate-external) | A claim about the real world is checked against something outside INET |
@@ -31,9 +32,9 @@ Every test rule in document order.
 
 | Rule | Statement |
 | --- | --- |
-| [TR-BASELINE-DELIBERATE](#tr-baseline-deliberate) | A baseline changes on purpose, never as a side effect |
+| [TR-BASELINE-DELIBERATE](#tr-baseline-deliberate) | A baseline changes only after explicit approval, never as a side effect |
 | [TR-BASELINE-PROVENANCE](#tr-baseline-provenance) | A baseline change names its cause and its reason |
-| [TR-BASELINE-COMMIT](#tr-baseline-commit) | A baseline update is its own commit |
+| [TR-BASELINE-COMMIT](#tr-baseline-commit) | A baseline update travels with the change that causes it |
 
 **Determinism**
 
@@ -74,6 +75,27 @@ and a statistical test cannot establish that a field is encoded correctly.
 
 *Enforced at T4 — agent review: does the test type match the claim?*
 
+### TR-FOCUSED-EVIDENCE
+
+**Validation runs the cases directly related to the changed contract through explicit filters, and
+records enough context to reproduce the result.**
+
+Select cases from the changed paths, symbols and behavioral contracts, in the category required by
+[TR-CAT-MATCH](#tr-cat-match), and state that mapping. Invoke the test runner with an explicit case,
+tag or filter. An unfiltered category or repository-wide suite is useful integration coverage, but
+it is not a substitute for evidence that reaches the changed behavior. If no directly related case
+exists, report that coverage gap instead of hiding it inside a broader green suite; new behavior
+still owes a test under [TR-SHIP-WITH](#tr-ship-with).
+
+A reported result includes the working directory, the exact build and test commands, build mode,
+configuration, run and seed where applicable, explicit filter, exit status, and the paths of any
+logs, captures or result artifacts used to support the claim. When compiled INET source or
+generated-code inputs changed, rebuild the matching INET library before the test so the executable
+and generated sources are current with the source tree.
+
+*Enforced at T4 — agent review of the change-to-test mapping, command scope, library freshness and
+reported evidence.*
+
 ### TR-SHIP-WITH
 
 **New behavior ships with its test, in the same pull request.**
@@ -111,15 +133,23 @@ judge whether the agreement is good.
 
 ### TR-BASELINE-DELIBERATE
 
-**A recorded expectation changes because someone decided it should, never as a side effect of
-another change.**
+**A recorded expectation changes only after its exact scope and reason receive explicit approval,
+never as a side effect of another change.**
 
 A fingerprint `.csv`, a statistical baseline, an expected output: each is a claim that *these values
 are correct*. Regenerating one to make CI green is the single fastest way to lose every regression
-guarantee the suite provides, and it is invisible in a large diff — which is precisely why
-[PR-SPLIT-BASELINE](pull-request.md#pr-split-baseline) puts it in a commit of its own.
+guarantee the suite provides, and it is invisible in a large diff. Before regeneration, present the
+specific baselines or configurations that would move, the behavior that caused the movement, and
+why the new values would be right; the human responsible for accepting the change approves that
+proposal explicitly. Approval of the source change is not implicit approval to rewrite its recorded
+expectations.
 
-*Enforced at T3 — a per-commit check that source and baseline do not change together.*
+The defence continues in the commit message: the commit that moves the values states which behavior
+moved and why the new values are right
+([PR-SPLIT-BASELINE](pull-request.md#pr-split-baseline)).
+
+*Enforced at T5 for explicit approval; T4 for review of the message against the moved values; T3 for
+a baseline-only commit that gives no reason.*
 
 ### TR-BASELINE-PROVENANCE
 
@@ -134,13 +164,20 @@ was intended.
 
 ### TR-BASELINE-COMMIT
 
-**A baseline update is its own commit, directly after the commit that changes behavior.**
+**A baseline update travels with the commit that changes the behavior. It stands alone only when no
+single commit causes it.**
 
 The rule is [PR-SPLIT-BASELINE](pull-request.md#pr-split-baseline); it is repeated here because it is
-a test rule as much as a commit rule. Inside a source commit the update is invisible, and "the
-fingerprint changed" stops being a conscious decision.
+a test rule as much as a commit rule. The test suite is the reason for this form. A commit that moves
+a trajectory and leaves the recorded values behind fails its own fingerprint test, so `git bisect`
+over the suite names it as the first bad commit and teaches the next developer something false.
 
-*Enforced at T3 — the same per-commit check.*
+A re-record that no single commit causes — a compiler, tool or solver version change, or drift from
+outside the branch — keeps a commit of its own, because there is no commit beside it to hold the
+reason.
+
+*Enforced at T3 — a baseline-only commit that stands directly after the source commit that moves the
+values; T4 for the reason itself.*
 
 ## Determinism
 

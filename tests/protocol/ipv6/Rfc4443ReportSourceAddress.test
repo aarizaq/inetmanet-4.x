@@ -1,0 +1,85 @@
+%description:
+
+RFC 4443 — a router's report about a packet it forwarded carries one of the router's own
+unicast addresses, the one of its interface toward the source.
+
+Checks RFC4443-SRC-2 (must; should) from doc/project/evidence/standard/rfc4443/catalog.md. The English
+procedure is in doc/project/evidence/protocol/ipv6/checks/error-report.md#report-source-address; the program
+steps below map one to one onto its expected observations. Host A sends with hop limit 1;
+the router's Time Exceeded must come from a unicast address of the router. Mapping of the
+mockup: host A = hostA, router R = router (its interface on link 1 is eth0), host B = hostB.
+
+%includes:
+#include "ProtocolTest.h"
+#include "Ipv6Fields.h"
+
+%global:
+
+using namespace inet;
+using namespace inet::protocoltest;
+
+Define_ProtocolTestProgram()
+{
+    return ProtocolTest("rfc4443_report_source_address")
+        // Expected observation 1: the packet on link 1 with hop limit 1.
+        .once(on("hostA.eth[0].mac").signal("packetSentToLower")
+                  .packet("udp.destPort == 5000 && ipv6.hopLimit == 1")
+                  .describe("the packet on link 1 with hop limit 1")
+                  .within(6.0))
+        // Expected observation 2: the Time Exceeded at host A comes from the router's own address
+        // on link 1 (RFC4443-SRC-2).
+        .once(on("hostA.eth[0].mac").signal("packetReceivedFromLower")
+                  .packet("icmpv6.type == 3")
+                  .match([](const MatchContext& c) { return ipv6Address(c.event.packet, "ipv6.srcAddress") == nodeIpv6Address("router%eth0"); })
+                  .describe("the Time Exceeded message at host A with the router's link 1 address as source")
+                  .within(0.5));
+}
+
+%activity:
+// present only so opp_test compiles the %global above; this module is not in the network.
+EV << "rfc4443_report_source_address compiled\n";
+
+%file: test.ned
+
+import inet.node.ethernet.Eth100M;
+import inet.node.ipv6.Router6;
+import inet.node.ipv6.StandardHost6;
+import inet.networklayer.configurator.ipv6.Ipv6FlatNetworkConfigurator;
+
+// The common mockup of doc/project/evidence/protocol/ipv6/checks.md: hostA -- router -- hostB, IPv6 only.
+network Rfc8200Net
+{
+    submodules:
+        configurator: Ipv6FlatNetworkConfigurator { @display("p=100,50"); }
+        hostA: StandardHost6 { @display("p=250,100"); }
+        router: Router6 { @display("p=400,100"); }
+        hostB: StandardHost6 { @display("p=550,100"); }
+    connections:
+        hostA.ethg++ <--> Eth100M <--> router.ethg++; // link 1 = router.eth[0]
+        router.ethg++ <--> Eth100M <--> hostB.ethg++; // link 2 = router.eth[1]
+}
+
+%inifile: omnetpp.ini
+
+[General]
+network = Rfc8200Net
+sim-time-limit = 10s
+seed-set = 0
+
+# One UDP datagram from host A to host B. The applications start at 5 s, after router
+# discovery, address configuration and duplicate address detection have run.
+*.hostA.numApps = 1
+*.hostA.app[0].typename = "UdpBasicApp"
+*.hostA.app[0].destAddresses = "hostB"
+*.hostA.app[0].destPort = 5000
+*.hostA.app[0].localPort = 4000
+*.hostA.app[0].messageLength = 100B
+*.hostA.app[0].timeToLive = 1
+*.hostA.app[0].startTime = 5s
+*.hostA.app[0].sendInterval = 10s
+*.hostB.numApps = 1
+*.hostB.app[0].typename = "UdpSink"
+*.hostB.app[0].localPort = 5000
+
+%contains: stdout
+PROTOCOLTEST rfc4443_report_source_address: PASS
