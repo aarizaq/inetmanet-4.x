@@ -228,8 +228,39 @@ void Arp::dumpArpPacket(const ArpPacket *arp)
 void Arp::processArpPacket(Packet *packet)
 {
     EV_INFO << "Received " << packet << " from network protocol.\n";
-    const auto& arp = packet->peekAtFront<ArpPacket>();
+    // The serializer marks a packet incorrect when its hardware space is not Ethernet or
+    // its protocol space is not IPv4, which are the first two questions the reception
+    // algorithm of RFC 826 asks. Peeking with the default flags turned that mark into an
+    // error and stopped the run, so nothing ever read it. Peek permissively and then do
+    // what the algorithm says for either answer: end of processing.
+    const auto& arp = packet->peekAtFront<ArpPacket>(b(-1), Chunk::PF_ALLOW_INCORRECT);
+    if (!arp->isCorrect()) {
+        EV_WARN << "ARP packet with an unsupported hardware or protocol space, dropping\n";
+        PacketDropDetails details;
+        details.setReason(INCORRECTLY_RECEIVED);
+        emit(packetDroppedSignal, packet, &details);
+        delete packet;
+        return;
+    }
     dumpArpPacket(arp.get());
+
+    // RFC 5227 section 2.1.1: "if the host receives an ARP Reply where the 'sender IP
+    // address' is the address being probed for, the host MUST treat this address as being in
+    // use by some other host". The reply answers a probe whose sender protocol address was
+    // all zero, so it is addressed to 0.0.0.0 and addressRecognized below cannot see it.
+    if (arp->getOpcode() == ARP_REPLY) {
+        auto probed = probedAddresses.find(arp->getSrcIpAddress());
+        if (probed != probedAddresses.end()) {
+            EV_INFO << "Address conflict: " << arp->getSrcIpAddress() << " is in use by "
+                    << arp->getSrcMacAddress() << "." << endl;
+            Notification signal(arp->getSrcIpAddress(), arp->getSrcMacAddress(),
+                    ift->getInterfaceById(probed->second));
+            emit(arpAddressConflictDetectedSignal, &signal);
+            probedAddresses.erase(probed);
+            delete packet;
+            return;
+        }
+    }
 
     // extract input port
     NetworkInterface *ie = ift->getInterfaceById(packet->getTag<InterfaceInd>()->getInterfaceId());
@@ -267,17 +298,24 @@ void Arp::processArpPacket(Packet *packet)
 
     if (srcMacAddress.isUnspecified())
         throw cRuntimeError("wrong ARP packet: source MAC address is empty");
-    if (srcIpAddress.isUnspecified())
-        throw cRuntimeError("wrong ARP packet: source IPv4 address is empty");
+    // RFC 5227 section 2.1.1 makes an all-zero sender protocol address lawful: the packet is
+    // an ARP Probe, which asks whether anybody holds the target address and claims nothing
+    // for itself. Throwing let any neighbour stop the run with one. A probe carries no
+    // sender address to record, so the table steps below are skipped for it, and the target
+    // question still gets its answer.
+    bool isProbe = srcIpAddress.isUnspecified();
 
     bool mergeFlag = false;
-    // "If ... sender protocol address is already in my translation table"
-    auto it = arpCache.find(srcIpAddress);
-    if (it != arpCache.end()) {
-        // "update the sender hardware address field"
-        ArpCacheEntry *entry = it->second;
-        updateArpCache(entry, srcMacAddress);
-        mergeFlag = true;
+    auto it = arpCache.end();
+    if (!isProbe) {
+        // "If ... sender protocol address is already in my translation table"
+        it = arpCache.find(srcIpAddress);
+        if (it != arpCache.end()) {
+            // "update the sender hardware address field"
+            ArpCacheEntry *entry = it->second;
+            updateArpCache(entry, srcMacAddress);
+            mergeFlag = true;
+        }
     }
 
     // "?Am I the target protocol address?"
@@ -285,7 +323,7 @@ void Arp::processArpPacket(Packet *packet)
     if (addressRecognized(arp->getDestIpAddress(), ie)) {
         // "If Merge_flag is false, add the triplet protocol type, sender
         // protocol address, sender hardware address to the translation table"
-        if (!mergeFlag) {
+        if (!mergeFlag && !isProbe) {
             ArpCacheEntry *entry;
             if (it != arpCache.end()) {
                 entry = it->second;
@@ -355,7 +393,12 @@ void Arp::processArpPacket(Packet *packet)
                 throw cRuntimeError("RARP reply received: RARP is not supported");
 
             default:
-                throw cRuntimeError("Unsupported opcode %d in received ARP packet", arp->getOpcode());
+                // RFC 5494 section 3 makes 24 and 25 legal values a neighbour may put on a
+                // link, and RFC 826 ends processing for an operation the host does not
+                // implement. Throwing let any neighbour stop the run. The table step above
+                // has already run, which is what RFC 826 asks for.
+                EV_WARN << "Unsupported opcode " << arp->getOpcode() << " in received ARP packet, dropping\n";
+                break;
         }
     }
     else {
@@ -491,6 +534,8 @@ void Arp::sendArpProbe(const NetworkInterface *ie, MacAddress srcAddr, Ipv4Addre
     // both must be set
     ASSERT(!srcAddr.isUnspecified());
     ASSERT(!probedAddr.isUnspecified());
+
+    probedAddresses[probedAddr] = ie->getInterfaceId();
 
     Packet *packet = new Packet("arpProbe");
     const auto& arp = makeShared<ArpPacket>();

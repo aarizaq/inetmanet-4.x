@@ -77,6 +77,209 @@ Notable backward incompatible changes are the following:
    producer. Inside INET, the client in the Network6 and Network7 steps of
    tutorials/protocol now sends its packet; before, it sent none.
 
+5. An unrecognized ICMP or ICMPv6 type is discarded, not thrown
+
+   Icmp::processIcmpMessage and the ICMPv6 type switch each had a default branch
+   for a message type they do not know, and each branch threw a cRuntimeError.
+   Any peer could therefore end a simulation with one packet.
+
+   RFC 1122 section 3.2.2 and RFC 4443 section 2.4(b) both require a silent
+   discard. Both branches now emit packetDropped and delete the packet. A
+   simulation that used to stop with "Unknown ICMP type" carries on.
+
+   No baseline moves. A scenario that reached either branch aborted, so it cannot
+   be in a passing fingerprint or statistical baseline.
+
+6. IPv6 reassembly writes the payload length of the reassembled datagram
+
+   Ipv6FragBuf::addFragment rebuilt the datagram from the base header of the
+   first fragment and left its Payload Length field untouched, so the field
+   described that fragment and not the datagram.
+
+   Where the field exceeded the reassembled data, Ipv6::decapsulate asserted and
+   the run stopped. Where it fell short, which is the ordinary two-fragment case,
+   the same function truncated the datagram silently to the first fragment's
+   length. Every IPv6 reassembly was affected. The field now counts every octet
+   after the base header, extension headers included, as RFC 8200 section 3
+   requires.
+
+   The same function also erased a stale end() iterator when one fragment
+   completed a datagram, which aborted the run on an atomic fragment.
+
+   Simulations that reassemble IPv6 fragments deliver whole datagrams now, so
+   their trajectories and fingerprints may change.
+
+7. ICMPv6 drops an error report for a protocol nothing registered
+
+   Icmpv6 handed the error indication up to the protocol the quoted datagram
+   names without asking whether anything on the node had registered it. The
+   MessageDispatcher then knew no route and stopped the run, so any node could be
+   halted by an ICMPv6 error about a protocol it does not run.
+
+   Icmpv6 already kept the set of registered transport protocols and never read
+   it. It reads it now and drops the report, as Icmp has always done for IPv4.
+
+8. No ICMP or ICMPv6 error about a link-layer broadcast or multicast
+
+   Icmp::maySendErrorMessage and Icmpv6::validateDatagramPromptingError each
+   suppressed an error report for four conditions, and every condition read an IP
+   address. RFC 1122 section 3.2.2 and RFC 4443 section 2.4(e) also forbid a
+   report about a datagram that arrived in a link-layer broadcast or multicast
+   frame, which no IP address records.
+
+   Both functions read the MacAddressInd tag of the arriving frame now. A node
+   that receives a unicast-addressed datagram inside a broadcast frame, for a
+   closed port or an unknown protocol, stays silent instead of answering the
+   address in the source field.
+
+   Simulations where that happens send fewer ICMP messages, so their
+   trajectories and fingerprints may change.
+
+9. IPv6 fills in two length fields it used to leave wrong
+
+   A Packet Too Big report carried an MTU of zero. Icmpv6::sendErrorMessage took
+   no MTU and handed createPacketTooBigMsg a literal 0, under a bare "TODO
+   implement MTU support". It takes one now, and Ipv6 passes the MTU it has
+   already read from the outgoing interface two lines above the call, as RFC 4443
+   section 3.2 requires. A source that receives the report can act on it.
+
+   Every fragment of a fragmented datagram carried the Payload Length of the
+   whole datagram, because Ipv6::fragmentAndSend builds each fragment from a copy
+   of the base header. Each fragment now carries its own: the fragment header
+   plus that fragment's share.
+
+   Simulations that fragment IPv6 datagrams or report a too-big packet put
+   different bytes on the wire, so their fingerprints may change.
+
+10. IPv4 verifies the header checksum, and reassembly reads the protocol
+
+   Ipv4 dropped a datagram whose header checksum failed only when the header was
+   also structurally incorrect: the guard read "!isCorrect() && !verifyChecksum()"
+   and an AND short-circuits, so a well-formed header never reached the checksum
+   test and a wrong checksum was accepted. The guard is an OR now, which is what
+   RFC 1122 section 3.2.1.2 requires.
+
+   Ipv4FragBuf::Key, the reassembly key, carried three of the four fields RFC 791
+   names: source, destination and identification, but not the protocol. Fragments
+   of two datagrams that shared an identification but used different protocols
+   reassembled into each other. The key carries the protocol now.
+
+   Simulations with header bit errors drop more datagrams than before, and
+   simulations that fragment two protocols at once reassemble them apart, so
+   fingerprints for those scenarios may change.
+
+11. An ARP packet a host cannot process is discarded, not thrown
+
+    Arp::processArpPacket stopped the run in two places a neighbour controls. Its
+    opcode switch threw on any operation the model does not implement, and RFC
+    5494 section 3 makes 24 and 25 legal values a neighbour may put on a link. And
+    it peeked the packet with the default flags, which turns an incorrect chunk
+    into an error; the serializer marks a packet incorrect when its hardware space
+    is not Ethernet or its protocol space is not IPv4, so nothing ever read that
+    mark.
+
+    Both now end processing, as RFC 826 states: the unknown opcode breaks out of
+    the switch after the table step, and the unsupported space is dropped with a
+    packetDropped signal. The two RARP branches still throw, which the model means
+    as a statement that it does not implement RARP.
+
+12. TCP takes its first round-trip measurement as RFC 6298 states
+
+    rttMeasurementComplete folded the first measurement into the recurrence of
+    RFC 6298 section 2.3, starting from srtt = 0 and rttvar = 3/4. The first
+    smoothed value was therefore one eighth of the measurement and the first
+    timeout described the initial guess rather than the path.
+
+    Section 2.2 gives the first measurement a case of its own: SRTT = R and
+    RTTVAR = R/2. The estimator now does that, and a new rttMeasured flag in the
+    algorithm state tells the two cases apart.
+
+    Every TCP connection's early retransmission timeout changes, so trajectories
+    and fingerprints of TCP simulations move with it.
+
+13. QUIC closes the connection on an unknown frame type, and a server pads its
+    Initial datagram
+
+    A frame of a type the model does not know threw a cRuntimeError, so any peer
+    could stop a run with one frame. RFC 9000 section 12.4 makes it a connection
+    error of type FRAME_ENCODING_ERROR, and the model now sends CONNECTION_CLOSE
+    with that code. Two further stops sat behind it: the frame loop read on past
+    the error into bytes that are no frame header, and the datagram loop then
+    read those bytes as a packet header. Both stop when a connection error is
+    raised.
+
+    PacketBuilder::buildServerInitialPacket did not pad. RFC 9000 section 14.1
+    requires a server to expand a datagram carrying an ack-eliciting Initial
+    packet to at least 1200 octets, which the client's builder has always done.
+
+14. DHCP corrects seven defects in its client and server
+
+    The client drew a new transaction identifier for every DHCPREQUEST, so a
+    request never carried the identifier of the offer it answered, against RFC
+    2131 section 4.4.1. It keeps the identifier of the exchange now, and a new
+    transaction draws its own.
+
+    The server wrote three field values it had no right to write. It put the
+    gateway address into the giaddr of a DHCPOFFER, where RFC 2131 table 3 wants
+    the giaddr of the client's DHCPDISCOVER; it put the leased address into the
+    ciaddr of a DHCPACK, where the table allows only the client's ciaddr or zero;
+    and it wrote a constant false into the flags of every reply, where the table
+    wants the flags of the message it answers. It also returned a domain name
+    server option holding 0.0.0.0, because nothing in the model ever assigns that
+    field.
+
+    The server stayed silent for a DHCPREQUEST naming an address of a foreign
+    subnet, because it asked its lease table before it asked about the subnet and
+    a foreign address is in no table. RFC 2131 section 4.3.2 wants a DHCPNAK.
+
+    The client's retransmission delay was a constant 60 seconds, and it never
+    repeated a DHCPREQUEST at all: it abandoned the transaction at the first
+    timeout. RFC 2131 section 4.1 asks for a randomized exponential backoff, 4
+    seconds doubling to 64, and section 3.1 asks for the request to be repeated.
+    Both are there now, for the initial exchange only: RENEWING and REBINDING keep
+    the schedule of section 4.4.5.
+
+    DHCP exchanges now take different times and put different bytes on the wire,
+    so trajectories and fingerprints of simulations that use DHCP move.
+
+15. A DHCP client checks the granted address before it takes it
+
+    RFC 2131 section 4.4.1 asks a client to check that the address it was granted
+    is not already in use, and RFC 5227 section 2.1.1 makes that check an ARP
+    Probe. The client now sends one, waits probeWait (1s by default; 0s turns the
+    check off), and takes the address only if nobody answers. If somebody does, it
+    sends a DHCPDECLINE and starts again. It probes only an address it is about to
+    start using, after REQUESTING or REBOOTING, and only on a link that uses ARP.
+
+    Three of the four pieces this needed were already written and unreachable.
+    Arp::sendArpProbe had no caller, DhcpClient::sendDecline had no caller, and
+    Arp::processArpPacket threw "wrong ARP packet: source IPv4 address is empty"
+    on the very packet a probe is, so a neighbour's lawful probe stopped the run.
+    An all-zero sender protocol address marks a probe: it claims nothing, so the
+    table steps are skipped for it and the target question still gets its answer.
+
+    Arp gained an arpAddressConflictDetected signal. A reply to a probe is
+    addressed to the all-zero sender address, so the target question cannot
+    recognize it; Arp remembers what it is probing and matches the reply by its
+    sender protocol address instead.
+
+    IArp gained a pure virtual sendArpProbe, which DhcpClient calls. An IArp
+    implementation outside INET must override it; the migration guide says how.
+    GlobalArp overrides it with an empty body, because it has nobody to ask.
+
+    DhcpClient gained an arpModule parameter and a probeWait parameter.
+    DHCPDECLINE now carries the server identifier, which RFC 2131 table 5
+    requires.
+
+    DhcpServer marks a declined address unavailable, which RFC 2131 section 4.3.3
+    makes a MUST. Without it the server offered the same address again and the
+    client declined again for the whole run.
+
+    Every DHCP client now spends probeWait between the acknowledgement and taking
+    the address. The lease timers T1 and T2 are armed when the acknowledgement
+    arrives, so renewal timing does not move; traffic from the client starts one
+    probeWait later.
+
 Notable backward compatible changes are the following:
 
 1. IEEE 802.11 per-station rate statistics

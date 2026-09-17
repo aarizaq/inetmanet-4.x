@@ -17,6 +17,8 @@
 #include "inet/networklayer/ipv4/Ipv4RoutingTable.h"
 #include "inet/transportlayer/contract/udp/UdpSocket.h"
 
+#include "inet/networklayer/contract/IArp.h"
+
 namespace inet {
 
 /**
@@ -40,6 +42,9 @@ class INET_API DhcpClient : public ApplicationBase, public cListener, public Udp
     cModule *host = nullptr; // containing host module (@networkNode)
     NetworkInterface *ie = nullptr; // interface to configure
     ModuleRefByPar<IIpv4RoutingTable> irt; // routing table to update
+    ModuleRefByPar<IArp> arp; // ARP module, used to probe the granted address
+    simtime_t probeWait; // how long to wait for an answer to the probe; 0 turns the probe off
+    cMessage *timerProbe = nullptr; // RFC 5227: waiting for an answer to the probe
 
     // state
     cMessage *timerT1 = nullptr; // time at which the client enters the RENEWING state
@@ -57,12 +62,26 @@ class INET_API DhcpClient : public ApplicationBase, public cListener, public Udp
     int numReceived = 0; // number of received DHCP messages
     int responseTimeout = 0; // timeout waiting for DHCPACKs, DHCPOFFERs
 
+    // RFC 2131 section 4.1 asks for a randomized exponential backoff between
+    // retransmissions: 4 seconds before the first, doubled each time, up to 64, each
+    // randomized by a uniform value between -1 and +1 second. retransmissionDelay holds the
+    // undelayed value for the next arming; a new transaction resets it.
+    simtime_t retransmissionDelay;
+    int numRequestRetransmissions = 0; // DHCPREQUESTs sent in this transaction with no reply
+
   protected:
     virtual int numInitStages() const override { return NUM_INIT_STAGES; }
     virtual void initialize(int stage) override;
     virtual void finish() override;
     virtual void handleMessageWhenUp(cMessage *msg) override;
     virtual void scheduleTimerTO(DhcpTimerType type);
+
+    /**
+     * Arms the response timeout with the randomized exponential backoff of RFC 2131
+     * section 4.1. Only the initial exchange uses it: RFC 2131 section 4.4.5 gives
+     * RENEWING and REBINDING a schedule of their own, and scheduleTimerTO keeps that.
+     */
+    virtual void scheduleRetransmissionTimerTO(DhcpTimerType type);
     virtual void scheduleTimerT1();
     virtual void scheduleTimerT2();
     static const char *getStateName(ClientState state);
@@ -113,6 +132,13 @@ class INET_API DhcpClient : public ApplicationBase, public cListener, public Udp
      * Client to server indicating network address is already in use.
      */
     virtual void sendDecline(Ipv4Address declinedIp);
+
+    /**
+     * RFC 2131 section 4.4.1: the client SHOULD check that the granted address is not
+     * already in use before it takes it. The check is an ARP probe (RFC 5227 section 2.1.1),
+     * and its answer, if one comes, arrives as an arpAddressConflictDetected signal.
+     */
+    virtual void probeGrantedAddress();
 
     /*
      * Records configuration parameters from a DHCPACK message.

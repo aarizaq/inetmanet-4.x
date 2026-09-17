@@ -11,6 +11,8 @@
 #include "inet/common/ModuleAccess.h"
 #include "inet/common/ProtocolGroup.h"
 #include "inet/common/ProtocolTag_m.h"
+#include "inet/common/stlutils.h"
+#include "inet/linklayer/common/MacAddressTag_m.h"
 #include "inet/common/packet/Message.h"
 #include "inet/networklayer/common/Icmpv6ErrorTag_m.h"
 #include "inet/common/checksum/Checksum.h"
@@ -143,6 +145,13 @@ void Icmpv6::processICMPv6Message(Packet *packet)
             // ICMP error answer to an ICMP packet:
             errorOut(indication);
         }
+        else if (!contains(transportProtocols, transportProtocol)) {
+            // Nothing registered for the protocol the quoted datagram names, so there is
+            // nobody to hand the report to. Sending it anyway reaches a MessageDispatcher
+            // that knows no route for it and stops the run. Icmp does the same check.
+            EV_ERROR << "Transport protocol " << transportProtocol << " not registered, packet dropped\n";
+            delete indication;
+        }
         else {
             // Send the Indication to IPv6 via ipv6Out; IPv6 will pop the quoted
             // IPv6 header and forward the indication to the transport protocol.
@@ -187,8 +196,17 @@ void Icmpv6::processICMPv6Message(Packet *packet)
                 send(packet, "ipv6Out");
                 break;
             }
-            default:
-                throw cRuntimeError("Unknown ICMPv6 message type %d received", type);
+            default: {
+                // RFC 4443 section 2.4(b): a node MUST silently discard an ICMPv6
+                // informational message of a type it does not recognize. Stopping the
+                // simulation let any peer end the run with one packet.
+                EV_WARN << "Unknown ICMPv6 message type " << type << ", packet dropped\n";
+                PacketDropDetails details;
+                details.setReason(OTHER_PACKET_DROP);
+                emit(packetDroppedSignal, packet, &details);
+                delete packet;
+                break;
+            }
         }
     }
 }
@@ -252,7 +270,7 @@ void Icmpv6::processEchoReply(Packet *packet, const Ptr<const Icmpv6EchoReplyMsg
     delete packet;
 }
 
-void Icmpv6::sendErrorMessage(Packet *origDatagram, Icmpv6Type type, int code)
+void Icmpv6::sendErrorMessage(Packet *origDatagram, Icmpv6Type type, int code, int mtu)
 {
     Enter_Method("sendErrorMessage(datagram, type=%d, code=%d)", type, code);
 
@@ -268,9 +286,10 @@ void Icmpv6::sendErrorMessage(Packet *origDatagram, Icmpv6Type type, int code)
 
     if (type == ICMPv6_DESTINATION_UNREACHABLE)
         errorMsg = createDestUnreachableMsg(static_cast<Icmpv6DestUnav>(code));
-    // TODO implement MTU support.
     else if (type == ICMPv6_PACKET_TOO_BIG)
-        errorMsg = createPacketTooBigMsg(0);
+        // RFC 4443 section 3.2: the MTU field carries the MTU of the next-hop link. It
+        // used to be a literal zero, which names no link and tells the source nothing.
+        errorMsg = createPacketTooBigMsg(mtu);
     else if (type == ICMPv6_TIME_EXCEEDED)
         errorMsg = createTimeExceededMsg(static_cast<Icmpv6TimeEx>(code));
     else if (type == ICMPv6_PARAMETER_PROBLEM)
@@ -385,6 +404,18 @@ bool Icmpv6::validateDatagramPromptingError(Packet *packet)
     if (ipv6Header->getSrcAddress().isMulticast()) {
         EV_INFO << "won't send ICMP error messages to multicast address, message " << ipv6Header << endl;
         return false;
+    }
+
+    // RFC 4443 section 2.4(e): no ICMPv6 error message about a packet that arrived as a
+    // link-layer broadcast or multicast. The conditions above read the IPv6 addresses; this
+    // one reads the frame the packet arrived in, whose destination the IPv6 header does not
+    // record.
+    if (auto& macAddressInd = packet->findTag<MacAddressInd>()) {
+        const MacAddress& destMacAddress = macAddressInd->getDestAddress();
+        if (destMacAddress.isBroadcast() || destMacAddress.isMulticast()) {
+            EV_INFO << "won't send ICMP error messages for a link-layer broadcast or multicast, message " << ipv6Header << endl;
+            return false;
+        }
     }
 
     // do not reply with error message to error message
