@@ -48,6 +48,46 @@ matches the discard by size instead. Any observer that filters UDP drops by fiel
 affected, not only this test. IPv4's drop paths keep the tag, which is why the IPv4 checks
 could filter their discards by field.
 
+### A received datagram raised the same signal twice — fixed
+
+`Udp` inherits `LayeredProtocolBase::handleLowerMessage`, which emits
+`packetReceivedFromLower` and then calls `handleLowerPacket`
+([LayeredProtocolBase.cc:35-43](../../../../../src/inet/common/LayeredProtocolBase.cc#L35-L43)).
+`Udp::handleLowerPacket` calls `processUDPPacket`, which emitted the same signal again on the
+same packet. Every datagram from the network layer therefore raised
+`packetReceivedFromLower` twice, at one simulation time, with one packet id. The duplicate
+was old: the base class gained its emit in 2017 and the one in `Udp` predates the 2019 commit
+that moved it.
+
+No recorded result doubled. `Udp.ned` declares the signal and sources no `@statistic` from
+it, so only a listener saw the double. A count of arrivals at a UDP module reported twice the
+true number.
+
+UDP was alone in this. `Ipv4` and `Ipv6` override `handleMessageWhenUp`, so the base class
+never runs for them, and `Tcp` emits nothing of its own.
+
+The emit is gone from `Udp.cc`, and `tests/protocol/self/CountAtReceiver.test` holds it gone:
+five datagrams counted at a receiving UDP module must be five, and four, six and ten all
+fail. No test verdict moved when the emit was removed, except one that had been passing for
+the wrong reason. See the QUIC note below.
+
+### A test can pass because two faults cancel
+
+`quic/Rfc9000AntiAmplification.test` keeps a running sum of the bytes a server received and
+sent, and it fails at the first moment the sent sum passes three times the received sum. Its
+watch was an ordered step, so it began only **after** the arrival that opens the window, and
+its received sum started at zero. The check should have failed at the server's first byte.
+It passed, because the duplicate emit above handed it a second copy of that arrival.
+
+Removing one fault exposed the other. The watch is a guard now, so it counts the opening
+arrival itself. The model is well inside the limit: a budget of one times the received bytes
+passes too, and a budget of zero fails at the first send, which is how the guard was shown to
+look at anything.
+
+The lesson is about the shape and not about UDP. A step that both opens a window and primes a
+counter cannot do the second job, because the engine gives the event to one step. A guard sees
+every event, including the one an ordered step consumes.
+
 ### The model works from RFC 768 and never names it
 
 `Udp.ned` says "as defined by the RFC" twice and never gives a number, while

@@ -56,6 +56,7 @@ class INET_API Protocol
     static const Protocol bmac;
     static const Protocol cdp;
     static const Protocol clns;
+    static const Protocol dhcp;
     static const Protocol dsdv2;
     static const Protocol dsr;
     static const Protocol dymo;
@@ -110,6 +111,8 @@ class INET_API Protocol
     static const Protocol ppp;
     static const Protocol quic;
     static const Protocol rip;
+    static const Protocol rtcp;
+    static const Protocol rtp;
     static const Protocol rsvpTe;
     static const Protocol rtsp;
     static const Protocol sctp;

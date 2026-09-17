@@ -24,6 +24,7 @@ Register_Serializer(Igmpv2Report, IgmpHeaderSerializer);
 Register_Serializer(Igmpv2Leave, IgmpHeaderSerializer);
 Register_Serializer(Igmpv3Query, IgmpHeaderSerializer);
 Register_Serializer(Igmpv3Report, IgmpHeaderSerializer);
+Register_Serializer(RgmpHello, IgmpHeaderSerializer);
 
 void IgmpHeaderSerializer::serializeFields(MemoryOutputStream& stream, const Ptr<const Chunk>& chunk) const
 {
@@ -39,7 +40,8 @@ void IgmpHeaderSerializer::serializeFields(MemoryOutputStream& stream, const Ptr
             stream.writeUint16Be(igmpMessage->getChecksum());
             stream.writeIpv4Address(check_and_cast<const IgmpQuery *>(igmpMessage.get())->getGroupAddress());
             if (auto igmpv3Query = dynamicPtrCast<const Igmpv3Query>(igmpMessage)) {
-                ASSERT(igmpv3Query->getRobustnessVariable() <= 7);
+                if (igmpv3Query->getRobustnessVariable() > 7)
+                    throw cRuntimeError("Cannot serialize IGMPv3 Query: robustnessVariable (%u) does not fit the 3-bit QRV field (max 7)", igmpv3Query->getRobustnessVariable());
                 stream.writeUint4(igmpv3Query->getResv());
                 stream.writeBit(igmpv3Query->getSuppressRouterProc());
                 stream.writeNBitsOfUint64Be(igmpv3Query->getRobustnessVariable(), 3);
@@ -92,6 +94,13 @@ void IgmpHeaderSerializer::serializeFields(MemoryOutputStream& stream, const Ptr
                     stream.writeUint32Be(groupRecord.getAuxData(i));
                 }
             }
+            break;
+        }
+        case RGMP_HELLO: {
+            auto rgmpHello = dynamicPtrCast<const RgmpHello>(igmpMessage);
+            stream.writeByte(rgmpHello->getReserved());
+            stream.writeUint16Be(rgmpHello->getChecksum());
+            stream.writeIpv4Address(rgmpHello->getGroupAddress());
             break;
         }
         default:
@@ -193,6 +202,14 @@ const Ptr<Chunk> IgmpHeaderSerializer::deserializeFields(MemoryInputStream& stre
             while (stream.getRemainingLength() > B(0))
                 stream.readByte();
             return igmpv3Report;
+        }
+        case RGMP_HELLO: {
+            auto rgmpHello = makeShared<RgmpHello>();
+            rgmpHello->setReserved(code);
+            rgmpHello->setChecksum(chksum);
+            rgmpHello->setChecksumMode(CHECKSUM_COMPUTED);
+            rgmpHello->setGroupAddress(stream.readIpv4Address());
+            return rgmpHello;
         }
         default: {
             EV_ERROR << "IGMPSerializer: can not create IGMP packet: type " << type << " not supported\n";

@@ -11,6 +11,9 @@
 #include <string>
 
 #include "inet/common/SimpleModule.h"
+#include <deque>
+#include <memory>
+
 #include "inet/common/packet/PacketFilter.h"
 #include "inet/common/packet/Packet.h"
 
@@ -29,21 +32,32 @@ namespace protocoltest {
 //
 // It can be configured two ways: from its NED/ini parameters (self-contained), or
 // programmatically via configure() -- which the ProtocolTester uses to install an
-// intercept(...) rule from the test program (this is how the "mutate" action, whose
+// tap(...) rule from the test program (this is how the "mutate" action, whose
 // mutator is a C++ lambda, is supplied).
 //
 class INET_API PacketTap : public SimpleModule
 {
   protected:
-    std::string matchExpression;   // "" = match every frame
-    long minPacketBytes = 0;       // also require the inner frame to be at least this big
-    std::string action;            // "drop" | "delay" | "mutate" | "pass"
-    int occurrence = 0;            // act on the Nth selected frame (1-based); 0 = every
-    simtime_t delayTime = 0;
-    std::function<void(Packet *)> mutator; // applied to the inner frame for action == "mutate"
+    // A tap holds a list of rules, not one rule. Four standards passes worked around the
+    // single-rule tap by putting two taps in series, and one of them had to write down the
+    // arithmetic of which occurrence the second tap sees. A frame is offered to the rules in
+    // order and the first that matches applies; a frame that matches none passes through.
+    struct Rule {
+        std::string matchExpression;   // "" = match every frame
+        long minPacketBytes = 0;       // also require the inner frame to be at least this big
+        std::string action;            // "drop" | "delay" | "mutate" | "pass"
+        int occurrence = 0;            // act on the Nth selected frame (1-based); 0 = every
+        int fromOccurrence = 0;        // act on the Nth and every one after it; 0 = unused
+        simtime_t delayTime = 0;
+        std::function<void(Packet *)> mutator; // for action == "mutate"
 
-    PacketFilter filter;           // compiled from matchExpression
-    bool hasFilter = false;
+        // By pointer, and never by value: a PacketFilter does not survive a copy, and a
+        // Rule is copied when it goes into the container. The pointer is made in place.
+        std::shared_ptr<PacketFilter> filter;
+        bool hasFilter = false;
+        long numSelected = 0;          // frames this rule has selected, for its occurrence
+    };
+    std::deque<Rule> rules;
     bool programmaticallyConfigured = false; // configure() called -> ignore params
     long numSelected = 0;          // selected (matching) frames seen so far
     long numForwarded = 0;
@@ -62,22 +76,23 @@ class INET_API PacketTap : public SimpleModule
 
     // The output gate on the side opposite the frame's arrival gate.
     cGate *forwardGate(const cGate *arrivalGate);
-    // True if the frame matches the expression and is the targeted occurrence.
-    bool isSelected(Packet *packet);
+    // The first rule that matches the frame and is at its targeted occurrence, else null.
+    Rule *selectRule(Packet *packet);
     // Enqueue toward the given output side and (re)start draining it.
     void enqueueForward(cPacket *packet, bool towardB);
     // Transmit the head of a side's queue if its channel is free, else arm the timer.
     void pump(const char *outGateName, cPacketQueue& queue, cMessage *timer);
-    // Compile the match expression into the filter.
-    void compileFilter();
+    // Compile one rule's match expression into its own filter. A PacketFilter is set
+    // once; setting it again on the same object is what a shared compile step would do.
+    void compileRule(Rule& rule);
 
   public:
     virtual ~PacketTap();
 
     // Install an interception rule programmatically (used by the ProtocolTester to apply a
-    // test program's intercept(...) clause). Wins over the NED/ini parameters regardless of
+    // test program's tap(...) clause). Wins over the NED/ini parameters regardless of
     // module initialization order.
-    void configure(const std::string& matchExpr, long minBytes, int occ, const std::string& act,
+    void configure(const std::string& matchExpr, long minBytes, int occ, int fromOcc, const std::string& act,
                    simtime_t delay, std::function<void(Packet *)> mut);
 };
 

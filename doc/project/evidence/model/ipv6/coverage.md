@@ -12,7 +12,16 @@ The ledger spans the documents of the in-scope set, so one table mixes RFC 8200,
 and RFC 8504 identifiers: a check may establish statements of two documents at once, and a
 later document may govern an earlier statement.
 
-State of the ledger: run of 2026-09-09, tree at commit `95f9805952`, target level 3.
+State of the ledger, from this run:
+
+- Date: 2026-09-10 15:18 +0200
+- INET: branch `master`, commit `0868c36c88`, tree clean
+- OMNeT++: 6.4.0
+- Build: debug, built from this commit
+- Compiler: Ubuntu clang version 23.0.0
+- Platform: Ubuntu 26.04.1 LTS, Linux 7.0.0-31-generic x86_64
+- Command: `inet_run_protocol_tests -p inet -w ipv6`
+- Target level: 3
 
 ## Statement coverage
 
@@ -189,7 +198,7 @@ MTU field check ran and failed, which is exactly what the level exists to find.
 | Pass | Date | Level | Scope | Result |
 | --- | --- | --- | --- | --- |
 | 1 | 2026-09-09 | **2, reached** | RFC 8200 + RFC 4443 error signals: 34 catalog entries, 9 features, 9 checks, 9 tests | 7 PASS, 2 FAIL (expected) as model gaps; 6 features supported, 3 partial |
-| 2 | 2026-09-09 | **3, partial** | Level 3 pass: RFC 8504 enters the in-scope set and the two level 2 documents enter in full (33 new catalog entries, 4 override cross references), 12 features (3 new), 27 checks (18 new, split into one file per feature), 27 tests (18 new); the relay and the one-link mockups. | 19 PASS, 8 FAIL (expected) as model gaps, 4 of them stops of the simulation; 5 features supported, 6 partial, 1 untested; 10 mandatory statements without a check; see [`results.md`](results.md) and [`conformance.md`](conformance.md) |
+| 2 | 2026-09-09 | **3, partial** | Level 3 pass: RFC 8504 enters the in-scope set and the two level 2 documents enter in full (33 new catalog entries, 4 override cross references), 12 features (3 new), 27 checks (18 new, split into one file per feature), 27 tests (18 new); the relay and the one-link mockups. | 19 PASS, 8 FAIL, all eight undeclared defects so the suite reports FAIL, 4 of them stops of the simulation; 5 features supported, 6 partial, 1 untested; 10 mandatory statements without a check; see [`results.md`](results.md) and [`conformance.md`](conformance.md) |
 
 ## Out of scope
 

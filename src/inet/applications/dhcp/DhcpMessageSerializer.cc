@@ -213,7 +213,15 @@ void DhcpMessageSerializer::serializeFields(MemoryOutputStream& stream, const Pt
     stream.writeByte(255);
     length += 1;
 
-    ASSERT(dhcpMessage->getChunkLength() == B(length));
+    // trailing padding (see deserialize): fill 0x00 up to the declared chunk length
+    int padding = dhcpMessage->getChunkLength().get<B>() - length;
+    for (int i = 0; i < padding; ++i)
+        stream.writeByte(0);
+    length += padding;
+
+    if (dhcpMessage->getChunkLength() != B(length))
+        throw cRuntimeError("Cannot serialize DHCP message: chunkLength (%s) does not match the number of bytes written (%d)",
+                dhcpMessage->getChunkLength().str().c_str(), length);
 }
 
 const Ptr<Chunk> DhcpMessageSerializer::deserializeFields(MemoryInputStream& stream, const std::type_info&) const
@@ -388,6 +396,13 @@ const Ptr<Chunk> DhcpMessageSerializer::deserializeFields(MemoryInputStream& str
         code = stream.readByte();
     }
     ++length;
+
+    // consume any trailing padding (0x00) that fills the DHCP message to its
+    // minimum length after the End option; its size is preserved via chunkLength
+    int padding = stream.getRemainingLength().get<B>();
+    for (int i = 0; i < padding; ++i)
+        stream.readByte();
+    length += padding;
 
     dhcpMessage->setChunkLength(B(length));
     return dhcpMessage;

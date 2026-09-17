@@ -11,14 +11,14 @@
 namespace inet {
 namespace protocoltest {
 
-Injection inject(const char *nodeName)
+Injection at(const char *nodeName)
 {
     Injection injection;
     injection.nodeName = nodeName;
     return injection;
 }
 
-Interception intercept(const char *tapName)
+Interception tap(const char *tapName)
 {
     Interception interception;
     interception.tapName = tapName;
@@ -73,6 +73,44 @@ ProtocolTest ProtocolTestRegistry::buildDefault()
     if (defaultBuilder() == nullptr)
         throw cRuntimeError("ProtocolTest: no Define_ProtocolTestProgram() in this build");
     return defaultBuilder()();
+}
+
+Step never(EventPattern pattern)
+{
+    Step step;
+    step.type = StepType::Never;
+    step.pattern = std::move(pattern);
+    return step;
+}
+
+Step atMostTimes(int n, EventPattern pattern)
+{
+    Step step;
+    step.type = StepType::Count;
+    step.cardMin = 0;
+    step.cardMax = n;
+    step.pattern = std::move(pattern);
+    return step;
+}
+
+Step exactlyTimes(int n, EventPattern pattern)
+{
+    Step step;
+    step.type = StepType::Count;
+    step.cardMin = n;
+    step.cardMax = n;
+    step.pattern = std::move(pattern);
+    return step;
+}
+
+Step atLeastTimes(int n, EventPattern pattern)
+{
+    Step step;
+    step.type = StepType::Count;
+    step.cardMin = n;
+    step.cardMax = -1;
+    step.pattern = std::move(pattern);
+    return step;
 }
 
 } // namespace protocoltest

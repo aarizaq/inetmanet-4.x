@@ -27,11 +27,12 @@ enum IgmpType
     IGMPV2_MEMBERSHIP_REPORT = 0x16;
     IGMPV2_LEAVE_GROUP = 0x17;
     IGMPV3_MEMBERSHIP_REPORT = 0x22;
+    RGMP_HELLO = 0xff;  // RFC 3488 Router-port Group Management Protocol (shares the IGMP message format)
 }
 
 class IgmpMessage extends FieldsChunk
 {
-    IgmpType type;         // 1 byte
+    IgmpType type @editable(false);         // 1 byte; subtype discriminator, pinned per subclass
     uint16_t checksum = 0;    // 2 bytes, The checksum is the 16-bit one's complement of the one's complement sum of the whole IGMP message (the entire IP payload).
     ChecksumMode checksumMode = CHECKSUM_MODE_UNDEFINED;  // 0 bytes, inet only
 }
@@ -123,4 +124,17 @@ class Igmpv3Report extends IgmpMessage
     uint8_t resv1 = 0;
     uint16_t resv2 = 0;
     GroupRecord groupRecord[];
+}
+
+//
+// RFC 3488 RGMP Hello: sent by a router (to 224.0.0.25) to enable RGMP on the
+// link. Reuses the 8-byte IGMP message format (type, a reserved byte, checksum,
+// group address -- 0.0.0.0 for Hello).
+//
+class RgmpHello extends IgmpMessage
+{
+    chunkLength = B(8);
+    type = RGMP_HELLO;
+    uint8_t reserved = 0;
+    Ipv4Address groupAddress;
 }

@@ -8,7 +8,16 @@ changes. This one changes on every pass.
 
 **No step edits an artifact of an earlier step. Steps 5, 6 and 7 record their outcome here.**
 
-State of the ledger: run of 2026-09-09 on `master`, pass 2, level 3.
+State of the ledger, from this run:
+
+- Date: 2026-09-10 15:18 +0200
+- INET: branch `master`, commit `0868c36c88`, tree clean
+- OMNeT++: 6.4.0
+- Build: debug, built from this commit
+- Compiler: Ubuntu clang version 23.0.0
+- Platform: Ubuntu 26.04.1 LTS, Linux 7.0.0-31-generic x86_64
+- Command: `inet_run_protocol_tests -p inet -w udp`
+- Target level: 3
 
 ## Statement coverage
 
@@ -48,7 +57,7 @@ chosen), `later` (needs a toolset beyond the current level, or another test cate
 | [RFC1122-UAPI-2](../../standard/rfc1122/catalog.md#rfc1122-uapi-2) | no check | — | — | at the program interface; and a may |
 | [RFC1122-UAPI-3](../../standard/rfc1122/catalog.md#rfc1122-uapi-3) | no check | — | — | §3.4 is an interface catalog, not a behaviour on a link |
 
-27 entries. 17 reached a test: 14 with a PASS and 3 with a declared FAIL that names a model
+27 entries. 17 reached a test: 14 with a PASS and 3 with a FAIL -- 2 of them a defect and 1 an unimplemented behavior -- that names a model
 gap. 9 carry `no check`, each with its reason, and 1 waits for a unit-test suite. The nine
 without a check are all statements about the interface between UDP and a program; the list
 is in [`checks.md`](../../protocol/udp/checks.md#statements-that-no-check-carries).
@@ -128,7 +137,7 @@ model.
 | Pass | Date | Level | Scope | Result |
 | --- | --- | --- | --- | --- |
 | 1 | 2026-09-08 | **2, reached** | RFC 768 in scope with RFC 792's port unreachable; 9 catalog entries (8 new, 1 added to the shared RFC 792 catalog); 4 features; 3 checks; 3 tests | 3 PASS; 4 features supported; two observations not runnable, recorded; see [`results.md`](results.md) and [`conformance.md`](conformance.md) |
-| 2 | 2026-09-09 | **3, partial** | RFC 1122 §4.1 added to the in-scope set; 18 catalog entries added to the shared RFC 1122 catalog; 3 features added, 2 changed level; 10 checks added; 10 tests added | 13 tests: 10 PASS, 3 declared FAIL naming three model gaps; 3 features supported, 3 partial, 1 untested; 9 statements carry `no check` with a reason; see [`results.md`](results.md) |
+| 2 | 2026-09-09 | **3, partial** | RFC 1122 §4.1 added to the in-scope set; 18 catalog entries added to the shared RFC 1122 catalog; 3 features added, 2 changed level; 10 checks added; 10 tests added | 13 tests: 10 PASS, 3 FAIL -- 1 declared expected and 2 undeclared defects, so the suite reports FAIL -- naming three model gaps; 3 features supported, 3 partial, 1 untested; 9 statements carry `no check` with a reason; see [`results.md`](results.md) |
 
 ## Out of scope
 

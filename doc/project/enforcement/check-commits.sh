@@ -10,6 +10,7 @@
 #   PR-SPLIT-BASELINE    — a baseline-only commit that repeats the commit before it, or gives no reason
 #   PR-SERIES-ORDER      — a fixup, squash or "address review" subject
 #   PR-SERIES-LINEAR     — a merge commit inside the series
+#   PR-MSG-BODY          — an empty body above 50 changed lines, outside the exempt kinds
 #   PR-MSG-SUBJECT       — "area: what it does", no file path, no link; length fails above 80,
 #                          and is reported as a note between 73 and 80
 #   PR-MSG-FACTS         — no attribution trailer
@@ -65,6 +66,31 @@ done <<< "$COMMITS"
 [ "$ok" -eq 1 ] && echo "  ok"
 
 echo
+echo "== PR-MSG-BODY: a substantial commit explains itself =="
+# A body is owed when the subject cannot carry the reason.  The 50-line threshold is measured:
+# across master's last 300 commits the no-body share is flat at 3-4% for every threshold from 50
+# up, so 50 is where the project already draws the line.  The exempt kinds are the six of nine
+# commits above that line on master that are legitimately bare -- the change is its own
+# explanation, and the reader's next step is the file, not the message.
+ok=1
+while read -r sha; do
+  [ -z "$sha" ] && continue
+  short=${sha:0:9}
+  body=$(git log -1 --format=%b "$sha" | grep -vE '^[[:space:]]*$' \
+         | grep -vE '^(Fixes|Closes|Refs|Co-Authored-By|Signed-off-by|Reviewed-by)')
+  [ -n "$body" ] && continue
+  files=$(git show --name-only --pretty="" "$sha")
+  lines=$(git show --numstat --pretty="" "$sha" | awk '{a+=$1; d+=$2} END{print a+d+0}')
+  [ "$lines" -lt 50 ] && continue
+  # exempt: every changed file is its own explanation
+  if [ -z "$(echo "$files" | grep -vE '^(doc/|plan/|WHATSNEW$|.*_m\.(h|cc)$|.*SelfDoc\.json$|.*(ned|msg)tags\.xml$)')" ]; then
+    continue
+  fi
+  flag "$short has no body and changes $lines lines: $(git log -1 --format=%s "$sha")"; ok=0
+done <<< "$COMMITS"
+[ "$ok" -eq 1 ] && echo "  ok"
+
+echo
 echo "== PR-SPLIT-BASELINE: a baseline update travels with the change that causes it =="
 # A baseline belongs in the commit that moves it, so that the commit passes its own
 # fingerprint test (PR-SERIES-BUILDS) and a bisect over the suite stays truthful.
@@ -101,7 +127,7 @@ while read -r sha; do
   while read -r f; do
     [ -z "$f" ] && continue
     # -w alone is not enough: a branch that removes blank lines reports nothing without
-    # --ignore-blank-lines. That is a real finding from audit/report/pull-request/pr-1144.md.
+    # --ignore-blank-lines. That is a real finding from audit/pull-request/pr-1144.md.
     if [ -z "$(git show -w --ignore-blank-lines --numstat --pretty="" "$sha" -- "$f")" ]; then
       ws+="$f "
     else

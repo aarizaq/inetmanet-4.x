@@ -1,20 +1,26 @@
 # IPv4 checks — run results and model analysis (pass 3, level 3)
 
-> **Kind:** report · **Status:** snapshot 2026-09-09 · **Seal:** none · **Owns:** — · **Stands on:** [rfc791/catalog.md](../../standard/rfc791/catalog.md), [rfc792/catalog.md](../../standard/rfc792/catalog.md), [rfc1122/catalog.md](../../standard/rfc1122/catalog.md), [rfc6864/catalog.md](../../standard/rfc6864/catalog.md), [checks.md](../../protocol/ipv4/checks.md)
+> **Kind:** report · **Status:** snapshot 2026-09-10 · **Seal:** none · **Owns:** — · **Stands on:** [rfc791/catalog.md](../../standard/rfc791/catalog.md), [rfc792/catalog.md](../../standard/rfc792/catalog.md), [rfc1122/catalog.md](../../standard/rfc1122/catalog.md), [rfc6864/catalog.md](../../standard/rfc6864/catalog.md), [checks.md](../../protocol/ipv4/checks.md)
 
 Step 7 artifact of the standards test workflow. This is the first document of the IPv4
 workflow that may reference code. It supersedes the pass 2 report; the pass 2 verdicts are
 repeated in the table below, because every test ran again on this tree.
 
-- Date: 2026-09-09. Tree: `inet-rfc-tests-ipv4-level3`, branch `topic/rfc-tests-ipv4-level3`,
-  built from commit `da7ac0d5bf`. No source file changed on this branch; the IPv4, ICMP and
-  UDP sources are those of `master`.
+- Date: 2026-09-10 15:18 +0200
+- INET: branch `master`, commit `0868c36c88`, tree clean
+- OMNeT++: 6.4.0
+- Build: debug, built from this commit
+- Compiler: Ubuntu clang version 23.0.0
+- Platform: Ubuntu 26.04.1 LTS, Linux 7.0.0-31-generic x86_64
 - Command, after the `setenv` scripts of OMNeT++ and INET:
 
   ```sh
   cd tests/protocol/lib && MODE=debug ./build.sh
   inet_run_protocol_tests -p inet -w ipv4
   ```
+- Earlier passes ran on other trees. The pass log of [`coverage.md`](coverage.md#pass-log)
+  names them. Every verdict below is the verdict of the run above, and it repeats the
+  verdict of the earlier pass.
 
 ## Verdicts
 
@@ -29,25 +35,43 @@ repeated in the table below, because every test ran again on this tree.
 | Rfc791MinimumSizes.test | RFC791-FRAG-6; RFC1122-REASM-2 (governs RFC791-REASM-2) | PASS |
 | Rfc1122TtlOneAtDestination.test | RFC1122-TTL-2; covers TTL-3, RFC791-TTL-1 | PASS |
 | Rfc791InterleavedReassembly.test | RFC791-REASM-3, RFC1122-REASM-1 | PASS |
-| Rfc791SameIdDifferentProtocol.test | RFC791-REASM-1 (four-field key), REASM-3 | **FAIL (expected)** — model gap |
+| Rfc791SameIdDifferentProtocol.test | RFC791-REASM-1 (four-field key), REASM-3 | **FAIL (unexpected)** — defect |
 | Rfc6864AtomicIdentification.test | RFC6864-ID-3, ID-7; covers ID-6, notes ID-2 | PASS |
-| Rfc1122ChecksumDiscard.test | RFC1122-CKSUM-1 (governs RFC791-CKSUM-2) | **FAIL (expected)** — model gap |
-| Rfc1122VersionDiscard.test | RFC1122-VER-1 | **FAIL (expected)** — model gap |
+| Rfc1122ChecksumDiscard.test | RFC1122-CKSUM-1 (governs RFC791-CKSUM-2) | **FAIL (unexpected)** — defect |
+| Rfc1122VersionDiscard.test | RFC1122-VER-1 | FAIL (expected) — unimplemented |
 | Rfc1122ForeignDestination.test | RFC1122-ADDR-2 | PASS |
-| Rfc1122InvalidSourceAddress.test | RFC1122-ADDR-3, ADDR-4 | **FAIL (expected)** — model gap |
-| Rfc1122UnknownIcmpType.test | RFC1122-ICMP-1 | **FAIL (expected)** — model gap, a runtime error |
+| Rfc1122InvalidSourceAddress.test | RFC1122-ADDR-3, ADDR-4 | FAIL (expected) — unimplemented |
+| Rfc1122UnknownIcmpType.test | RFC1122-ICMP-1 | **FAIL (unexpected)** — defect, a runtime error |
 | Rfc1122HostErrorReport.test | RFC1122-ERR-1, DU-1, ICMP-2, ICMP-4 | PASS |
 | Rfc1122NoErrorAboutError.test | RFC1122-ICMP-5 | PASS |
 | Rfc1122NoErrorForBroadcast.test | RFC1122-ICMP-6 | PASS |
-| Rfc1122NoErrorForLinkBroadcast.test | RFC1122-ICMP-7 | **FAIL (expected)** — model gap |
+| Rfc1122NoErrorForLinkBroadcast.test | RFC1122-ICMP-7 | **FAIL (unexpected)** — defect |
 | Rfc1122NoErrorForNonInitialFragment.test | RFC1122-ICMP-8 | PASS |
 | Rfc1122NoErrorForInvalidSource.test | RFC1122-ICMP-9 | PASS |
-| Fragmentation.test (pre-existing) | — | PASS |
 
-Summary: 23 tests, 17 PASS, 6 FAIL (expected), 0 unexpected, in 2.6 s. Every FAIL is a
-model gap declared with `%# expected-result: FAIL`; each test keeps the faithful assertion,
-and each failed at the step its description predicts (the discard record, the absence
-watch, or the runtime error). No specification misread was found.
+Summary: 22 tests, 16 PASS, **2 FAIL (expected), 4 FAIL (unexpected)**, so the suite reports
+FAIL. Each test keeps the faithful assertion and each failed at the step its description
+predicts. No specification misread was found.
+
+## Which failures are declared, and which are not
+
+Reviewed against
+[the third principle of the guide](../../../guide/derive-tests-from-a-standard.md#principle-a-claimed-feature-gets-a-test):
+a failure is declared expected only where the model does **not** claim the behavior, and a claim is
+code. Four of the six failures were declared and should not have been.
+
+| Test | Class | The claim, in the model |
+| --- | --- | --- |
+| `Rfc1122ChecksumDiscard.test` | **defect** | `Ipv4Header::verifyChecksum` exists and `Ipv4.cc:282` calls it and drops on failure. The guard `!isCorrect() && !verifyChecksum()` short-circuits, so a well-formed header never reaches the test. A branch that exists and is unreachable for the case under test. |
+| `Rfc1122NoErrorForLinkBroadcast.test` | **defect** | `Icmp::maySendErrorMessage` suppresses for four conditions and its first comment reads "don't send ICMP error messages in response to broadcast or multicast messages". The mechanism is there and the link-layer condition is missing from it. |
+| `Rfc1122UnknownIcmpType.test` | **defect** | `Icmp::processIcmpMessage` has a `default:` branch for a type it does not know, and that branch throws. A branch that exists and does the wrong thing. |
+| `Rfc791SameIdDifferentProtocol.test` | **defect** | `Ipv4FragBuf::Key` is the reassembly key (Ipv4FragBuf.h:31 to 40) and carries three of the four fields RFC 791 names. A key that exists and is incomplete. |
+| `Rfc1122VersionDiscard.test` | unimplemented | Nothing reads the version field on receipt. `getVersion` does not appear in `Ipv4.cc` at all. |
+| `Rfc1122InvalidSourceAddress.test` | unimplemented | Nothing validates the source address of a received datagram. The one source test in the receive path, `Ipv4.cc:824`, only warns about an unspecified address and discards nothing. |
+
+The four defects share one shape with each other and with the other suites of this tree: **the
+model detects the condition or has the branch, and then does the wrong thing with it.** Two of the
+four, the checksum guard and the reassembly key, are a line each.
 
 ## Deviations between the English observations and the test steps
 
@@ -174,7 +198,8 @@ section covers the level 3 behaviors.
   ([Ipv4.cc:320-325](../../../../../src/inet/networklayer/ipv4/Ipv4.cc#L320-L325)).
   Observed: both datagrams delivered; DF set on link 2.
 
-**Gaps.** Six statements failed; each is a behavior the model lacks, and none is touched
+**Gaps.** Six statements failed. Four are defects in code that exists and two are behaviors the
+model does not implement at all; the table above says which is which. None is touched
 by a test.
 
 1. **Header checksum verification (RFC1122-CKSUM-1, RFC791-CKSUM-2).**

@@ -12,9 +12,16 @@ relay rewrites the destination address of the Ethernet frame to ff:ff:ff:ff:ff:f
 destination stays host B's unicast address, and the datagram goes to port 5001, on which no
 program listens, so a report would otherwise be due.
 
-Expected result: FAIL. The model decides about an error report from the IP addresses only
-(Icmp::maySendErrorMessage) and never consults the link-layer destination, so it answers
-with Destination Unreachable and the absence watch of expected observation 3 fires. See
+Defect. This test FAILS and the failure is NOT declared expected: the model claims the
+behaviour and gets it wrong.
+
+The claim is code, and a comment states the intent. Icmp::maySendErrorMessage suppresses an
+error report for four conditions, and its first one says "don't send ICMP error messages in
+response to broadcast or multicast messages" (Icmp.cc). The suppression mechanism is therefore
+present and its stated purpose covers this case; what it does not do is read the link-layer
+destination, so one of the conditions RFC 1122 lists is missing from a list that implements the
+others. An incomplete mechanism is a claim, not an absent feature, so nothing declares this
+failure expected. The absence watch of expected observation 3 fires. See
 doc/project/evidence/model/ipv4/results.md.
 
 %includes:
@@ -31,14 +38,14 @@ Define_ProtocolTestProgram()
 {
     return ProtocolTest("rfc1122_no_error_for_link_broadcast")
         // The relay rewrites the link-layer destination of the frame to the broadcast address.
-        .intercept(intercept("tap").match("udp.destPort == 5001").nth(1)
+        .intercept(tap("tap").filterPacket("udp.destPort == 5001").nth(1)
                      .mutate([](Packet *frame) { rewriteHeader<EthernetMacHeader>(frame, [](EthernetMacHeader& h) { h.setDest(MacAddress::BROADCAST_ADDRESS); }); })
                      .describe("the datagram's frame (set its link-layer destination to the broadcast address)"))
         // Expected observation 1: at host B's interface the datagram arrives in a broadcast frame,
         // IP destination host B, port 5001.
         .once(on("hostB.eth[0].mac").signal("packetReceivedFromLower")
-                  .packet("udp.destPort == 5001")
-                  .match([](const MatchContext& c) {
+                  .filterPacket("udp.destPort == 5001")
+                  .filterEvent([](const MatchContext& c) {
                       const auto& macInd = c.event.packet->findTag<MacAddressInd>();
                       if (macInd != nullptr)
                           return macInd->getDestAddress().isBroadcast();
@@ -48,12 +55,12 @@ Define_ProtocolTestProgram()
                   .within(0.5))
         // Expected observation 2: host B's UDP finds no program for port 5001.
         .once(on("hostB.udp").signal("packetDropped")
-                  .match([](const MatchContext& c) { return udpDestinationPort(c.event.packet) == 5001; }) // the drop record carries no protocol tag; read the header
+                  .filterEvent([](const MatchContext& c) { return udpDestinationPort(c.event.packet) == 5001; }) // the drop record carries no protocol tag; read the header
                   .describe("host B's UDP discards the datagram for want of a port")
                   .within(0.1))
         // Expected observation 3: from then on, host B sends no ICMP message (RFC1122-ICMP-7).
         .never(on("hostB.eth[0].mac").signal("packetSentToLower")
-                  .packet("icmpv4.type >= 0")
+                  .filterPacket("icmpv4.type >= 0")
                   .describe("any ICMP message from host B")
                   .within(0.2));
 }
@@ -109,6 +116,5 @@ seed-set = 0
 *.hostA.app[0].sendInterval = 1s
 *.hostB.numApps = 0
 
-%# expected-result: FAIL
 %contains: stdout
 PROTOCOLTEST rfc1122_no_error_for_link_broadcast: PASS

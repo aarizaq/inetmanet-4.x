@@ -29,6 +29,54 @@ Notable backward incompatible changes are the following:
    adaptive rate control, either where a station transmits to several peers or
    where it sends group-addressed traffic.
 
+2. IEEE 802.11 wire and reception corrections
+
+   QoS Control fields now use the standard bit positions. Non-QoS Data no
+   longer aliases the QoS TID-0 duplicate cache. OFDM radios generate and check
+   SIGNAL parity and reject undefined RATE codes; HR/DSSS and ERP transmissions
+   carry their specific PHY protocol identities.
+
+   AP beacon intervals are rounded down to whole 1024-us TUs for both target
+   scheduling and advertisement (100ms becomes 99.328ms). Configured intervals
+   must be between 1 and 65535 TUs. Beacon and Probe Response frames now encode
+   the DSSS Current Channel for 2.4 GHz operation. Their channelNumber field is
+   a standard channel number, with -1 for an absent element, rather than an
+   internal channel index. Radio channel parameters and scan results remain
+   internal indices. Custom frame producers should follow the migration guide.
+
+   The mesh no-forwarding-information reason code is corrected from 60 to 62.
+   These corrections change affected packet bytes and may change Wi-Fi
+   simulation trajectories and fingerprints.
+
+   Noncompliant layered OFDM retains its configured mode and RATE-0 placeholder;
+   SIGNAL parity is checked in both compliant and noncompliant operation.
+
+3. UDP no longer reports a received datagram twice
+
+   The Udp module emitted packetReceivedFromLower a second time for every datagram
+   it received from the network layer. Its base class, LayeredProtocolBase, already
+   emits the signal before it calls handleLowerPacket, and Udp emitted it again in
+   processUDPPacket. Every other protocol module emits it once.
+
+   No statistic changes, because Udp.ned declares the signal and sources no
+   statistic from it. Code that subscribes to the signal on a UDP module is
+   affected: it now runs once per datagram instead of twice, so a listener that
+   counted arrivals or summed bytes reported twice the true value and now reports
+   the true one.
+
+4. Resending accepts the packets that a producer offers
+
+   The canPushPacket() method of the Resending protocol element tested its packet
+   argument instead of the packet that the module holds, so it refused every
+   packet that a producer asked about. An active producer that asks before it
+   pushes, for example a PacketServer after a queue, therefore never passed a
+   packet to Resending. Resending now accepts a packet whenever it holds none, as
+   its canPushSomePacket() method already did.
+
+   This changes the results of simulations that feed Resending from such a
+   producer. Inside INET, the client in the Network6 and Network7 steps of
+   tutorials/protocol now sends its packet; before, it sent none.
+
 Notable backward compatible changes are the following:
 
 1. IEEE 802.11 per-station rate statistics
@@ -66,6 +114,22 @@ Notable backward compatible changes are the following:
    still work: they are no longer pure virtual, and the new hooks call them by
    default. Serializers written against an earlier INET version need no source
    change. See the migration guide for the new signatures.
+
+5. Region tag removal by type
+
+   The removeTagsWherePresent() method of SharingRegionTagSet removed the region
+   tags of every type in the given range, and not only the tags of the requested
+   type. It now removes only the requested type, as its documentation always
+   stated. The same correction reaches Chunk::removeTagsWherePresent() and
+   Packet::removeRegionTagsWherePresent(), which forward to it. The clearTags()
+   method gained an optional predicate that selects the tags to clear, and clears
+   all of them by default, so its own behavior is unchanged.
+
+   This may change the results of a simulation that removes the region tags of one
+   type while the region tags of another type cover the same range. Inside INET
+   this happens when ResidenceTimeMeasurer ends a measurement: it removed the
+   ResidenceTimeTag and, with it, the FlowTag and the PacketEventTag of the packet.
+   Those two tags now survive the measurement.
 
 
 INET-4.7 (July 2026) — feature release

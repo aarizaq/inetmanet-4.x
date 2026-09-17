@@ -75,7 +75,9 @@ void TcpHeaderSerializer::serializeFields(MemoryOutputStream& stream, const Ptr<
         if (optionsLength % 4 != 0)
             stream.writeByteRepeatedly(0, 4 - optionsLength % 4);
     }
-    ASSERT(tcpHeader->getHeaderLength() == TCP_MIN_HEADER_LENGTH + B(optionsLength));
+    if (tcpHeader->getHeaderLength() != TCP_MIN_HEADER_LENGTH + B(optionsLength))
+        throw cRuntimeError("Cannot serialize Tcp header: headerLength (%s) does not match the fixed header plus options length (%s)",
+                tcpHeader->getHeaderLength().str().c_str(), (TCP_MIN_HEADER_LENGTH + B(optionsLength)).str().c_str());
 }
 
 void TcpHeaderSerializer::serializeOption(MemoryOutputStream& stream, const TcpOption *option) const
@@ -186,7 +188,10 @@ const Ptr<Chunk> TcpHeaderSerializer::deserializeFields(MemoryInputStream& strea
     tcpHeader->setUrgentPointer(ntohs(tcp.th_urp));
 
     if (headerLength > TCP_MIN_HEADER_LENGTH) {
-        while (stream.getPosition() - position < headerLength) {
+        // guard against a declared header length that exceeds the available bytes
+        // (truncated/snaplen'd or corrupt input): once the stream is exhausted its
+        // position stops advancing, so without this the loop would spin forever
+        while (stream.getPosition() - position < headerLength && !stream.isReadBeyondEnd()) {
             TcpOption *option = deserializeOption(stream);
             tcpHeader->appendHeaderOption(option);
         }

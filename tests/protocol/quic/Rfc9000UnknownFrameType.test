@@ -14,7 +14,13 @@ else. Table 3 of §12.4 lists the frame types this version of QUIC defines, and 
 means. The connection is established and running when the frame arrives, so the receiver has
 every reason to read it and none to expect it.
 
-Expected result: FAIL. The model stops the simulation:
+Defect. This test FAILS and the failure is NOT declared expected, because the model claims the
+behaviour: `ConnectionState.cc` dispatches an incoming frame on its type and has a `default:`
+branch for a type it does not know, so the unknown case is handled. What that branch does is throw.
+A branch that exists and does the wrong thing is a defect, and stopping the simulation is the worst
+wrong thing available to it.
+
+What the run shows. The model stops the simulation:
 
     Error: Unknown Frame Header Type -- in module (inet::quic::Quic) QuicTapNet.server.quic
     (id=67), at t=0.10024426s, event #150
@@ -36,7 +42,7 @@ Define_ProtocolTestProgram()
 {
     return ProtocolTest("rfc9000_unknown_frame_type")
         // The relay writes a frame type that no version of QUIC defines.
-        .intercept(intercept("tap").match("udp.destPort == 1000").minBytes(1300).nth(1)
+        .intercept(tap("tap").filterPacket("udp.destPort == 1000").minBytes(1300).nth(1)
                      .mutate([](Packet *frame) {
                          mutateFirstQuicChunk<StreamFrameHeader>(frame, [](StreamFrameHeader& h) {
                              h.setFrameType(static_cast<FrameHeaderType>(0x3f));
@@ -45,7 +51,7 @@ Define_ProtocolTestProgram()
                      .describe("the first stream frame (set its type to 0x3f, which no version defines)"))
         // Observation 1: the frame reaches the server carrying the unknown type.
         .once(on("server.udp").signal("packetReceivedFromLower")
-                  .match([](const MatchContext& c) {
+                  .filterEvent([](const MatchContext& c) {
                       for (const auto& f : findAllQuicChunks<FrameHeader>(c.event.packet))
                           if (f->getFrameType() == static_cast<FrameHeaderType>(0x3f))
                               return true;
@@ -55,7 +61,7 @@ Define_ProtocolTestProgram()
                   .within(1.0))
         // Observation 2: the server ends the connection and says why (RFC9000-ERR-1).
         .once(on("server.udp").signal("packetSentToLower")
-                  .match([](const MatchContext& c) {
+                  .filterEvent([](const MatchContext& c) {
                       return findQuicChunk<ConnectionCloseFrameHeader>(c.event.packet) != nullptr;
                   })
                   .describe("the server's CONNECTION_CLOSE frame, naming the error")
@@ -120,6 +126,5 @@ seed-set = 0
 **.server.app[*].localAddress = ""
 **.server.app[*].localPort = 1000
 
-%# expected-result: FAIL
 %contains: stdout
 PROTOCOLTEST rfc9000_unknown_frame_type: PASS

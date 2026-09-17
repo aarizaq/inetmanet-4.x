@@ -1,20 +1,25 @@
-# TCP checks — run results and model analysis (pass 3, level 3)
+# TCP checks — run results and model analysis (pass 4, level 4)
 
-> **Kind:** report · **Status:** snapshot 2026-09-09 · **Seal:** none · **Owns:** — · **Stands on:** [catalog.md](../../standard/rfc9293/catalog.md), [checks.md](../../protocol/tcp/checks.md)
+> **Kind:** report · **Status:** snapshot 2026-09-14 · **Seal:** none · **Owns:** — · **Stands on:** [catalog.md](../../standard/rfc9293/catalog.md), [rfc6298/catalog.md](../../standard/rfc6298/catalog.md), [rfc5681/catalog.md](../../standard/rfc5681/catalog.md), [checks.md](../../protocol/tcp/checks.md)
 
 Step 7 artifact of the standards test workflow. This is the first document of the TCP
 workflow that may reference code.
 
-- Pass 2, level 2. Date: 2026-09-08. Tree: `inet-rfc-tests-tcp`, branch
-  `topic/rfc-tests-tcp` on top of `topic/rfc-tests-ipv4`, source identical to `master`.
-- Pass 3, level 3. Date: 2026-09-09. Tree: `inet-master`, branch `master`, source unchanged
-  by this pass.
+- Date: 2026-09-14 12:31 +0200
+- INET: branch `topic/rfc-tests-tcp-level4`, commit `e0ac3b7307`, tree clean
+- OMNeT++: 6.4.0
+- Build: debug, built from this commit
+- Compiler: Ubuntu clang version 23.0.0
+- Platform: Ubuntu 26.04.1 LTS, Linux 7.0.0-31-generic x86_64
 - Command, after the `setenv` scripts of OMNeT++ and INET:
 
   ```sh
   cd tests/protocol/lib && MODE=debug ./build.sh
   inet_run_protocol_tests -p inet -w tcp
   ```
+- Earlier passes ran on other trees. The pass log of [`coverage.md`](coverage.md#pass-log)
+  names them. Every verdict below is the verdict of the run above, and it repeats the
+  verdict of the earlier pass.
 
 ## Verdicts
 
@@ -22,12 +27,10 @@ workflow that may reference code.
 | --- | --- | --- |
 | Rfc9293ConnectionEstablishment.test | RFC9293-EST-1, EST-2, SEQ-1, HDR-1, CKSUM-1; ISS-1, OPT-1 | PASS |
 | Rfc9293DataTransfer.test | RFC9293-DATA-1, SEG-1, ACK-1; ACK-2 | PASS |
-| Rfc9293Push.test | RFC9293-PSH-1 | **FAIL (expected)** — model gap, see below |
+| Rfc9293Push.test | RFC9293-PSH-1 | **FAIL (expected)** — unimplemented feature, gap 1 |
 | Rfc9293ConnectionTermination.test | RFC9293-FIN-1, FIN-2 | PASS |
 | Rfc9293FlowControl.test | RFC9293-WND-1, WND-2; ACKD-1 | PASS |
 | Rfc9293Reset.test | RFC9293-RST-1 | PASS |
-| TcpHandshake.test (pre-existing) | — | PASS |
-| TcpRetransmit.test (pre-existing) | — | PASS |
 
 Pass 3, level 3:
 
@@ -41,9 +44,9 @@ Pass 3, level 3:
 | Rfc9293ShrunkWindow.test | RFC9293-WND-4 | PASS |
 | Rfc9293NoWindowShrink.test | RFC9293-WND-3 | PASS |
 | Rfc9293SoftIcmpError.test | RFC9293-ICMP-3; covers ICMP-1 | PASS |
-| Rfc9293ChecksumDefault.test | RFC9293-CKSUM-1 (the value) | **FAIL**, model gap 2 |
-| Rfc9293ShrunkWindowNoNewData.test | RFC9293-WND-5 | **FAIL**, model gap 3 |
-| Rfc9293SourceQuench.test | RFC9293-ICMP-2 | **FAIL**, model gap 4 |
+| Rfc9293ChecksumDefault.test | RFC9293-CKSUM-1 (the value) | **FAIL (unexpected)** — defect, gap 2 |
+| Rfc9293ShrunkWindowNoNewData.test | RFC9293-WND-5 | **FAIL (unexpected)** — defect, gap 3 |
+| Rfc9293SourceQuench.test | RFC9293-ICMP-2 | **FAIL (expected)** — unimplemented feature, gap 4 |
 
 Summary after pass 3: 19 tests, 15 PASS, 4 FAIL, each failure declared with
 `%# expected-result: FAIL`. The other four suites of the same tree stay where they were:
@@ -62,11 +65,132 @@ Summary of pass 2: 8 tests, 7 PASS, 1 FAIL (expected), in 2.1 s. The runner's ov
 because the one failure is declared. The SYN's header length was captured as 24 octets: the
 MSS option is present, so the `should` of RFC9293-OPT-1 is met.
 
-## Model gap 1 (pass 2): the PSH bit is never set
+## Pass 4, level 4: the two control loops
+
+RFC 6298 and RFC 5681 entered the in-scope set, and ten checks were written against them.
+The suite is 27 tests: **22 PASS, 2 FAIL (expected), 3 FAIL (unexpected)**.
+
+| Test | Checks | Verdict |
+| --- | --- | --- |
+| Rfc6298InitialTimeout.test | RFC6298-INIT-1 | PASS |
+| Rfc6298FirstMeasurement.test | RFC6298-FIRST-1, RFC6298-RTO-1; covers MIN-1 | **FAIL (unexpected)** — defect, gap 5 |
+| Rfc6298BackoffDoubling.test | RFC6298-BACK-1, RFC6298-EARLY-1 | PASS |
+| Rfc6298KarnsRule.test | RFC6298-KARN-1 | PASS |
+| Rfc6298TimeoutAfterLostSyn.test | RFC6298-SYN-1 | PASS |
+| Rfc5681InitialWindow.test | RFC5681-IW-1, RFC5681-IW-2 | PASS |
+| Rfc5681SlowStartGrowth.test | RFC5681-SS-2; covers SS-1, SSTH-1 | PASS |
+| Rfc5681TimeoutResponse.test | RFC5681-LOSS-1, RFC5681-LOSS-3 | PASS |
+| Rfc5681FastRetransmit.test | RFC5681-FR-1, FR-2, FR-3, FR-5; covers ACK-2 | PASS |
+| Rfc5681WindowAfterLostSyn.test | RFC5681-IW-3 | PASS |
+
+Nine of the ten pass. Both control loops are written, and the one difference the checks find
+is a defect rather than an absence.
+
+## Gap 5 (pass 4): the first round-trip measurement is smoothed — defect
+
+RFC 6298 section 2.2 gives the first measurement a case of its own: the smoothed value
+becomes R and the variance becomes R/2. The model has no such case.
+`TcpBaseAlg::receivedDataAck` applies the smoothing formula of section 2.3 to every
+measurement, the first one included
+([TcpBaseAlg.cc:327-341](../../../../../src/inet/transportlayer/tcp/flavours/TcpBaseAlg.cc#L327-L341)).
+The run states it in one line:
+
+    Measured RTT=400.05104ms, updated SRTT=50.00638ms, new RTO=2875.0319ms
+
+| | RFC 6298 | the model |
+| --- | --- | --- |
+| smoothed value | 400.05 ms | 50.01 ms, one eighth |
+| variance | 200.03 ms | 706.26 ms |
+| timeout | 1200.15 ms | 2875.03 ms, 2.4 times |
+
+The class is **defect**. Code exists for the behaviour, it runs on the first acknowledgment,
+and it produces the wrong number. A timeout that long delays every recovery from a lost
+segment, and it is the timeout a connection starts with. The effect reproduces on a second
+link: `Rfc6298KarnsRule.test` measures 0.108 ms and smooths it to 0.0135 ms, the same factor
+of eight.
+
+## The model publishes a control variable only where it recomputes it
+
+**Five of the ten checks could not read the value the standard names**, and each had to
+measure the rule on the wire instead. This is one property of the model, and it shapes the
+whole pass.
+
+| The value the check names | Where the model publishes it | What the check does instead |
+| --- | --- | --- |
+| the timeout before any measurement | nowhere; `rto` comes only from `receivedDataAck` | measures the interval to the first retransmission |
+| the timeout after each expiry | nowhere; the expiry path emits nothing | measures the intervals between retransmissions |
+| the timeout at the first data send | nowhere, for the same reason | measures the interval again |
+| the initial congestion window | nowhere; `established` sets it and emits nothing | adds up the data in flight before the first acknowledgment |
+| the threshold before any loss | nowhere; `TcpReno` publishes it when it changes it | not read; the observation is dropped |
+
+Two consequences worth recording. The backoff check can verify only one of its two expected
+observations, and the note in `checks.md` is right that this matters: a model that doubled
+the variable but not the interval would pass one and fail the other, and this pass cannot
+tell those two apart. And the threshold observation of the slow-start check is dropped
+entirely.
+
+A second trap follows from the same property. Where the model *does* publish a value, it may
+publish it **earlier than the episode the check is about**. The threshold is published before
+any loss, and a step that bound the first publication ended the run at t=0.2007 with a
+verdict, before the relay had removed anything. The timeout-response check selects the
+publication at least one second after the loss begins for that reason.
+
+## Three checks of this pass were vacuous before they were repaired
+
+Each passed while establishing nothing, and each was found by disbelieving a pass rather
+than by a failure. They are recorded because the shape repeats.
+
+1. **A predicate on a scalar signal was refused by the framework.** The slow-start guard held
+   over nothing and passed with a bound of one segment, a quarter of a segment, and zero.
+   The third of those made no sense, which is what exposed it. Fixed in the framework.
+2. **The initial window was read from the first publication of `cwnd`**, which is one
+   acknowledgment later than the initial window. It passed, because the grown value is still
+   inside the bound. It now measures the data in flight before the first acknowledgment.
+3. **The window after a lost SYN was read the same way**, and that one nearly recorded a
+   defect that does not exist: the model implements the rule and quotes RFC 5681 in the
+   code.
+
+## Sharpening candidates for the next pass
+
+- **Observation 4 of the fast-retransmit check** — the window returns to the threshold when
+  the repair is acknowledged — is not asserted. Telling that publication apart from the
+  growth that follows needs the acknowledgment of new data as an anchor.
+- **The estimator side of the backoff check**, once the expiry publishes the timeout.
+- **The threshold before any loss**, once the model publishes it where it is set.
+- The **round-trip variance** is not read anywhere, although `rttvar` is published beside
+  `srtt`. Gap 5 quotes it, and a check of its own would bound it.
+
+## The class of each failure, reviewed 2026-09-11
+
+The guide's step 7 named one class, `model gap`, when passes 2 and 3 ran. Master replaced it
+with five classes and a decidable line: *does code exist for this specific behaviour?* If it
+exists the model claims the behaviour and the failure is a **defect**, which declares
+nothing; only an absent behaviour is an **unimplemented feature**, which may declare
+`%# expected-result: FAIL`.
+
+All four failures of this suite were reviewed against that line, each against the code and
+not against the earlier wording.
+
+| Test | Does code exist for the behaviour? | Class | Declared? |
+| --- | --- | --- | --- |
+| Rfc9293Push | no call to `setPshBit` exists anywhere in the sender; two comments say so | unimplemented feature | yes |
+| Rfc9293SourceQuench | `Icmp::processIcmpMessage` has no branch for type 4; the default throws | unimplemented feature | yes |
+| Rfc9293ChecksumDefault | `TcpChecksumInsertionHook::computeChecksum` computes the value, and the `computed` mode runs it — step 1 of the test proves it on host B | **defect** | **no, removed** |
+| Rfc9293ShrunkWindowNoNewData | `sendData` limits a send by `min(snd_wnd, congestionWindow)`, and the sibling test shows the shrunk advertisement is read | **defect** | **no, removed** |
+
+Two declarations were removed. The suite result moves from 18 TOTAL, 14 PASS, 4 FAIL
+(expected) — reported as PASS — to 18 TOTAL, 14 PASS, 2 FAIL (expected), 2 FAIL (unexpected),
+reported as **FAIL**. That is the intended signal: a defect keeps the suite red until
+somebody fixes it.
+
+Neither defect is a large repair. One is a NED default; the other is one comparison in the
+send decision.
+
+## Gap 1 (pass 2): the PSH bit is never set — unimplemented feature
 
 `Rfc9293Push.test` keeps the faithful assertion — the last segment of a 5000-octet send
-carries PSH — and declares `%# expected-result: FAIL`. The classification is **model gap**,
-on three pieces of evidence:
+carries PSH — and declares `%# expected-result: FAIL`. The class is **unimplemented
+feature**: the model does not claim this behaviour, on three pieces of evidence:
 
 1. No call sets the PSH bit anywhere in the TCP sender. `sendSegment` carries the comment
    at the place where the bit would be set:
@@ -94,7 +218,7 @@ statement in the catalog. The test is separate from the data transfer test on pu
 that its failure cannot block the decisive observation that the whole stream was
 acknowledged.
 
-## Model gap 2 (pass 3): the default mode writes no checksum at all
+## Gap 2 (pass 3): the default mode writes no checksum at all — defect
 
 **Statement.** [RFC9293-CKSUM-1](../../standard/rfc9293/catalog.md#rfc9293-cksum-1), must:
 "The TCP checksum is never optional. The sender MUST generate it (MUST-2)", §3.1,
@@ -121,7 +245,7 @@ RFC 9293 allows no such thing.
 **Not a defect of the module.** Five checks of this pass depend on the computed mode and
 pass. What fails is the choice of default.
 
-## Model gap 3 (pass 3): new data goes past a shrunk window edge
+## Gap 3 (pass 3): new data goes past a shrunk window edge — defect
 
 **Statement.** [RFC9293-WND-5](../../standard/rfc9293/catalog.md#rfc9293-wnd-5), should not:
 "If this happens, the sender SHOULD NOT send new data (SHLD-15)", §3.8.6,
@@ -145,7 +269,7 @@ the connection surviving the negative window and finishing the whole transfer, w
 MUST-34. The two are separate tests on purpose, so that this failure cannot hide that
 verdict.
 
-## Model gap 4 (pass 3): a Source Quench stops the run
+## Gap 4 (pass 3): a Source Quench stops the run — unimplemented feature
 
 **Statement.** [RFC9293-ICMP-2](../../standard/rfc9293/catalog.md#rfc9293-icmp-2), must:
 "TCP implementations MUST silently discard any received ICMP Source Quench messages
@@ -224,12 +348,12 @@ Pass 3 adds:
 
 ## Failure history during authoring
 
-Pass 2: three test errors and one model gap. The errors: a `notBefore` copied from the old
+Pass 2: three test errors and one gap. The errors: a `notBefore` copied from the old
 template onto a step whose anchor had moved; the echo application in the flow-control
 scenario (deviation 2); the unit-bearing capture (deviation 4). The review added the data
-condition of deviation 3. The model gap is the PSH bit, above.
+condition of deviation 3. The gap is the PSH bit, above.
 
-Pass 3: five test errors and three model gaps. Nothing was reverted, skipped or softened;
+Pass 3: five test errors and three gaps. Nothing was reverted, skipped or softened;
 each error was a fault of the test, and each was corrected before the verdict was recorded.
 
 1. **The header chunk lives in its own namespace.** `TcpHeader` is `inet::tcp::TcpHeader`,

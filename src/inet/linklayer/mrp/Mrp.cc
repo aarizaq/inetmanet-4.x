@@ -181,7 +181,6 @@ void Mrp::initialize(int stage)
         secondaryRingPortId = resolveInterfaceIndex(par("ringPort2"));
         initRingPort(primaryRingPortId, MrpInterfaceData::PRIMARY, enableLinkCheckOnRing);
         initRingPort(secondaryRingPortId, MrpInterfaceData::SECONDARY, enableLinkCheckOnRing);
-        localBridgeAddress = relay->getBridgeAddress();
         EV_DETAIL << "Initialize MRP link layer" << EV_ENDL;
         linkUpHysteresisTimer = new cMessage("linkUpHysteresisTimer");
         startUpTimer = new cMessage("startUpTimer");
@@ -300,8 +299,26 @@ void Mrp::setTimingProfile(int maxRecoveryTime)
     }
 }
 
+// The length of an Option TLV covers everything after its own type and length octets:
+// the manufacturer id and the octets the serializer aligns it with, and the sub-TLV that
+// follows it. Leaving the sub-TLV out of the count puts the next TLV two octets before
+// where the receiver looks for it, which is how a standard dissector reads the sub-TLV as
+// a top-level TLV -- and how this module used to read it as the common TLV.
+static void setOptionValueLength(const Ptr<MrpOption>& optionTlv, const Ptr<MrpSubTlvHeader>& subTlv)
+{
+    optionTlv->setValueLength((optionTlv->getChunkLength() - B(2) + subTlv->getChunkLength()).get<B>());
+}
+
 void Mrp::start()
 {
+    // The relay picks the bridge interface and reads its address in the same
+    // initialization stage this module runs in, so asking it there is a matter of which
+    // submodule the NED file declares first. Every frame this module sends carries the
+    // address, and it also decides which test frame is its own and which manager wins an
+    // auto-manager election, so read it here: start() runs from the start-up timer, after
+    // initialization is over, and again whenever a stopped node is started.
+    localBridgeAddress = relay->getBridgeAddress();
+
     fdbClearTimer = new cMessage("fdbClearTimer");
     fdbClearDelay = new cMessage("fdbClearDelay");
     linkDownTimer = new cMessage("LinkDownTimer");
@@ -611,14 +628,7 @@ void Mrp::handleMrpPDU(Packet* packet)
             }
 
             //handle suboption2 if present
-            if ((optionTlv->getOuiType() == MrpOuiType::IEC
-                    && optionTlv->getValueLength() > 4)
-                    || (optionTlv->getEd1Type() == 0x00
-                            && optionTlv->getValueLength()
-                                    > (4 + Ed1DataLength::LENGTH0))
-                    || (optionTlv->getEd1Type() == 0x04
-                            && optionTlv->getValueLength()
-                                    > (4 + Ed1DataLength::LENGTH4))) {
+            if (B(optionTlv->getValueLength()) > subOffset - version->getChunkLength() - B(2)) {
                 auto subTlv = packet->peekDataAt<MrpSubTlvHeader>(subOffset);
                 switch (subTlv->getSubType()) {
                 case RESERVED: {
@@ -705,14 +715,7 @@ void Mrp::handleMrpPDU(Packet* packet)
         }
 
         //handle suboption2 if present
-        if ((optionTlv->getOuiType() == MrpOuiType::IEC
-                && optionTlv->getValueLength() > 4)
-                || (optionTlv->getEd1Type() == 0x00
-                        && optionTlv->getValueLength()
-                                > (4 + Ed1DataLength::LENGTH0))
-                || (optionTlv->getEd1Type() == 0x04
-                        && optionTlv->getValueLength()
-                                > (4 + Ed1DataLength::LENGTH4))) {
+        if (B(optionTlv->getValueLength()) > subOffset - offset - B(2)) {
             auto subTlv = packet->peekDataAt<MrpSubTlvHeader>(subOffset);
             switch (subTlv->getSubType()) {
             case RESERVED: {
@@ -1014,9 +1017,12 @@ void Mrp::setupContinuityCheck(int ringPort)
         sequenceCCM2++;
     }
     ccm->setEndpointIdentifier(portData->getCfmEndpointID());
-    auto name = portData->getCfmName();
-    ccm->setMessageName(name.c_str());
+    // the port's name identifies the maintenance association; there is no maintenance
+    // domain name to go with it, which the format octet of an absent name says
+    ccm->setMaName(portData->getCfmName().c_str());
     auto packet = new Packet("ContinuityCheck", ccm);
+    // the TLV that closes the message: a TLV of its own, not part of the header
+    packet->insertAtBack(makeShared<CfmEndTlv>());
     sendCCM(ringPort, packet);
 }
 
@@ -1107,8 +1113,7 @@ void Mrp::setupTestRingReq()
     if (role == MANAGER_AUTO) {
         auto optionTlv = makeShared<MrpOption>();
         auto autoMgrTlv = makeShared<MrpSubTlvHeader>();
-        uint8_t headerLength = optionTlv->getValueLength() + autoMgrTlv->getSubHeaderLength() + 2;
-        optionTlv->setValueLength(headerLength);
+        setOptionValueLength(optionTlv, autoMgrTlv);
         packet1->insertAtBack(optionTlv);
         packet1->insertAtBack(autoMgrTlv);
         packet2->insertAtBack(optionTlv);
@@ -1179,6 +1184,7 @@ void Mrp::setupLinkChangeReq(int ringPort, LinkState linkState, simtime_t time)
         throw cRuntimeError("Unknown LinkState in linkChangeRequest");
     }
     linkChangeTlv->setSa(localBridgeAddress);
+    linkChangeTlv->setPortRole(ringPort == primaryRingPortId ? MrpInterfaceData::PRIMARY : MrpInterfaceData::SECONDARY);
     linkChangeTlv->setInterval(time.inUnit(SIMTIME_MS));
     linkChangeTlv->setBlocked(1);
 
@@ -1209,10 +1215,10 @@ void Mrp::testMgrNackReq(int ringPort, MrpPriority managerPrio, MacAddress sourc
     testMgrTlv->setSubType(SubTlvHeaderType::TEST_MGR_NACK);
     testMgrTlv->setPrio(localManagerPrio);
     testMgrTlv->setSa(localBridgeAddress);
-    testMgrTlv->setOtherMRMPrio(0x00);
+    testMgrTlv->setOtherMRMPrio(managerPrio);
     testMgrTlv->setOtherMRMSa(sourceAddress);
 
-    optionTlv->setValueLength(optionTlv->getValueLength() + testMgrTlv->getSubHeaderLength() + 2);
+    setOptionValueLength(optionTlv, testMgrTlv);
 
     commonTlv->setSequenceID(sequenceID);
     sequenceID++;
@@ -1259,7 +1265,7 @@ void Mrp::testPropagateReq(int ringPort, MrpPriority managerPrio, MacAddress sou
     testMgrTlv->setOtherMRMPrio(managerPrio);
     testMgrTlv->setOtherMRMSa(sourceAddress);
 
-    optionTlv->setValueLength(optionTlv->getValueLength() + testMgrTlv->getSubHeaderLength() + 2);
+    setOptionValueLength(optionTlv, testMgrTlv);
 
     commonTlv->setSequenceID(sequenceID);
     sequenceID++;

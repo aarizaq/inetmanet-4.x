@@ -8,11 +8,13 @@
 [![Test: feature](https://github.com/aarizaq/inetmanet-4.x/actions/workflows/feature-tests.yml/badge.svg)](https://github.com/aarizaq/inetmanet-4.x/actions/workflows/feature-tests.yml)
 [![Test: fingerprint](https://github.com/aarizaq/inetmanet-4.x/actions/workflows/fingerprint-tests.yml/badge.svg)](https://github.com/aarizaq/inetmanet-4.x/actions/workflows/fingerprint-tests.yml)
 [![Test: module](https://github.com/aarizaq/inetmanet-4.x/actions/workflows/module-tests.yml/badge.svg)](https://github.com/aarizaq/inetmanet-4.x/actions/workflows/module-tests.yml)
-[![Test: other](https://github.com/aarizaq/inetmanet-4.x/actions/workflows/other-tests.yml/badge.svg)](https://github.com/aarizaq/inetmanet-4.x/actions/workflows/other-tests.yml)
-<!-- [![Test: speed](https://github.com/aarizaq/inetmanet-4.x/actions/workflows/speed-tests.yml/badge.svg)](https://github.com/aarizaq/inetmanet-4.x/actions/workflows/speed-tests.yml) -->
+[![Test: packet](https://github.com/aarizaq/inetmanet-4.x/actions/workflows/packet-tests.yml/badge.svg)](https://github.com/aarizaq/inetmanet-4.x/actions/workflows/packet-tests.yml)
+[![Test: protocol](https://github.com/aarizaq/inetmanet-4.x/actions/workflows/protocol-tests.yml/badge.svg)](https://github.com/aarizaq/inetmanet-4.x/actions/workflows/protocol-tests.yml)
+[![Test: queueing](https://github.com/aarizaq/inetmanet-4.x/actions/workflows/queueing-tests.yml/badge.svg)](https://github.com/aarizaq/inetmanet-4.x/actions/workflows/queueing-tests.yml)
 [![Test: statistical](https://github.com/aarizaq/inetmanet-4.x/actions/workflows/statistical-tests.yml/badge.svg)](https://github.com/aarizaq/inetmanet-4.x/actions/workflows/statistical-tests.yml)
 [![Test: unit](https://github.com/aarizaq/inetmanet-4.x/actions/workflows/unit-tests.yml/badge.svg)](https://github.com/aarizaq/inetmanet-4.x/actions/workflows/unit-tests.yml)
 [![Test: validation](https://github.com/aarizaq/inetmanet-4.x/actions/workflows/validation-tests.yml/badge.svg)](https://github.com/aarizaq/inetmanet-4.x/actions/workflows/validation-tests.yml)
+<!-- [![Test: speed](https://github.com/aarizaq/inetmanet-4.x/actions/workflows/speed-tests.yml/badge.svg)](https://github.com/aarizaq/inetmanet-4.x/actions/workflows/speed-tests.yml) -->
 
 Inetmanet/INET Framework for OMNEST/OMNeT++
 =================================

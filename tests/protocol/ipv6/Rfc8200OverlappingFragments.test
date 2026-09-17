@@ -11,7 +11,12 @@ one to one onto its expected observations. Host A fragments a 1500-octet packet 
 its piece overlaps the first by 8 octets. Mapping of the mockup with a relay: host A = hostA,
 router R = router, relay T = tap, host B = hostB.
 
-Expected result: FAIL. The model's reassembly buffer merges overlapping regions
+Defect. This test FAILS and the failure is NOT declared expected, because the model claims the
+behaviour: the reassembly buffer exists, runs, completes a datagram from the overlapping set, and
+then stops the simulation on the model's own assertion in Ipv6::decapsulate. A mechanism that
+completes with a wrong result and then crashes is a defect twice over.
+
+What the run shows: The model's reassembly buffer merges overlapping regions
 (ChunkBuffer::replace) and completes a 1452-octet datagram instead of discarding the set;
 the completed datagram then stops the simulation with the model's own assertion in
 Ipv6::decapsulate (its header still carries the original payload length of 1460, another
@@ -34,24 +39,24 @@ Define_ProtocolTestProgram()
 {
     return ProtocolTest("rfc8200_overlapping_fragments")
         // The relay moves the second fragment 8 octets back, onto the first.
-        .intercept(intercept("tap").match("Ipv6FragmentHeader.fragmentOffset == 1232").nth(1)
+        .intercept(tap("tap").filterPacket("Ipv6FragmentHeader.fragmentOffset == 1232").nth(1)
                      .mutate([](Packet *frame) { rewriteHeader<Ipv6FragmentHeader>(frame, [](Ipv6FragmentHeader& fh) { fh.setFragmentOffset(1224); }); })
                      .describe("the second fragment (set its offset to 1224: an overlap of 8 octets)"))
         // Expected observation 1: the first fragment at host B's interface; record the identification.
         .once(on("hostB.eth[0].mac").signal("packetReceivedFromLower")
-                  .packet("Ipv6FragmentHeader.fragmentOffset == 0 && Ipv6FragmentHeader.moreFragments == true")
+                  .filterPacket("Ipv6FragmentHeader.fragmentOffset == 0 && Ipv6FragmentHeader.moreFragments == true")
                   .capture("id", "Ipv6FragmentHeader.identification")
                   .describe("the first fragment at host B's interface")
                   .within(6.0))
         // Expected observation 2: a fragment of the same datagram at offset 1224 -- the overlap.
         .once(on("hostB.eth[0].mac").signal("packetReceivedFromLower")
-                  .packet("Ipv6FragmentHeader.identification == {id} && Ipv6FragmentHeader.fragmentOffset == 1224 && Ipv6FragmentHeader.moreFragments == false")
+                  .filterPacket("Ipv6FragmentHeader.identification == {id} && Ipv6FragmentHeader.fragmentOffset == 1224 && Ipv6FragmentHeader.moreFragments == false")
                   .describe("the second fragment at host B's interface, at offset 1224, overlapping the first")
                   .within(0.5))
         // Expected observation 3: nothing of the datagram reaches UDP at host B, and host B sends
         // no ICMPv6 message about it (RFC8504-NR-3, RFC8200-REASM-5).
         .never(on("hostB")
-                  .match([](const MatchContext& c) { return deliveredToUdp(c.event, "hostB", "udp.destPort == 5000") || icmpv6ErrorLeaves(c.event, "hostB"); })
+                  .filterEvent([](const MatchContext& c) { return deliveredToUdp(c.event, "hostB", "udp.destPort == 5000") || icmpv6ErrorLeaves(c.event, "hostB"); })
                   .describe("the datagram at host B's UDP, or any ICMPv6 error message from host B")
                   .within(0.5));
 }
@@ -108,6 +113,5 @@ seed-set = 0
 # Host A must fragment: its interface to link 1 has the minimum IPv6 link MTU.
 *.hostA.eth[0].mac.mtu = 1280B
 
-%# expected-result: FAIL
 %contains: stdout
 PROTOCOLTEST rfc8200_overlapping_fragments: PASS

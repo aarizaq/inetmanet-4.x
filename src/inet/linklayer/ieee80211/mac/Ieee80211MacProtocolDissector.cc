@@ -13,6 +13,7 @@
 #include "inet/linklayer/ieee802/Ieee802EpdHeader_m.h"
 #include "inet/linklayer/ieee80211/llc/LlcProtocolTag_m.h"
 #include "inet/linklayer/ieee80211/mac/Ieee80211Frame_m.h"
+#include "inet/linklayer/ieee80211/mgmt/Ieee80211MgmtFrame_m.h"
 #include "inet/linklayer/ieee8022/Ieee8022LlcHeader_m.h"
 #include "inet/physicallayer/wireless/ieee80211/packetlevel/Ieee80211Tag_m.h"
 
@@ -40,20 +41,37 @@ const Protocol *Ieee80211MacProtocolDissector::computeLlcProtocol(Packet *packet
 
 void Ieee80211MacProtocolDissector::dissect(Packet *packet, const Protocol *protocol, ICallback& callback) const
 {
-    const auto& header = packet->popAtFront<inet::ieee80211::Ieee80211MacHeader>();
+    // Pop the FCS trailer before the header so that a header whose length is only
+    // bounded by the end of the frame -- an Ieee80211ActionFrameOther, which stores the
+    // unmodelled action body up to the FCS -- does not read into the FCS.
     const auto& trailer = packet->popAtBack<inet::ieee80211::Ieee80211MacTrailer>(B(4));
+    const auto& header = packet->popAtFront<inet::ieee80211::Ieee80211MacHeader>();
     callback.startProtocolDataUnit(&Protocol::ieee80211Mac);
     callback.visitChunk(header, &Protocol::ieee80211Mac);
     // TODO fragmentation & aggregation
-    if (auto dataHeader = dynamicPtrCast<const inet::ieee80211::Ieee80211DataHeader>(header)) {
-        if (dataHeader->getMoreFragments() || dataHeader->getFragmentNumber() != 0)
+    if (header->getProtectedFrame() && packet->getDataLength() > b(0)) {
+        // the frame body is encrypted (a CCMP/TKIP header followed by ciphertext), so
+        // there is nothing to descend into without the key
+        callback.dissectPacket(packet, nullptr);
+    }
+    else if (auto dataHeader = dynamicPtrCast<const inet::ieee80211::Ieee80211DataHeader>(header)) {
+        if (packet->getDataLength() == b(0)) {
+            // the frame body is empty: a Null or QoS-Null data frame (and the
+            // CF-Poll/CF-Ack data subtypes) carry no payload, so there is nothing to dissect
+        }
+        else if (dataHeader->getMoreFragments() || dataHeader->getFragmentNumber() != 0)
             callback.dissectPacket(packet, nullptr);
         else if (dataHeader->getAMsduPresent()) {
             auto originalTrailerPopOffset = packet->getBackOffset();
             int paddingLength = 0;
             while (packet->getDataLength() > B(0)) {
-                packet->setFrontOffset(packet->getFrontOffset() + B(paddingLength == 4 ? 0 : paddingLength));
+                // every A-MSDU subframe except the last is padded to a multiple of 4
+                // octets; hand the padding to the callback instead of just skipping it,
+                // so the dissected content still covers the whole frame
+                if (paddingLength != 0 && paddingLength != 4)
+                    callback.visitChunk(packet->popAtFront(B(paddingLength)), &Protocol::ieee80211Mac);
                 const auto& msduSubframeHeader = packet->popAtFront<ieee80211::Ieee80211MsduSubframeHeader>();
+                callback.visitChunk(msduSubframeHeader, &Protocol::ieee80211Mac);
                 auto msduEndOffset = packet->getFrontOffset() + B(msduSubframeHeader->getLength());
                 packet->setBackOffset(msduEndOffset);
                 callback.dissectPacket(packet, computeLlcProtocol(packet));
@@ -65,10 +83,34 @@ void Ieee80211MacProtocolDissector::dissect(Packet *packet, const Protocol *prot
         else
             callback.dissectPacket(packet, computeLlcProtocol(packet));
     }
-    else if (dynamicPtrCast<const inet::ieee80211::Ieee80211ActionFrame>(header))
-        ASSERT(packet->getDataLength() == b(0));
-    else if (dynamicPtrCast<const inet::ieee80211::Ieee80211MgmtHeader>(header))
-        callback.dissectPacket(packet, &Protocol::ieee80211Mgmt);
+    else if (dynamicPtrCast<const inet::ieee80211::Ieee80211ActionFrame>(header)) {
+        // A fully modelled action (ADDBA/DELBA) and the Ieee80211ActionFrameOther that
+        // carries an unmodelled action body both consume the whole frame, so nothing
+        // should remain; keep the raw fallback only as a safety net.
+        if (packet->getDataLength() > b(0))
+            callback.dissectPacket(packet, nullptr);
+    }
+    else if (auto mgmtHeader = dynamicPtrCast<const inet::ieee80211::Ieee80211MgmtHeader>(header)) {
+        // deserialize the management-frame body as the concrete subtype named by the
+        // header, so its serializer is exercised instead of leaving the body as raw
+        // bytes; unknown subtypes fall back to the generic mgmt dissector
+        using namespace inet::ieee80211;
+        if (packet->getDataLength() > b(0)) {
+            switch (mgmtHeader->getType()) {
+                case ST_BEACON: callback.visitChunk(packet->popAtFront<Ieee80211BeaconFrame>(), &Protocol::ieee80211Mgmt); break;
+                case ST_PROBEREQUEST: callback.visitChunk(packet->popAtFront<Ieee80211ProbeRequestFrame>(), &Protocol::ieee80211Mgmt); break;
+                case ST_PROBERESPONSE: callback.visitChunk(packet->popAtFront<Ieee80211ProbeResponseFrame>(), &Protocol::ieee80211Mgmt); break;
+                case ST_ASSOCIATIONREQUEST: callback.visitChunk(packet->popAtFront<Ieee80211AssociationRequestFrame>(), &Protocol::ieee80211Mgmt); break;
+                case ST_ASSOCIATIONRESPONSE: callback.visitChunk(packet->popAtFront<Ieee80211AssociationResponseFrame>(), &Protocol::ieee80211Mgmt); break;
+                case ST_REASSOCIATIONREQUEST: callback.visitChunk(packet->popAtFront<Ieee80211ReassociationRequestFrame>(), &Protocol::ieee80211Mgmt); break;
+                case ST_REASSOCIATIONRESPONSE: callback.visitChunk(packet->popAtFront<Ieee80211ReassociationResponseFrame>(), &Protocol::ieee80211Mgmt); break;
+                case ST_AUTHENTICATION: callback.visitChunk(packet->popAtFront<Ieee80211AuthenticationFrame>(), &Protocol::ieee80211Mgmt); break;
+                case ST_DEAUTHENTICATION: callback.visitChunk(packet->popAtFront<Ieee80211DeauthenticationFrame>(), &Protocol::ieee80211Mgmt); break;
+                case ST_DISASSOCIATION: callback.visitChunk(packet->popAtFront<Ieee80211DisassociationFrame>(), &Protocol::ieee80211Mgmt); break;
+                default: callback.dissectPacket(packet, &Protocol::ieee80211Mgmt); break;
+            }
+        }
+    }
     // TODO else if (dynamicPtrCast<const inet::ieee80211::Ieee80211ControlFrame>(header))
     else
         ASSERT(packet->getDataLength() == b(0));

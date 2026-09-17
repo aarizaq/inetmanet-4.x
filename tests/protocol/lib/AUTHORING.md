@@ -20,9 +20,9 @@ Define_ProtocolTest(udp_basic_pass)
 {
     return ProtocolTest("udp_basic_pass")
         .once(on("host1.udp").signal("packetSentToLower")
-                  .packet("udp.destPort == 5000").within(0.2))
+                  .filterPacket("udp.destPort == 5000").within(0.2))
         .once(on("host2.udp").signal("packetReceivedFromLower")
-                  .packet("udp.destPort == 5000").within(0.1));
+                  .filterPacket("udp.destPort == 5000").within(0.1));
 }
 ```
 
@@ -51,9 +51,9 @@ functional per concern**:
 | `.protocol("mobileipv6")` | packet protocol | the packet's `PacketProtocolTag` |
 | `.dispatch("ipv4")` | dispatch protocol | the packet's `DispatchProtocolReq` (where it's headed) |
 | `.iface("eth0")` | interface | restrict to an interface |
-| `.packet("expr")` | packet content | content predicate over the packet (PacketFilter, §4) |
-| `.match([](const MatchContext& c){ ... })` | content (lambda) | typed content predicate |
-| `.is(value)` | scalar value | a scalar signal's value, e.g. an FSM state index (§8) |
+| `.filterPacket("expr")` | packet content | content predicate over the packet (PacketFilter, §4) |
+| `.filterEvent([](const MatchContext& c){ ... })` | content (lambda) | typed content predicate |
+| `filterValue(v)` | scalar value | a scalar signal's value, e.g. an FSM state index (§8) |
 | `.attributeTo("host1.ipv6.mipv6")` | narration POV | description point of view only — never affects matching (§8b) |
 | `.describe("phrase")` | narration | human phrase (rarely needed — `packet()` auto-translates) |
 | `.capture("name", "proto.field")` | capture | remember a field value for later steps (§4) |
@@ -79,25 +79,73 @@ comes first for the parameterized ones.
 | `never(p)` | 0 | fail if a match occurs in the window, else advance |
 | `once(p)` | 1 | advance on the first match (the common case) |
 | `atMostOnce(p)` | 0..1 | match-or-skip |
-| `exactlyTimes(n, p)` | n | advance on the nth match |
+| `nextTimes(n, p)` | the next n | advance on the nth match; **does not forbid an n+1th** |
 | `oneOrMoreTimes(p)` | 1..∞ | greedy: consume the whole `within` window, need ≥1 |
 | `anyNumberOfTimes(p)` | 0..∞ | greedy: consume the window |
 | `atLeastTimes(n, p)` | n..∞ | greedy: consume the window, need ≥n |
 | `atMostTimes(n, p)` | 0..n | greedy: fail on the (n+1)th |
 | `betweenTimes(a, b, p)` | a..b | greedy: need the count in [a, b] |
+| `exactlyTimes(n, p)` | n..n | greedy: fail at once on an n+1th, and on fewer than n when the window closes |
 
-**Fixed-count** kinds (`once`, `exactlyTimes`) advance the instant the count is reached, so
-they don't disturb the timing of later steps. **Greedy** kinds (`oneOrMore`, `atLeast`,
-`atMost`, `between`, `anyNumber`) consume *every* matching frame until their `within` window
-closes, then check the range — size `within` so the window ends before the next expected
-frame, or a greedy step will swallow it.
+**Sequencing** kinds (`once`, `atMostOnce`, `nextTimes`) advance the instant the count is
+reached, so they don't disturb the timing of later steps. **Cardinality** kinds
+(`oneOrMore`, `atLeast`, `atMost`, `between`, `exactlyTimes`, `anyNumber`) consume *every*
+matching frame until their `within` window closes, then check the range.
+
+**Read `nextTimes` and `exactlyTimes` carefully; they are not the same rule.** `nextTimes(3,
+p)` takes the next three matches and hands the fourth to the step after it.
+`exactlyTimes(3, p)` says there are three in the window and no more, so a fourth fails. The
+two shared the name `exactlyTimes` until 2026-09-14, and the cardinality was the one that did
+not exist: a check that said "exactly three" got "the next three" and passed over everything
+after them. `self/Repeat.test` and `self/NextTimes.test` cover the two.
+
+A cardinality step is greedy, so size its `within` to end before the next expected frame, or
+put it in `meanwhile(...)` and let it run beside the steps that follow.
 
 ---
 
 ## 4. Content matching & captures
 
-`.packet("expr")` uses INET's `PacketFilter` expression engine over the dissected packet
-(it asserts the signal value is a packet; for a scalar signal use `.is(value)` instead).
+### A filter picks the event, an assertion judges it
+
+Every word that compares says which of the two it is. **A filter picks the event**: when
+nothing matches, the step waits and finally misses its deadline. **An assertion must hold on
+the event the filter picked**: when it does not, the step fails at once and the engine never
+looks for a later event.
+
+| | Filter — picks | Assertion — must hold |
+| --- | --- | --- |
+| expression over the packet | `filterPacket(e)` | `assertPacket(e)`, `assertNotPacket(e)` |
+| predicate over the event | `filterEvent(f)` | `assertEvent(f)` |
+| scalar equality | `filterValue(v)` | `assertValue(v)`, `assertNotValue(v)` |
+| scalar bound | `filterValueAtLeast(v)`, `filterValueAtMost(v)` | `assertValueAtLeast(v)`, `assertValueAtMost(v)` |
+| scalar range | `filterValueBetween(lo, hi)` | `assertValueBetween(lo, hi)` |
+
+Position words compare nothing and stay bare: `first()`, and `nth(k)`. `first()` is `nth(1)`.
+
+**Write a rule as an assertion, not as a filter.** This is the difference between a check
+that can fail and one that cannot:
+
+```cpp
+// wrong: picks the first window that is small enough, and passes over one that is not
+.once(on("host1.tcp").signal("cwnd").filterValueAtMost(IW_BOUND).within(0.5))
+
+// right: the first publication is the subject, and the bound is the verdict
+.once(on("host1.tcp").signal("cwnd").first().assertValueAtMost(IW_BOUND).within(0.5))
+```
+
+There is deliberately no `assertNotThat`: a lambda negates itself. `assertNotPacket` is not
+redundant in the same way, because it differs from `assertPacket` of a negated expression when
+the chunk is **absent**.
+
+`assertValueAtLeast` does not collide with `atLeastTimes`: the cardinality family carries the
+`Times` suffix.
+
+### The expression engine
+
+`filterPacket("expr")` uses INET's `PacketFilter` expression engine over the dissected packet
+(it asserts the signal value is a packet; for a scalar signal use `filterValue(v)` or one
+of the bounds instead).
 Protocol names are lowercase (`tcp`, `udp`, `ipv4`, `arp`, `ieee80211mac`), chunk class
 names are as declared (`BindingUpdate`, `Ieee80211DataHeader`). Examples:
 
@@ -117,14 +165,19 @@ non-match, never an error.
 
 ```cpp
 .once(on("host1.tcp").signal("packetSentToLower")
-          .packet("tcp.synBit == true")
+          .filterPacket("tcp.synBit == true")
           .capture("isn", "tcp.sequenceNo"))           // remember the ISN
 .once(on("host1.tcp").signal("packetReceivedFromLower")
-          .packet("tcp.ackNo == {isn} + 1"))           // refer back to it
+          .filterPacket("tcp.ackNo == {isn} + 1"))           // refer back to it
 ```
 
 For predicates the engine can't introspect, use a lambda plus `.describe("...")` so the
 English rendering stays readable.
+
+A captured field may carry a unit — the SYN's header length is `24B`, not `24`. That works:
+the capture keeps its quantity form and the expression engine compares it, so
+`tcp.headerLength == {synHeaderLength} - 4B` is a valid step. A capture is converted only
+where an expression names it, so a capture taken for one step cannot break another.
 
 ---
 
@@ -136,6 +189,26 @@ English rendering stays readable.
 | `anyOf({a, b, ...})` | the first alternative to match wins |
 | `delivery(from, to, window)` | a sent packet is received as the **same packet** (correlated by `treeId`) within `window` |
 | `strict()` | closed-world: a packet matching a step's selector *scope* but not its content fails that step |
+| `meanwhile(step)` | start a step and do **not** wait for it; it runs beside the steps after it |
+
+### A guard that does not block
+
+Every step above holds the cursor for its whole window. So a `never` cannot cover the same
+window as another `never`, and nothing can be observed while either is open.
+`meanwhile(...)` starts a step and moves on in the same instant, and one event reaches every
+running step rather than only the first:
+
+```cpp
+.meanwhile(never(on("host1.ipv4").signal("packetSentToUpper").within(0.5)))
+.meanwhile(never(on("host1.eth[0].mac").signal("packetSentToLower")
+                     .filterPacket("icmpv4.type == 3").within(0.5)))
+.once(on("router.ipv4.ip").signal("packetDropped")
+          .filterPacket("ipv4.identification == {id}").within(0.2))
+```
+
+`never`, `atMostTimes` and `atLeastTimes` exist as free builders for this, and they return a
+step rather than adding one. A guard carries its own window and its own anchor, so a
+`notBefore` inside it is measured from when the guard started.
 
 ---
 
@@ -144,14 +217,14 @@ English rendering stays readable.
 Inject a packet built in C++ into a module's gate, scheduled or reactively:
 
 ```cpp
-.inject(inject("host2").into("eth[0]", "upperLayerOut").at(0.5)
+.inject(at("host2").into("eth[0]", "upperLayerOut").at(0.5)
           .describe("a UDP datagram to port 5000")
-          .packet(buildInjectedUdpDatagram))      // a Packet *(const CaptureStore&) builder
+          .filterPacket(buildInjectedUdpDatagram))      // a Packet *(const CaptureStore&) builder
 ```
 
 - `.into(module, gate)` — the sink under the node to `pushPacket()` into.
 - `.at(t)` absolute, or `.after(d)` relative to the previous step's match (reactive).
-- `.packet(fn)` — the builder; it may read captures, so the injected packet can depend on an
+- `.filterPacket(fn)` — the builder; it may read captures, so the injected packet can depend on an
   observed one (stimulus/response). The builder owns construction — any chunk/tag is possible.
 
 Inject steps are ordered like any other step.
@@ -160,16 +233,27 @@ Inject steps are ordered like any other step.
 
 ## 7. Interception (MITM) — drop / delay / mutate
 
-A `PacketTap` module spliced onto a link can drop/delay/mutate frames in flight. Drive it
-from the program with `intercept("tapModuleName")`:
+A `PacketTap` module spliced onto a link can drop/delay/mutate frames in flight. `tap(...)`
+builds the clause and `.intercept(...)` adds it, so the two roles read differently:
 
 ```cpp
-.intercept(intercept("tap")
-             .match("tcp.destPort == 1000 && tcp.synBit == false")
+.intercept(tap("relay")
+             .filterPacket("tcp.destPort == 1000 && tcp.synBit == false")
              .minBytes(100)        // only the data-bearing segment
              .nth(1)               // the first match (1-based; 0 = every)
              .drop()               // or .delay(0.05) or .mutate([](Packet *p){ ... })
              .describe("the first data segment"))
+```
+
+**A relay holds a list of rules.** Each clause adds one; a frame is offered to the rules in
+order and the first that matches applies; a frame that matches none passes. Each rule counts
+its own occurrences. `pass()` is an explicit no-op, and it earns its place here: it shadows a
+later rule for the frames it names, so an exception is a clause of its own rather than a
+condition inside the other rule's expression.
+
+```cpp
+.intercept(tap("relay").filterPacket("tcp.synBit == true").pass().describe("never touch a SYN"))
+.intercept(tap("relay").filterPacket("tcp.destPort == 1000").drop().describe("drop the data"))
 ```
 
 Interceptions are **standing** rules (armed for the whole run, not ordered steps). The
@@ -202,20 +286,20 @@ as a second channel beside packets. INET's `Fsm` already emits its state on ever
 (`setStateChangedSignal`), so the state machine needs no modification.
 
 A scalar signal is just another `signal()` — selected the same way as a packet signal, with
-`.is(value)` for its value and the ordinary cardinality builders (`once`/`never`/…):
+`filterValue(v)` for its value and the ordinary cardinality builders (`once`/`never`/…):
 
 ```cpp
 .once(on("node[0].eth[0].plca").signal("controlStateChanged")   // module path, then the signal
-          .is(EthernetPlca::CS_COMMIT)                           // the value (a public enum)
+          .filterValue(EthernetPlca::CS_COMMIT)                           // the value (a public enum)
           .within(0.001))
 .never(on("node[0].eth[0].plca").signal("controlStateChanged")
-          .is(EthernetPlca::CS_ABORT).within(0.001))             // negative: must not enter this state
+          .filterValue(EthernetPlca::CS_ABORT).within(0.001))             // negative: must not enter this state
 ```
 
 | Clause | Meaning |
 |---|---|
 | `on("path").signal("name")` | the emitting module and its scalar signal (e.g. `controlStateChanged`) |
-| `.is(value)` | require this exact value (typically a public enum, e.g. `EthernetPlca::CS_TRANSMIT`); omit to match any emission |
+| `filterValue(v)` | require this exact value (typically a public enum, e.g. `EthernetPlca::CS_TRANSMIT`); omit to match any emission |
 | `once(p)` / `never(p)` / … | the same cardinality builders as packets — `once` = "reaches the value", `never` = "must not" |
 
 A scalar signal flows through the **same engine** as packets: a scalar step matches a scalar
@@ -284,10 +368,11 @@ common ini settings via [`protocoltest-base.ini`](protocoltest-base.ini)
 A test does not need a `ProtocolTester` declared in its network. Define the program with
 `Define_ProtocolTestProgram()` (one per build, no name/selection) and the framework attaches
 a `ProtocolTester` to whatever network runs — so a test can target an **unmodified external
-network** just by pointing `network =` at it. See the `opp_test` examples in [`../`](..):
-`tcp/TcpHandshake.test`, `self/ViolationDetected.test`,
-`tcp/TcpRetransmit.test`. Each carries its program in `%global`, its (tester-less)
-network in `%file`, and asserts the verdict line with `%contains`.
+network** just by pointing `network =` at it. Every test in [`../self/`](../self) is such
+an example: `Basic.test` is the smallest one, `ViolationDetected.test` asserts that the
+framework reports a violation, and `InterceptMutate.test` drives a fault into the wire.
+Each carries its program in `%global`, its (tester-less) network in `%file`, and asserts
+the verdict line with `%contains`.
 
 How the attach works: defining a `Define_ProtocolTestProgram()` registers it as the default
 program; a simulation lifecycle listener (`ProtocolTestAttach.cc`) creates a `ProtocolTester`
@@ -326,25 +411,25 @@ two fail the run. Allowed values: `PASS` (the default when absent), `FAIL`, `ERR
 All snippets come from the `.test` files in the suite folders; the name in brackets is
 the test file that runs them.
 
-### TCP three-way handshake — sequence/ack relations (`../tcp/TcpHandshake.test`)
+### TCP three-way handshake — sequence/ack relations
 Observe SYN / SYN+ACK / ACK at the initiator, asserting the ack numbers follow seq+1 via
 captures.
 ```cpp
 .once(on("host1.tcp").signal("packetSentToLower")
-          .packet("tcp.synBit == true && tcp.ackBit == false")
+          .filterPacket("tcp.synBit == true && tcp.ackBit == false")
           .capture("isn", "tcp.sequenceNo").within(0.2))
 .once(on("host1.tcp").signal("packetReceivedFromLower")
-          .packet("tcp.synBit == true && tcp.ackBit == true && tcp.ackNo == {isn} + 1")
+          .filterPacket("tcp.synBit == true && tcp.ackBit == true && tcp.ackNo == {isn} + 1")
           .capture("peerIsn", "tcp.sequenceNo").within(0.5))
 .once(on("host1.tcp").signal("packetSentToLower")
-          .packet("tcp.ackBit == true && tcp.synBit == false && tcp.ackNo == {peerIsn} + 1").within(0.5));
+          .filterPacket("tcp.ackBit == true && tcp.synBit == false && tcp.ackNo == {peerIsn} + 1").within(0.5));
 ```
 
 ### TCP retransmission via a dropped segment (`MitmRetransmit`)
 A tap drops the first data segment; the test asserts host1 re-sends the same sequence number
 after the RTO. Shows fault injection driving a behaviour, then asserting it.
 ```cpp
-.intercept(intercept("tap").match("tcp.destPort == 1000 && tcp.synBit == false")
+.intercept(tap("tap").filterPacket("tcp.destPort == 1000 && tcp.synBit == false")
              .minBytes(100).nth(1).drop().describe("the first data segment"))
 .once(... capture "dataSeq" = tcp.sequenceNo ...)
 .once(... match "tcp.sequenceNo == {dataSeq} && tcp.synBit == false" .notBefore(0.3).within(5.0));
@@ -355,26 +440,26 @@ after the RTO. Shows fault injection driving a behaviour, then asserting it.
 host1 opens to a phantom IP; the test observes the SYN, injects a crafted SYN+ACK acking
 ISN+1, then observes host1's final ACK — a handshake driven entirely by injection.
 
-### ARP resolution (`ArpResolution`)
+### ARP resolution
 ```cpp
-.once(on("host1.eth[0].mac").signal("packetSentToLower").packet("arp.opcode == 1")
+.once(on("host1.eth[0].mac").signal("packetSentToLower").filterPacket("arp.opcode == 1")
           .describe("an ARP request").within(0.2))
-.once(on("host1.eth[0].mac").signal("packetReceivedFromLower").packet("arp.opcode == 2")
+.once(on("host1.eth[0].mac").signal("packetReceivedFromLower").filterPacket("arp.opcode == 2")
           .describe("host2's ARP reply").within(0.2));
 ```
 
 ### IPv4 fragmentation (`Fragmentation`)
 A 4000-byte datagram over a 1500-byte MTU yields several fragments.
 ```cpp
-.once(on("host1.eth[0].mac").signal("packetSentToLower").packet("ipv4.moreFragments == true")
+.once(on("host1.eth[0].mac").signal("packetSentToLower").filterPacket("ipv4.moreFragments == true")
           .describe("a fragment with the more-fragments flag set").within(0.2))
-.once(on("host1.eth[0].mac").signal("packetSentToLower").packet("ipv4.fragmentOffset > 0")
+.once(on("host1.eth[0].mac").signal("packetSentToLower").filterPacket("ipv4.fragmentOffset > 0")
           .describe("a later fragment at a non-zero offset").within(0.2));
 ```
 
 ### 802.11 Block Ack sequence (`WifiBlockAckFull`)
 The full agreement: ADDBA handshake (each frame ACKed), then a block of 5 QoS data frames,
-a Block Ack Request, and one Block Ack — using `exactlyTimes(5, ...)` for the block. See
+a Block Ack Request, and one Block Ack — using `nextTimes(5, ...)` for the block. See
 `wifi_block_ack_full` for the complete sequence.
 
 ### DHCP (pattern)
@@ -391,18 +476,18 @@ trace, so this asserts the FSM signals (§8) instead. On a controller + 2-node m
 opportunity rotates to node[0] (`curID == 1`), node[0] COMMITs and its data FSM transmits,
 and the controller receives the frame — while the control FSM must never `CS_ABORT`.
 ```cpp
-.once(on("controller.eth[0].plca").signal("controlStateChanged").is(EthernetPlca::CS_SEND_BEACON).within(0.001))
-.once(on("node[0].eth[0].plca").signal("controlStateChanged").is(EthernetPlca::CS_SYNCING).within(0.001))
-.once(on("node[0].eth[0].plca").signal("curID").is(1).within(0.001))
-.once(on("node[0].eth[0].plca").signal("controlStateChanged").is(EthernetPlca::CS_COMMIT).within(0.001))
-.once(on("node[0].eth[0].plca").signal("dataStateChanged").is(EthernetPlca::DS_TRANSMIT).within(0.001))
-.never(on("node[0].eth[0].plca").signal("controlStateChanged").is(EthernetPlca::CS_ABORT).within(0.001));
+.once(on("controller.eth[0].plca").signal("controlStateChanged").filterValue(EthernetPlca::CS_SEND_BEACON).within(0.001))
+.once(on("node[0].eth[0].plca").signal("controlStateChanged").filterValue(EthernetPlca::CS_SYNCING).within(0.001))
+.once(on("node[0].eth[0].plca").signal("curID").filterValue(1).within(0.001))
+.once(on("node[0].eth[0].plca").signal("controlStateChanged").filterValue(EthernetPlca::CS_COMMIT).within(0.001))
+.once(on("node[0].eth[0].plca").signal("dataStateChanged").filterValue(EthernetPlca::DS_TRANSMIT).within(0.001))
+.never(on("node[0].eth[0].plca").signal("controlStateChanged").filterValue(EthernetPlca::CS_ABORT).within(0.001));
 ```
 Author it by first setting `stateSignals = "controlStateChanged dataStateChanged
 curID rxCmd txCmd"` on the tester to read the real sequence. See
 [`../ethernet/PlcaBeaconCycle.test`](../ethernet/PlcaBeaconCycle.test).
 
-### Mobile IPv6 registration + route optimization (`../ipv6/Mipv6Registration.test`, RFC 6275)
+### Mobile IPv6 registration + route optimization (RFC 6275)
 MIPv6 is a message-exchange protocol (no FSM-state signal), so this asserts the Mobility Header
 sequence as packets. On a minimal MN/HA/CN handover network, after the mobile node
 roams to a foreign link it registers with its Home Agent (Binding Update → Binding Acknowledgement),

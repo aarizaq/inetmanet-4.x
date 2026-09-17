@@ -33,6 +33,7 @@ const B GPTP_FOLLOW_UP_PACKET_SIZE = GPTP_HEADER_SIZE + B(10) + GPTP_TLV_SIZE + 
 const B GPTP_PDELAY_REQ_PACKET_SIZE = GPTP_HEADER_SIZE + B(20);
 const B GPTP_PDELAY_RESP_PACKET_SIZE = GPTP_HEADER_SIZE + B(20);
 const B GPTP_PDELAY_RESP_FOLLOW_UP_PACKET_SIZE = GPTP_HEADER_SIZE + B(20);
+const B GPTP_ANNOUNCE_PACKET_SIZE = GPTP_HEADER_SIZE + B(30); // fixed body, no path-trace TLV
 }
 
 }}
@@ -62,6 +63,7 @@ enum GptpMessageType
     GPTPTYPE_PDELAY_REQ = 0x2;
     GPTPTYPE_PDELAY_RESP = 0x3;
     GPTPTYPE_PDELAY_RESP_FOLLOW_UP = 0xA;
+    GPTPTYPE_ANNOUNCE = 0xB;
 }
 
 // ieee802.1AS-2020 10.6.2.2.8: flags (Octet2)
@@ -114,7 +116,7 @@ class GptpBase extends FieldsChunk
     uint8_t majorSdoId @bit(4); // The value is specified in 8.1 for all transmitted PTP messages of a gPTP domain. The value is specified in
                                 // 11.2.17 for all transmitted PTP messages of the Common Mean Link Delay Service. Any PTP message
                                 // received for which the value is not one of the values specified in those subclauses shall be ignored.
-    GptpMessageType messageType @bit(4);
+    GptpMessageType messageType @bit(4) @editable(false); // subtype discriminator, pinned per subclass
     uint8_t minorVersionPTP @bit(4) = 1; // For transmitted messages, the value shall be 1 (see 7.5.4 and 13.3.2.5 of IEEE Std 1588-2019).
                                      // For received messages, the value is ignored.
     uint8_t versionPTP @bit(4) = 2; // For transmitted messages, the value shall be 2 (see 7.5.4 and 13.3.2.4 of IEEE Std 1588-2019). For received
@@ -189,8 +191,12 @@ class GptpSync extends GptpBase
     flags = twoStepFlag;
     chunkLength = GPTP_SYNC_2STEP_PACKET_SIZE;
     messageLengthField = GPTP_SYNC_2STEP_PACKET_SIZE.get<B>();
-    // clocktime_t originTimestamp; // filled when twoStep flag is FALSE
-    // followUpInformationTLV; // filled when twoStep flag is FALSE
+    // 0 for two-step; the sync egress time for a one-step Port. Kept in raw wire
+    // units (48-bit seconds + 32-bit nanoseconds) rather than clocktime_t so an
+    // absolute-time (Unix-epoch) capture does not overflow the simulation clock.
+    uint64_t originTimestampSeconds @bit(48);
+    uint32_t originTimestampNanoseconds;
+    // followUpInformationTLV; // filled for the 802.1AS one-step variant (not handled here)
 }
 
 class GptpFollowUp extends GptpBase
@@ -207,8 +213,10 @@ class GptpPdelayReq extends GptpBase
     messageType = GPTPTYPE_PDELAY_REQ;
     chunkLength = GPTP_PDELAY_REQ_PACKET_SIZE;
     messageLengthField = GPTP_PDELAY_REQ_PACKET_SIZE.get<B>();
-    clocktime_t reserved1;
-    clocktime_t reserved2;
+    // The 20 octets after the common header (a 10-octet reserved originTimestamp plus
+    // 10 reserved octets) are 0 in a conformant 802.1AS Pdelay_Req; kept verbatim so a
+    // capture that carries data there round-trips instead of being zeroed.
+    uint8_t reserved[20];
 }
 
 class GptpPdelayResp extends GptpBase
@@ -227,5 +235,24 @@ class GptpPdelayRespFollowUp extends GptpBase
     messageLengthField = GPTP_PDELAY_RESP_FOLLOW_UP_PACKET_SIZE.get<B>();
     clocktime_t responseOriginTimestamp;
     PortIdentity requestingPortIdentity;
+}
+
+// IEEE 1588 Announce message (used by the BMCA). Fixed 30-byte body; the optional
+// PATH_TRACE TLV is not handled.
+class GptpAnnounce extends GptpBase
+{
+    messageType = GPTPTYPE_ANNOUNCE;
+    chunkLength = GPTP_ANNOUNCE_PACKET_SIZE;
+    messageLengthField = GPTP_ANNOUNCE_PACKET_SIZE.get<B>();
+    uint64_t originTimestampSeconds @bit(48); // reserved in gPTP, carried on the wire (raw units, see GptpSync)
+    uint32_t originTimestampNanoseconds;
+    int16_t currentUtcOffset;
+    uint8_t reserved;
+    uint8_t grandmasterPriority1;
+    uint32_t grandmasterClockQuality;
+    uint8_t grandmasterPriority2;
+    uint64_t grandmasterIdentity;
+    uint16_t stepsRemoved;
+    uint8_t timeSource;
 }
 

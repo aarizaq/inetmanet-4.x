@@ -24,7 +24,7 @@ the commit it examined; without it a seal is a claim with no evidence.
 
 | | Path | Audit | Rules checked | Accepted exceptions |
 | --- | --- | --- | --- | --- |
-| 🔒 | `common/packet/` *(recursive)* | [common-packet.md](report/subsystem/common-packet.md), 2026-07-20 | AR-ORG-DOMAINS, AR-ORG-VIS-SPLIT | AS-01, AV-ORG-01, AV-ORG-02 |
+| 🔒 | `common/packet/` *(recursive)* | `audit/subsystem/common-packet.md`, 2026-07-20 | AR-ORG-DOMAINS, AR-ORG-VIS-SPLIT | AS-01, AV-ORG-01, AV-ORG-02 |
 
 The packet and chunk API and its implementation, the umbrella behind
 [`common/packet/PacketAPI.h`](../../../src/inet/common/packet/PacketAPI.h): the chunks (`chunk/`,
@@ -47,7 +47,7 @@ To seal more, append a group heading and rows here in review order:
 
 | | Path | Audit | Rules checked | Accepted exceptions |
 | --- | --- | --- | --- | --- |
-| 🔒 | `common/INETDefs.h` | [common-defs.md](report/subsystem/common-defs.md), <date> | AR-ORG-*, NR-* | — |
+| 🔒 | `common/INETDefs.h` | `audit/subsystem/common-defs.md`, <date> | AR-ORG-*, NR-* | — |
 
 Seal a whole subsystem with a trailing-slash folder entry; seal one file with a bare path.
 Add the row in the same commit that records the compliant state (SR-RECORD-IN-COMMIT).
@@ -79,9 +79,10 @@ section indexes them so the registry stays one place to look.
 | `domain/ieee80211.md` | by rule | 0 | 0 | 14 |
 | `requirement/accepted-requirements.md` | by requirement, complete | 0 | 27 | 0 |
 | `rule/architecture.md` | by rule | 0 | 0 | 44 |
+| `rule/classification.md` | by rule | 0 | 0 | 18 |
 | `rule/documentation.md` | whole | 0 | 0 | 1 |
 | `rule/naming.md` | by rule | 0 | 0 | 23 |
-| `rule/pull-request.md` | by rule | 0 | 0 | 20 |
+| `rule/pull-request.md` | by rule | 0 | 0 | 23 |
 | `rule/quality.md` | by rule | 0 | 0 | 14 |
 | `rule/release.md` | by rule | 0 | 0 | 9 |
 | `rule/sealing.md` | whole | 0 | 0 | 1 |

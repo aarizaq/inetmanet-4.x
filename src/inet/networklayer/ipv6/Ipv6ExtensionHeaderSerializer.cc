@@ -64,7 +64,11 @@ static void serializeIpv6TlvOptions(MemoryOutputStream& stream, const TlvOptions
 static void deserializeIpv6TlvOptions(MemoryInputStream& stream, TlvOptions& tlvOptions, B optionsLen)
 {
     b startPos = stream.getPosition();
-    while (stream.getPosition() - startPos < b(optionsLen)) {
+    // Stop on a read past the end of the stream: a malformed/truncated header whose
+    // declared options length exceeds the available bytes would otherwise spin forever
+    // here, because readByte() clamps the position at the end and returns 0 (== Pad1),
+    // so "position - startPos < optionsLen" would never become false.
+    while (stream.getPosition() - startPos < b(optionsLen) && !stream.isReadBeyondEnd()) {
         uint8_t type = stream.readByte();
         if (type == IPv6TLVOPTION_NOP1) {
             auto *opt = new TlvOptionBase();
@@ -109,7 +113,8 @@ void Ipv6HopByHopOptionsHeaderSerializer::serializeFields(MemoryOutputStream& st
     const auto& hdr = staticPtrCast<const Ipv6HopByHopOptionsHeader>(chunk);
     stream.writeByte(hdr->getNextHeaderProtocol());
     B totalLen = hdr->getChunkLength();
-    ASSERT(totalLen.get() % 8 == 0 && totalLen >= B(8));
+    if (totalLen.get() % 8 != 0 || totalLen < B(8))
+        throw cRuntimeError("Cannot serialize the IPv6 Hop-by-Hop Options header: chunkLength is %d bytes, must be a multiple of 8 bytes and at least 8 bytes.", (int)totalLen.get());
     stream.writeByte((totalLen.get() - 8) / 8);
     serializeIpv6TlvOptions(stream, hdr->getTlvOptions(), totalLen - B(2));
 }
@@ -132,7 +137,8 @@ void Ipv6DestinationOptionsHeaderSerializer::serializeFields(MemoryOutputStream&
     const auto& hdr = staticPtrCast<const Ipv6DestinationOptionsHeader>(chunk);
     stream.writeByte(hdr->getNextHeaderProtocol());
     B totalLen = hdr->getChunkLength();
-    ASSERT(totalLen.get() % 8 == 0 && totalLen >= B(8));
+    if (totalLen.get() % 8 != 0 || totalLen < B(8))
+        throw cRuntimeError("Cannot serialize the IPv6 Destination Options header: chunkLength is %d bytes, must be a multiple of 8 bytes and at least 8 bytes.", (int)totalLen.get());
     stream.writeByte((totalLen.get() - 8) / 8);
     serializeIpv6TlvOptions(stream, hdr->getTlvOptions(), totalLen - B(2));
 }
@@ -155,11 +161,14 @@ void Ipv6RoutingHeaderSerializer::serializeFields(MemoryOutputStream& stream, co
     const auto& hdr = staticPtrCast<const Ipv6RoutingHeader>(chunk);
     stream.writeByte(hdr->getNextHeaderProtocol());
     B totalLen = hdr->getChunkLength();
-    ASSERT(totalLen.get() % 8 == 0 && totalLen >= B(8));
+    if (totalLen.get() % 8 != 0 || totalLen < B(8))
+        throw cRuntimeError("Cannot serialize the IPv6 Routing header: chunkLength is %d bytes, must be a multiple of 8 bytes and at least 8 bytes.", (int)totalLen.get());
     stream.writeByte((totalLen.get() - 8) / 8);
     stream.writeByte(hdr->getRoutingType());
     stream.writeByte(hdr->getSegmentsLeft());
-    stream.writeByteRepeatedly(0, 4); // reserved
+    stream.writeByte(hdr->getLastEntry());
+    stream.writeByte(hdr->getFlags());
+    stream.writeUint16Be(hdr->getTag());
     for (size_t j = 0; j < hdr->getAddressArraySize(); j++)
         stream.writeIpv6Address(hdr->getAddress(j));
 }
@@ -173,7 +182,9 @@ const Ptr<Chunk> Ipv6RoutingHeaderSerializer::deserializeFields(MemoryInputStrea
     hdr->setChunkLength(totalLen);
     hdr->setRoutingType(stream.readByte());
     hdr->setSegmentsLeft(stream.readByte());
-    stream.readByteRepeatedly(0, 4); // reserved
+    hdr->setLastEntry(stream.readByte());
+    hdr->setFlags(stream.readByte());
+    hdr->setTag(stream.readUint16Be());
     // Remaining bytes are addresses (16 bytes each)
     int numAddresses = (totalLen.get() - 8) / 16;
     hdr->setAddressArraySize(numAddresses);
@@ -189,7 +200,8 @@ void Ipv6FragmentHeaderSerializer::serializeFields(MemoryOutputStream& stream, c
     const auto& hdr = staticPtrCast<const Ipv6FragmentHeader>(chunk);
     stream.writeByte(hdr->getNextHeaderProtocol());
     stream.writeByte(0); // reserved
-    ASSERT((hdr->getFragmentOffset() & 7) == 0);
+    if ((hdr->getFragmentOffset() & 7) != 0)
+        throw cRuntimeError("Cannot serialize the IPv6 Fragment header: fragmentOffset is %u, must be a multiple of 8 bytes.", hdr->getFragmentOffset());
     stream.writeNBitsOfUint64Be(hdr->getFragmentOffset() / 8, 13);
     stream.writeUint2(hdr->getReserved());
     stream.writeBit(hdr->getMoreFragments());
@@ -215,7 +227,8 @@ void Ipv6AuthenticationHeaderSerializer::serializeFields(MemoryOutputStream& str
     const auto& hdr = staticPtrCast<const Ipv6AuthenticationHeader>(chunk);
     stream.writeByte(hdr->getNextHeaderProtocol());
     B totalLen = hdr->getChunkLength();
-    ASSERT(totalLen.get() % 8 == 0 && totalLen >= B(8));
+    if (totalLen.get() % 8 != 0 || totalLen < B(8))
+        throw cRuntimeError("Cannot serialize the IPv6 Authentication header: chunkLength is %d bytes, must be a multiple of 8 bytes and at least 8 bytes.", (int)totalLen.get());
     stream.writeByte((totalLen.get() - 8) / 8);
     stream.writeByteRepeatedly(0, totalLen.get() - 2); // TODO
 }
@@ -238,7 +251,8 @@ void Ipv6EncapsulatingSecurityPayloadHeaderSerializer::serializeFields(MemoryOut
     const auto& hdr = staticPtrCast<const Ipv6EncapsulatingSecurityPayloadHeader>(chunk);
     stream.writeByte(hdr->getNextHeaderProtocol());
     B totalLen = hdr->getChunkLength();
-    ASSERT(totalLen.get() % 8 == 0 && totalLen >= B(8));
+    if (totalLen.get() % 8 != 0 || totalLen < B(8))
+        throw cRuntimeError("Cannot serialize the IPv6 Encapsulating Security Payload header: chunkLength is %d bytes, must be a multiple of 8 bytes and at least 8 bytes.", (int)totalLen.get());
     stream.writeByte((totalLen.get() - 8) / 8);
     stream.writeByteRepeatedly(0, totalLen.get() - 2); // TODO
 }

@@ -11,8 +11,8 @@ Each rule has a stable identifier of the form `PR-<AREA>-<NAME>`, a one-line sta
 short rationale. The other documents in this folder say what the *code* must look like —
 [architectural-requirements.md](architecture.md),
 [naming-conventions.md](naming.md), [sealing.md](sealing.md). This one says what
-the *change* must look like. It is the concrete form of step 4 of the *Contributor workflow*
-(smallest change surface) and of the reviewable-patch clauses of
+the *change* must look like, and [classification.md](classification.md) says what the change *is*.
+It is the concrete form of step 4 of the *Contributor workflow* (smallest change surface) and of the reviewable-patch clauses of
 [AR-QUAL-FINGERPRINT](architecture.md) and
 [AR-QUAL-TRACEABILITY](architecture.md).
 
@@ -53,7 +53,10 @@ Every rule in document order. The identifier links to the rule; the statement is
 | Rule | Statement |
 | --- | --- |
 | [PR-MSG-SUBJECT](#pr-msg-subject) | `area: what the commit does` |
+| [PR-MSG-BODY](#pr-msg-body) | A commit whose subject cannot carry its reason has a body |
 | [PR-MSG-WHY](#pr-msg-why) | The body gives the reason, not the content |
+| [PR-MSG-REPRODUCE](#pr-msg-reproduce) | A fix says how to reproduce the defect |
+| [PR-MSG-PLAN](#pr-msg-plan) | A commit that implements a plan names it |
 | [PR-MSG-GENERIC](#pr-msg-generic) | A shared-component commit explains itself in generic terms |
 | [PR-MSG-STANDALONE](#pr-msg-standalone) | The message carries its own context |
 | [PR-MSG-FACTS](#pr-msg-facts) | The message contains only facts about the change |
@@ -125,6 +128,12 @@ Git detects a rename from content similarity. A move plus an edit in one commit 
 deleted file and a new file: the diff disappears, and the history of the file breaks at that
 point. Two commits keep the rename visible and keep the real edit small. This holds for `.ned`,
 `.msg` and C++ files, and for whole directories.
+
+**Rename the type in its own commit too, after the move.** A file whose name carries a type name
+takes three commits, not two: move the files, rename the type everywhere, then change the content.
+The move commit will not compile, and [PR-SERIES-BUILDS](#pr-series-builds) exempts it — the loss
+from a rename git cannot see is permanent, and the loss from a broken middle commit is one
+`git bisect skip`.
 
 ### PR-SPLIT-PREPARE
 
@@ -226,6 +235,17 @@ the last commit.
 middle commit makes it useless. The rule also protects review itself: a reviewer can judge
 commit N only if the tree after commit N is consistent.
 
+**One exemption: a pure move or rename commit may fail to build.**
+[PR-SPLIT-MOVE](#pr-split-move) asks for a commit that moves files and changes no content, and
+when the moved file declares the type being renamed, no such commit can compile — renaming
+`TcpBaseAlg.h` while it still declares `class TcpBaseAlg` breaks every file that includes it.
+The move is worth more than the build here, because a rename git cannot see costs the file its
+history permanently, and a broken build costs one `git bisect skip`.
+
+The exemption is narrow. It covers a commit whose diff is **only** moves and renames, it does not
+extend to the content commit that follows, and the run of broken commits is as short as the
+change allows — a move and then its rename, not a move and then twenty commits.
+
 ### PR-SERIES-ORDER
 
 **Prerequisites first, no fixup commits**
@@ -271,6 +291,48 @@ the area (`ospfv3: fix:`, `python: refactor:`). Name the *behavior*, never the m
 `ExternalProcess: don't kill the process group when a spawned command fails`, not "update
 ExternalProcess.cc" and not a list of file names or links.
 
+**Both the area and the kind word are optional, and both are free within a bound.**
+[CR-TAG-SUBJECT](classification.md#cr-tag-subject) gives the grammar: the author may write any
+consecutive segments of the trailer's scope and any consecutive segments of its depth, direction
+and intent, so `EthernetMac: fix:`, `linklayer: refactor:` and `showcases.tsn: format:` are all
+correct. The one thing a subject must not do is disagree with the trailer. The obligations never
+appear in a subject.
+
+### PR-MSG-BODY
+
+**A commit whose subject cannot carry its reason has a body**
+
+A subject says what the commit does. Where that is the whole story, the commit is finished. Where it
+is not, the body carries the rest, and [PR-MSG-WHY](#pr-msg-why) says what the rest is.
+
+**A body is required when the change is substantial, and whenever it repairs a defect, changes
+behavior, or implements a standard** — the last three at any size, because each has a reason that no
+subject has room for. A one-line fix for a null dereference still owes the reader the crash.
+
+**A body is not required when the subject is the whole story.** A rename, an include ordering, a
+whitespace commit, a mechanical sweep whose rule fits the subject. Nor when the change *is* its own
+explanation: a plan or documentation commit, a regenerated file, a `WHATSNEW` entry. In each of
+those the reader's next step is to read the file, not the message.
+
+**Where the line falls.** The gate fails an empty body above **50 changed lines**, and that number
+is measured rather than chosen: across master's last 300 commits the share with no body is flat at
+3 to 4 % for every threshold from 50 upward, so 50 is where the project already draws the line
+itself. Of the nine commits above it that carry no body, six are the exempt kinds above.
+
+**On what a body is for**, since it is the usual question:
+
+| | Where it belongs |
+| --- | --- |
+| **what** the commit does | the subject names it; the diff shows it. The body must not restate it. |
+| **how** it does it | the diff shows it. *Which* mechanism, and *why that one and not the obvious alternative*, is part of the reason and belongs in the body. |
+| **why** it was done | the body, and nothing else carries it. The symptom, the cause, the alternative rejected, and what the change deliberately leaves unrepaired. |
+
+A body that restates the subject in longer words is worse than no body, because it costs a reader
+the time to discover that it says nothing.
+
+*Enforced at T3 — [check-commits.sh](../enforcement/check-commits.sh) fails an empty body above 50
+changed lines, outside the exempt kinds; T4 for whether the body gives a reason at all.*
+
 ### PR-MSG-WHY
 
 **The body gives the reason, not the content**
@@ -281,6 +343,66 @@ solution and not an obvious alternative, and what the change deliberately does n
 For a bug fix, write the symptom in the words a future reader will search for — the error
 message, the wrong packet, the failed assertion. For a behavior change, name the standard
 clause or the reference that makes the new behavior the correct one.
+
+### PR-MSG-REPRODUCE
+
+**A fix says how to reproduce the defect**
+
+A commit that repairs a defect carries, in its body, the way to see the defect happen. Two forms
+are acceptable and the choice is the author's:
+
+1. **Steps.** The configuration, the scenario, and what goes wrong — *"run
+   `examples/inet/tcpwindowscale` with `sackSupport=true`; the sender stalls at t=2.4 s because
+   `nextSeg` rule (2) underflows"*. A few lines, and it is enough for most defects.
+2. **A standalone regression test**, committed beside the repair.
+
+**The test is justified only when the defect is serious enough and likely to bite again.** Most
+are not. A defect earns a regression test when it sits on a path many things cross, when a future
+refactor could reintroduce it without noticing, or when it came from a misreading of a standard
+that the next reader could repeat. A one-off typo in a log message earns steps and nothing more.
+
+**Why the steps are required even when the test is not.** A fix is not new behavior, so
+[TR-SHIP-WITH](testing.md#tr-ship-with) does not reach it, and nothing else in the rule set asks a
+fix for evidence. Without the steps a reviewer must take the defect on trust, and a later reader
+who suspects a regression in the same area has no way to tell whether it is the old defect
+returning.
+
+Write the symptom in the words a future reader will search for: the error message, the wrong
+packet, the failed assertion. That is [PR-MSG-WHY](#pr-msg-why) applied to a fix, and this rule
+says the searchable symptom is not optional.
+
+A fix is exactly the commit whose trailer carries `.fix` under
+[CR-DEPTH-FIX](classification.md#cr-depth-fix), so the two rules select the same commits from
+opposite directions: one asks the author to declare the intent, the other asks for the evidence.
+
+*Enforced at T4 — agent review; T3 can check that a `.fix` commit has a body, not what is in it.*
+
+### PR-MSG-PLAN
+
+**A commit that implements a plan names it**
+
+Where the work follows a plan under `plan/pending/` or `plan/done/`, the message gives the plan's
+repository-relative path on a `Plan:` line, above the `Change:` trailer:
+
+```
+Plan: plan/pending/pr-1155-resolve-audit-findings.md
+Change: src.tcp.Rfc6675Recovery | behavior.change.fix | fingerprint | pr-1155-findings
+```
+
+A plan holds what no commit body has room for: the alternatives that were weighed, the order the
+steps must run in, the decisions a person made and why. A commit that implements step 5 of
+something is unreadable without step 1 to step 4, and the plan is where they are.
+
+**This does not weaken [PR-MSG-STANDALONE](#pr-msg-standalone).** That rule forbids a message that
+*replaces* its reason with a pointer. A plan reference is an addition: the body still gives the
+reason for this commit, and the plan gives the reason for the shape of the series. The difference
+from a ticket is that the plan is in the repository — it is fetched with the history, it survives
+the tracker, and `git log` and the file move together.
+
+`Plan:` comes before `Change:`, because
+[CR-TAG-TRAILER](classification.md#cr-tag-trailer) puts the classification last.
+
+*Enforced at T3 — a check that the path a `Plan:` line names exists in the tree at that commit.*
 
 ### PR-MSG-GENERIC
 
@@ -303,6 +425,14 @@ the fact itself. An issue or pull request number is a useful addition, never a r
 
 No attribution trailers for tools or assistants, no progress notes, no apologies, and no
 speculation about future work. Keep a `Fixes #<n>` style reference when it is accurate.
+
+### The classification trailer
+
+Every commit also ends with one `Change:` line that states its scope, its depth, what must move
+with it, and — where the commit is one of several in a larger change — the label of that group.
+See [classification.md](classification.md), which owns `CR-*`. The trailer is not part of
+the message rules above: [PR-MSG-WHY](#pr-msg-why) governs the *reason*, and the trailer governs
+the *classification*. Neither one says what the other says.
 
 ## The pull request (PR-REQ)
 
@@ -379,5 +509,6 @@ argue about.
 | PR-SPLIT-UPSTREAM | T4 | agent review: does the commit change a shared component to serve one protocol? |
 | PR-SPLIT-PREPARE | T4 | agent review: does a "refactor" commit change behavior? |
 | PR-SPLIT-DRIVEBY | T4 | agent review: is a hunk unrelated to the subject line? |
+| PR-MSG-BODY | T3+T4 | commit-message lint: an empty body above 50 changed lines, outside the exempt kinds; agent review for a body that restates the subject |
 | PR-MSG-WHY, PR-MSG-GENERIC, PR-MSG-STANDALONE | T4 | agent review of the message against the diff |
 | PR-REQ-* | T4→T5 | agent review for completeness; topic and size are human judgment |

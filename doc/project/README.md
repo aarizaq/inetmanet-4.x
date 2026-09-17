@@ -79,6 +79,7 @@ In the order of the chain.
 | [rule/quality.md](rule/quality.md) | rule | `QR-*` | How does the code read? |
 | [rule/testing.md](rule/testing.md) | rule | `TR-*` | Which test backs which claim, and when may a baseline change? |
 | [rule/pull-request.md](rule/pull-request.md) | rule | `PR-*` | How is a change divided into commits, and what must a pull request hold? |
+| [rule/classification.md](rule/classification.md) | rule | `CR-*` | What is a commit, in scope, depth, obligation and group? |
 | [rule/release.md](rule/release.md) | rule | `RR-*` | What does a release owe its users? |
 | [rule/sealing.md](rule/sealing.md) | rule | `SR-*` | What does a seal mean, and what is the audit before it? |
 | [rule/documentation.md](rule/documentation.md) | rule | `DR-*` | Where does a fact live, and how is a document shaped? |
@@ -91,7 +92,7 @@ In the order of the chain.
 | [audit/architecture-exceptions.md](audit/architecture-exceptions.md) | ledger | `AS-*`, `AV-*` | Which couplings depart from the architecture rules? |
 | [audit/naming-exceptions.md](audit/naming-exceptions.md) | ledger | `NS-*`, `NV-*` | Which names depart from the naming rules? |
 | [audit/seal-list.md](audit/seal-list.md) | ledger | — | Which paths are sealed, against which audit? |
-| [audit/report/](audit/README.md) | report | — | What did one audit find, on one date? |
+| `audit/` *(repository root, not in git)* | report | — | What did one audit find, on one date? |
 | [evidence/claim-coverage.md](evidence/claim-coverage.md) | measurement | — | Which test demonstrates each requirement? |
 | [evidence/standard/](evidence/standard/rfc791/catalog.md) | what | `<DOC>-*` | Which clause of one standard document is checkable? One folder per document. |
 | [evidence/protocol/](evidence/protocol/ipv4/features.md) | what · procedure | `<PROTO>-F-*` | Which features does a protocol have, and how is each one checked? One folder per protocol, free of INET names. |

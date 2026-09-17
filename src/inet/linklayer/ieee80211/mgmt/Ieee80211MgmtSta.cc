@@ -1156,10 +1156,26 @@ bool Ieee80211MgmtSta::storeAPInfo(Packet *packet, const Ptr<const Ieee80211Mgmt
     bool htOperationPresent = body->getHtOperationPresent();
     bool ignoreHt = mib != nullptr && !mib->isHtOperationSupported();
     std::string reason;
+    const auto& channelInd = packet->findTag<Ieee80211ChannelInd>();
+    const auto *receivedChannel = channelInd != nullptr ? channelInd->getChannel() : nullptr;
+    // IEEE Std 802.11-2024, 9.4.2.4: Current Channel is a standard
+    // channel number. Without this optional element, use the receive channel.
+    int legacyChannel = receivedChannel != nullptr ? receivedChannel->getChannelNumber() : -1;
+    if ((ignoreHt || !htOperationPresent) && body->getChannelNumber() != -1) {
+        if (receivedChannel == nullptr || receivedChannel->getBand() == nullptr)
+            return false;
+        try {
+            legacyChannel = receivedChannel->getBand()->getChannelIndex(body->getChannelNumber());
+        }
+        catch (const cRuntimeError& error) {
+            EV_WARN << "Ignoring discovery with invalid DSSS Current Channel: " << error.what() << "\n";
+            return false;
+        }
+    }
     if (ignoreHt) {
         // A legacy STA ignores optional HT information, including malformed
         // typed values, and retains the legacy channel advertisement.
-        candidate.channel = body->getChannelNumber();
+        candidate.channel = legacyChannel;
         candidate.htCapabilitiesPresent = false;
         candidate.htOperationPresent = false;
     }
@@ -1177,8 +1193,6 @@ bool Ieee80211MgmtSta::storeAPInfo(Packet *packet, const Ptr<const Ieee80211Mgmt
             return false;
         }
         if (htOperationPresent) {
-            const auto& channelInd = packet->findTag<Ieee80211ChannelInd>();
-            const auto *receivedChannel = channelInd != nullptr ? channelInd->getChannel() : nullptr;
             if (receivedChannel == nullptr) {
                 reason = "HT Operation discovery has no received channel indication";
                 EV_WARN << "Ignoring HT discovery from AP address=" << address << ": " << reason << "\n";
@@ -1204,7 +1218,7 @@ bool Ieee80211MgmtSta::storeAPInfo(Packet *packet, const Ptr<const Ieee80211Mgmt
             candidate.channel = candidate.htOperation.primaryChannel;
         }
         else
-            candidate.channel = body->getChannelNumber();
+            candidate.channel = legacyChannel;
     }
     candidate.beaconInterval = body->getBeaconInterval();
     auto signalPowerInd = packet->getTag<SignalPowerInd>();
@@ -1235,7 +1249,30 @@ bool Ieee80211MgmtSta::storeAPInfo(Packet *packet, const Ptr<const Ieee80211Mgmt
     ap->isAuthenticated = candidate.isAuthenticated;
     ap->authSeqExpected = candidate.authSeqExpected;
     ap->authTimeoutMsg = candidate.authTimeoutMsg;
-    if (signalPowerInd != nullptr && currentAp)
+    bool currentAssociatedAp = mib != nullptr && mib->bssStationData.isAssociated && address == assocAP.address;
+    bool isBeacon = header->getType() == ST_BEACON ||
+            (header->getType() != ST_PROBERESPONSE && dynamicPtrCast<const Ieee80211ProbeResponseFrame>(body) == nullptr);
+    if (currentAssociatedAp && isBeacon) {
+        (ApInfo&)assocAP = *ap;
+        mib->bssData.ssid = ap->ssid;
+        if (mib->isHtOperationSupported() && candidate.htCapabilitiesPresent && candidate.htOperationPresent) {
+            auto negotiated = negotiateHtCapabilities(mib->localHtCapabilities, candidate.htCapabilities, candidate.htOperation);
+            if (supportsBasicHtMcsSet(mib->localHtCapabilities, candidate.htOperation) &&
+                    negotiated.localTxPeerRx.valid && negotiated.localRxPeerTx.valid) {
+                EV_INFO << "Refreshing authoritative HT state for associated AP address=" << address << "\n";
+                mib->setPeerHtCapabilities(address, candidate.htCapabilities, candidate.htOperation);
+            }
+            else {
+                EV_WARN << "Beacon from associated AP has unusable HT advertisement: removing peer HT state for AP address=" << address << "\n";
+                mib->removePeerHtCapabilities(address);
+            }
+        }
+        else {
+            EV_INFO << "Beacon from associated AP has no usable HT advertisement or STA is legacy: removing peer HT state for AP address=" << address << "\n";
+            mib->removePeerHtCapabilities(address);
+        }
+    }
+    else if (signalPowerInd != nullptr && currentAp)
         assocAP.rxPower = candidate.rxPower;
     return true;
 }

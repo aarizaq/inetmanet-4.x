@@ -17,7 +17,13 @@ A CRYPTO frame is ack-eliciting; ACK, PADDING and CONNECTION_CLOSE are not.
 QUIC has no protocol dissector in this tree, so no `quic.<field>` filter works. The steps
 read the packet's chunk list directly, as every check of this suite does; see QuicChunks.h.
 
-Expected result: FAIL. The server sends its Initial packet in a datagram of 27 octets, and
+Defect. This test FAILS and the failure is NOT declared expected, because the model claims the
+behaviour: PacketBuilder::buildClientInitialPacket pads to exactly the size the requirement names,
+`createPaddingFrame(1200 - packet->getSize())` (PacketBuilder.cc:476). The padding mechanism is
+therefore implemented, and it is applied to one of the two sides RFC 9000 names. An incomplete
+mechanism is a claim, not an absent feature.
+
+What the run shows. The server sends its Initial packet in a datagram of 27 octets, and
 that packet carries a CRYPTO frame, which is the case the requirement names. The model pads
 the client's Initial datagram and not the server's: `Quic.ned` declares the client half and
 says nothing of the server half. The run shows the server's handshake datagrams at 27, 38, 24
@@ -49,13 +55,13 @@ Define_ProtocolTestProgram()
         // Observation 1: the server sends a datagram that carries an ack-eliciting Initial
         // packet. This confirms that the case the requirement names occurs in this run.
         .once(on("server.udp").signal("packetSentToLower")
-                  .match([](const MatchContext& c) { return ackElicitingInitial(c.event.packet); })
+                  .filterEvent([](const MatchContext& c) { return ackElicitingInitial(c.event.packet); })
                   .describe("the server's datagram carrying an ack-eliciting Initial packet")
                   .within(1.0))
         // Observation 2: that datagram is at least 1200 octets (RFC9000-SIZE-1, the server
         // half).
         .once(on("server.udp").signal("packetSentToLower")
-                  .match([](const MatchContext& c) {
+                  .filterEvent([](const MatchContext& c) {
                       return ackElicitingInitial(c.event.packet) && c.event.packet->getByteLength() >= 1200;
                   })
                   .describe("that datagram expanded to at least 1200 octets")
@@ -117,6 +123,5 @@ seed-set = 0
 **.server.app[*].localAddress = ""
 **.server.app[*].localPort = 1000
 
-%# expected-result: FAIL
 %contains: stdout
 PROTOCOLTEST rfc9000_server_initial_size: PASS

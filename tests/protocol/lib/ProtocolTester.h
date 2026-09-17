@@ -50,6 +50,17 @@ class INET_API ProtocolTester : public SimpleModule, protected cListener
     long deliveryTreeId = -1;                      // treeId of the sent packet to correlate
     simtime_t anchorTime = 0;                      // start time of the current step's window
     cMessage *deadlineMsg = nullptr;               // fires when the current expect step misses its deadline
+
+    // A step started by meanwhile(...) keeps running while the ordered steps go on. Each
+    // guard carries its own window and its own count, and an event is offered to every one
+    // of them before it reaches the ordered step.
+    struct Guard {
+        size_t stepIndex = 0;
+        simtime_t startTime = 0;
+        int count = 0;
+        cMessage *timer = nullptr;
+    };
+    std::vector<Guard> guards;
     cMessage *injectMsg = nullptr;                 // fires when the current inject step is due
     cMessage *endMsg = nullptr;                    // ends the simulation once a verdict is reached
     bool decided = false;
@@ -62,6 +73,11 @@ class INET_API ProtocolTester : public SimpleModule, protected cListener
     virtual void finish() override;
     virtual void receiveSignal(cComponent *source, simsignal_t signalID, cObject *obj, cObject *details) override;
     virtual void receiveSignal(cComponent *source, simsignal_t signalID, intval_t value, cObject *details) override;
+    virtual void receiveSignal(cComponent *source, simsignal_t signalID, uintval_t value, cObject *details) override;
+    virtual void receiveSignal(cComponent *source, simsignal_t signalID, double value, cObject *details) override;
+    virtual void receiveSignal(cComponent *source, simsignal_t signalID, const SimTime& value, cObject *details) override;
+    // One normaliser behind the four overloads above.
+    virtual void receiveStateValue(cComponent *source, simsignal_t signalID, double value);
 
     // observation (packet channel)
     PacketEvent normalize(cComponent *source, EventKind kind, const Packet *packet);
@@ -72,13 +88,17 @@ class INET_API ProtocolTester : public SimpleModule, protected cListener
     void subscribeStateSignals();  // subscribe to the program's + the stateSignals param's signal names
 
     // matching engine
-    void installInterceptions();   // push the program's intercept(...) rules onto their taps
+    void installInterceptions();   // push the program's tap(...) rules onto their taps
     void enterStep();              // begin the current step (arm/schedule per step kind)
     void processMatch(const PacketEvent& event);
     void advance(simtime_t at);    // cancel deadline, set anchor, move to the next step
     void performInjection(const Injection& injection);
-    bool patternMatches(const EventPattern& pattern, const PacketEvent& event) const; // selector + earliest gate
+    bool patternMatches(const EventPattern& pattern, const PacketEvent& event, simtime_t anchor = -1); // selector + earliest gate
     void runCaptures(const EventPattern& pattern, const PacketEvent& event);
+    void startGuard(size_t stepIndex);             // begin a meanwhile(...) step
+    void offerToGuards(const PacketEvent& event);  // every running guard sees the event
+    void resolveGuard(Guard& guard);               // its window closed: judge it
+    bool guardsOutstanding() const;                // a meanwhile(...) step is still running
     void armDeadline(simtime_t window);
     void cancelDeadline();
     void decide(bool pass, const std::string& reason);

@@ -44,10 +44,11 @@ work needs to know.
    chunk, never as a total. The module's `totalRcvAppData` is a running total, but
    subscribing to it **aborts the run**: `Unsupported signal data type uintval_t`, because
    the tester implements only the signed overload.
-6. **A scalar signal cannot carry a predicate.** `EventPattern::selectorMatches` refuses
-   `.match()` and `.packet()` on any non-packet event, so a running total cannot be
-   accumulated on the signal side. The flow-control check keeps its total in state shared
-   between the steps' predicates instead.
+6. ~~**A scalar signal cannot carry a predicate.**~~ **Fixed on 2026-09-14.**
+   `EventPattern::selectorMatches` refused a predicate on any non-packet event, so a running
+   total could not be accumulated on the signal side. Only a packet-field expression is
+   refused now. The follow-up list below records the same fix, and this entry used to
+   contradict it.
 
 ## The vacuous pass, and why one test was withdrawn
 
@@ -186,9 +187,12 @@ the list as pass 2 leaves it.
 4. **A protocol dissector for QUIC.** Not a gate any more: pass 2 read and changed QUIC
    chunks without one. It would make every check of this suite shorter, and it would let the
    relay's own filter select on QUIC fields instead of on size.
-5. **Fix the tester's scalar-signal overload** so `totalRcvAppData` can be observed instead
-   of aborting the run, and so an application's own byte counters become usable. This is
-   what keeps every "the application received" observation a proxy at the transport layer.
+5. ~~**Fix the tester's scalar-signal overload** so `totalRcvAppData` can be observed instead
+   of aborting the run.~~ **Done on 2026-09-14**: the state channel accepts an unsigned
+   integer, a double and a time. An application's own byte counters are usable now, so the
+   "the application received" observations no longer have to be a proxy at the transport
+   layer. A scalar can also carry a bound and an assertion, which the flow-control check
+   wanted; only a *predicate* on a scalar is still refused.
 6. **Level 3, what remains**: the stateless reset, address validation with Retry and tokens,
    path validation and migration, stream reset, and a packet that cannot be decrypted. Also
    RFC9000-VER-2, which the relay can now reach.

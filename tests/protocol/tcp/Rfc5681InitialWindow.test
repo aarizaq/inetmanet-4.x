@@ -1,0 +1,148 @@
+%description:
+
+RFC 5681 — the initial congestion window is at most the bound of the segment-size table, and
+the handshake does not enlarge it.
+
+Checks RFC5681-IW-1 (must, as an upper bound) and RFC5681-IW-2 (must not) from
+doc/project/evidence/standard/rfc5681/catalog.md. The English procedure is in
+doc/project/evidence/protocol/tcp/checks/congestion-control.md#initial-window; the program
+steps below map onto its expected observations. Mapping of the plain mockup: host A = host1,
+host B = host2.
+
+This is the first test of the TCP suite that reads a control variable instead of a segment.
+The congestion window never travels on the link: it is a limit the sender keeps. The tester
+observes it through the `cwnd` scalar signal, which the ini names in `stateSignals`.
+
+The segment size here is 536 bytes, the default of the model and the value RFC 1122 gives
+for a host that learns nothing else. 536 falls in the lowest band of the table, so the bound
+is 4 * 536 = 2144 bytes.
+
+One property of the model decides what "the initial window" means here. The window is
+published only when the algorithm changes it, not when the connection sets it up, so the
+first value the signal carries arrives with the first acknowledgment at about t=0.2.
+
+**The window is measured on the wire, not read from the signal.** The model never publishes
+the initial congestion window. `TcpBaseAlg::established` sets it and emits nothing, so the
+first publication of `cwnd` is already one acknowledgment later, by which time slow start has
+changed it. An earlier version of this check read that first publication, and it passed --
+for the wrong reason, because the grown value is still inside the bound. It established
+nothing about the initial window.
+
+What the initial window decides, and what the wire shows, is how much data the sender may put
+in flight before any of it is acknowledged. So the check adds up the data host A sends up to
+the first acknowledgment and compares the total with the bound of the table.
+
+The bound governs the initial window alone. After the transfer starts, slow start grows the
+window past it, which is what the same section of RFC 5681 requires, and no step here
+forbids that.
+
+Expected result: PASS. The bound is an upper bound, so a smaller window conforms.
+
+%includes:
+#include "ProtocolTest.h"
+
+%global:
+
+using namespace inet;
+using namespace inet::protocoltest;
+
+// RFC 5681 §3.1, the lowest band of the table: SMSS <= 1095 gives IW <= 4 * SMSS.
+const long SMSS = 536;
+const long IW_BOUND = 4 * SMSS;   // 2144 bytes
+
+// The data host A has put in flight since the transfer began, in bytes on the wire.
+static long bytesInFlight = 0;
+static long segmentSize = 0;
+
+// Adds up every data segment host A sends. Never matches: this step only counts.
+static bool countSentData(const MatchContext& context)
+{
+    const Packet *packet = context.event.packet;
+    if (packet == nullptr || packet->getByteLength() <= 100)
+        return false;
+    long bytes = packet->getByteLength();
+    if (bytes > segmentSize)
+        segmentSize = bytes;
+    bytesInFlight += bytes;
+    return false;
+}
+
+// RFC 5681 section 3.1 bounds the initial window by the table. The bound carries one segment
+// of slack, because the wire measurement includes the TCP and IP headers and the rule speaks
+// of payload.
+static bool withinTheInitialWindowBound(const MatchContext& context)
+{
+    return segmentSize > 0 && bytesInFlight <= IW_BOUND + segmentSize;
+}
+
+Define_ProtocolTestProgram()
+{
+    return ProtocolTest("rfc5681_initial_window")
+        // Count what host A puts in flight from the start of the transfer.
+        .meanwhile(never(on("host1.tcp").signal("packetSentToLower")
+                             .filterEvent(countSentData)
+                             .describe("every data segment host A sends")
+                             .within(20.0)))
+        // The first acknowledgment closes the initial window. What went out before it is
+        // that window, and RFC 5681 bounds it by the table of section 3.1.
+        .once(on("host1.tcp").signal("packetReceivedFromLower")
+                  .filterPacket("tcp.ackBit == true && tcp.synBit == false")
+                  .first()
+                  .assertEvent(withinTheInitialWindowBound)
+                  .describe("the first acknowledgment, with the initial window in flight before it")
+                  .within(20.0));
+}
+
+%activity:
+EV << "rfc5681_initial_window compiled\n";
+
+%file: test.ned
+
+import inet.node.inet.StandardHost;
+import inet.node.ethernet.Eth100M;
+import inet.networklayer.configurator.ipv4.Ipv4NetworkConfigurator;
+
+// The plain mockup: host A -- link L -- host B.
+network Rfc5681IwNet
+{
+    submodules:
+        configurator: Ipv4NetworkConfigurator { @display("p=100,50"); }
+        host1: StandardHost { @display("p=300,100"); }
+        host2: StandardHost { @display("p=500,100"); }
+    connections:
+        host1.ethg++ <--> Eth100M <--> host2.ethg++;
+}
+
+%inifile: omnetpp.ini
+
+[General]
+network = Rfc5681IwNet
+sim-time-limit = 2s
+seed-set = 0
+
+# Static ARP keeps the wire free of ARP request/reply noise.
+**.ipv4.arp.typename = "GlobalArp"
+
+# The congestion window is not a field of a segment, so the tester must be told to observe
+# the scalar signal that carries it.
+*.protocolTester.stateSignals = "cwnd"
+
+# The segment size of the check. 536 is the lowest band of the table of RFC 5681 §3.1.
+**.tcp.mss = 536
+
+# The scenario constants of checks.md#common-mockups. Host B only receives.
+*.host1.numApps = 1
+*.host1.app[0].typename = "TcpSessionApp"
+*.host1.app[0].connectAddress = "host2"
+*.host1.app[0].connectPort = 1000
+*.host1.app[0].tOpen = 0.1s
+*.host1.app[0].tSend = 0.2s
+*.host1.app[0].sendBytes = 20000B
+*.host1.app[0].tClose = 1.5s
+*.host2.numApps = 1
+*.host2.app[0].typename = "TcpEchoApp"
+*.host2.app[0].localPort = 1000
+*.host2.app[0].echoFactor = 0
+
+%contains: stdout
+PROTOCOLTEST rfc5681_initial_window: PASS

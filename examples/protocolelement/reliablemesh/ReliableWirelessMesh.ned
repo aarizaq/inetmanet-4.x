@@ -28,6 +28,7 @@ import inet.queueing.source.ActivePacketSource;
 import inet.queueing.sink.PassivePacketSink;
 import inet.queueing.common.PacketMultiplexer;
 import inet.queueing.queue.PacketQueue;
+import inet.queueing.server.InstantServer;
 import inet.queueing.server.PacketServer;
 import inet.protocolelement.acknowledgement.Resending;
 import inet.protocolelement.acknowledgement.SendWithAcknowledge;
@@ -90,8 +91,9 @@ module SinkApp like IApp
 
 // A wireless network interface that makes its link reliable: stop-and-wait acknowledgement +
 // retransmission + exponential backoff, with MAC filtering for the shared medium.
-// Submodules are declared downstream-first so a module has cached its gates before an upstream
-// module's protocol/service registration is forwarded into it.
+// A module that handles protocol/service registrations (queue, multiplexer, dispatcher) is declared
+// before every module that registers into it: it reads its gates and parameters in initialization
+// stage 0, and the protocol elements register in that same stage. Mostly this means downstream-first.
 module WirelessInterface extends NetworkInterface
 {
     parameters:
@@ -111,18 +113,25 @@ module WirelessInterface extends NetworkInterface
         sendFromMac: SendFromMacAddress { @display("p=150,450"); }
         sendProtocol: SendWithProtocol { @display("p=150,410"); }
         mux: PacketMultiplexer { @display("p=150,360"); }
+        // before sendWithAck, which registers the acknowledge protocol into it through ackIn
+        d1: MessageDispatcher { @display("p=450,300"); }
         sendWithAck: SendWithAcknowledge { @display("p=150,310"); }
         macResolver: NextHopMacResolver { @display("p=150,250"); }
         backoff: ExponentialBackoff { @display("p=150,175"); }
         resending: Resending { @display("p=150,100"); }
+        // a relay can receive a packet while its reliable link still sends the previous one (a new
+        // packet, or a duplicate after a lost acknowledgement); the packet waits here until then
+        pendingQueue: PacketQueue { @display("p=50,40"); }
+        pendingServer: InstantServer { @display("p=150,40"); }
         receiver: PacketReceiver { @display("p=450,625"); }
         receiveAtMac: ReceiveAtMacAddress { @display("p=450,500"); }
         receiveFromMac: ReceiveFromMacAddress { @display("p=450,450"); }
         receiveProtocol: ReceiveWithProtocol { @display("p=450,400"); }
-        d1: MessageDispatcher { @display("p=450,300"); }
         receiveWithAck: ReceiveWithAcknowledge { @display("p=450,175"); }
     connections:
-        upperLayerIn --> resending.in;
+        upperLayerIn --> pendingQueue.in;
+        pendingQueue.out --> pendingServer.in;
+        pendingServer.out --> resending.in;
         resending.out --> backoff.in;
         backoff.out --> macResolver.in;
         macResolver.out --> sendWithAck.in;
@@ -188,12 +197,15 @@ module WirelessNode
         inout radio;
     submodules:
         interfaceTable: InterfaceTable { @display("p=100,100"); }
-        app: <default("")> like IApp if typename != "" { @display("p=300,100"); }
-        forwardingLayer: ForwardingLayer { @display("p=300,200"); }
+        // downstream-first, like the submodules of the layers: the app registers into
+        // forwardingLayer.inputMux and forwardingLayer.outputDispatcher, and forwardingLayer
+        // registers into the interface
         interface: WirelessInterface {
             interfaceTableModule = "^.interfaceTable";
             @display("p=300,350");
         }
+        forwardingLayer: ForwardingLayer { @display("p=300,200"); }
+        app: <default("")> like IApp if typename != "" { @display("p=300,100"); }
     connections:
         app.out --> forwardingLayer.upperLayerIn if exists(app);
         forwardingLayer.upperLayerOut --> app.in if exists(app);

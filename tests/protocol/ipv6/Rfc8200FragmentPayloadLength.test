@@ -11,7 +11,12 @@ to link 1 has MTU 1280; the 1500-octet packet splits into pieces of 1232 and 228
 the fragment packets have payload lengths 1240 and 236. Mapping of the mockup: host A =
 hostA, router R = router, host B = hostB.
 
-Expected result: FAIL. The model copies the original header into every fragment and never
+Defect. This test FAILS and the failure is NOT declared expected, because the model claims the
+behaviour: Ipv6::fragmentAndSend builds every fragment and sets its header, and the payload length
+it writes is the one it copied rather than the one the fragment carries. A field the code sets to a
+wrong value is a defect.
+
+What the run shows: The model copies the original header into every fragment and never
 rewrites its payload length (Ipv6::fragmentAndSend), so both fragments carry 1460, and
 expected observation 2 misses its deadline. The destination still reassembles the packet,
 because the model's reassembly measures the fragment rather than reading the field; see
@@ -38,8 +43,8 @@ Define_ProtocolTestProgram()
         // Expected observation 1: the first fragment on link 1 (offset 0, M = 1, the UDP header to
         // port 5000 inside) -- the stimulus. Record its identification and its payload length.
         .once(on("hostA.eth[0].mac").signal("packetSentToLower")
-                  .packet("ipv6.protocolId == 44 && Ipv6FragmentHeader.fragmentOffset == 0 && Ipv6FragmentHeader.moreFragments == true")
-                  .match([](const MatchContext& c) { return udpDestinationPortInFragment(c.event.packet) == 5000; })
+                  .filterPacket("ipv6.protocolId == 44 && Ipv6FragmentHeader.fragmentOffset == 0 && Ipv6FragmentHeader.moreFragments == true")
+                  .filterEvent([](const MatchContext& c) { return udpDestinationPortInFragment(c.event.packet) == 5000; })
                   .capture("id", "Ipv6FragmentHeader.identification")
                   .capture("pl1", [](const PacketEvent& e) { return (intval_t)ipv6PayloadLength(e.packet); })
                   .describe("the first fragment on link 1")
@@ -47,8 +52,8 @@ Define_ProtocolTestProgram()
         // Expected observation 2: the last fragment carries payload length 236, and the first
         // carried 1240 (RFC8200-FRAG-4, FRAG-5, HDR-2).
         .once(on("hostA.eth[0].mac").signal("packetSentToLower")
-                  .packet("Ipv6FragmentHeader.identification == {id} && Ipv6FragmentHeader.moreFragments == false")
-                  .match([](const MatchContext& c) { return ipv6PayloadLength(c.event.packet) == 236 && c.get("pl1").intValue() == 1240; })
+                  .filterPacket("Ipv6FragmentHeader.identification == {id} && Ipv6FragmentHeader.moreFragments == false")
+                  .filterEvent([](const MatchContext& c) { return ipv6PayloadLength(c.event.packet) == 236 && c.get("pl1").intValue() == 1240; })
                   .describe("the last fragment on link 1 with payload length 236, after a first fragment with payload length 1240")
                   .within(0.5));
 }
@@ -102,6 +107,5 @@ seed-set = 0
 # Host A must fragment: its interface to link 1 has the minimum IPv6 link MTU.
 *.hostA.eth[0].mac.mtu = 1280B
 
-%# expected-result: FAIL
 %contains: stdout
 PROTOCOLTEST rfc8200_fragment_payload_length: PASS

@@ -67,7 +67,7 @@ class INET_API Injection
 //   drop  -- discard the frame (force a retransmission)
 //   delay -- forward it after a hold time
 //   mutate-- run a C++ mutator on the (inner) frame, then forward it
-// The ProtocolTester installs these on the tap module at startup (see intercept(...)).
+// The ProtocolTester installs these on the tap module at startup (see tap(...)).
 //
 class INET_API Interception
 {
@@ -75,16 +75,26 @@ class INET_API Interception
     std::string tapName;          // PacketTap module name (a sibling of the tester)
     std::string matchExpression;  // PacketFilter expression over the dissected frame
     long minimumBytes = 0;        // also require the (inner) frame to be at least this big
-    int occurrence = 0;           // act on the Nth selected frame (1-based); 0 = every
+    int occurrence = 0;               // act on the Nth selected frame (1-based); 0 = every
+    int fromOccurrence = 0;           // act on the Nth and every one after it; 0 = unused
     std::string action = "drop";  // "drop" | "delay" | "mutate"
     simtime_t delayTime = 0;
     std::function<void(Packet *)> mutator; // for action == "mutate"
     std::string description;      // optional human phrase
 
-    Interception& match(const char *expr) { matchExpression = expr; return *this; }
+    Interception& filterPacket(const char *expr) { matchExpression = expr; return *this; }
     Interception& minBytes(long n) { minimumBytes = n; return *this; }
     Interception& nth(int k) { occurrence = k; return *this; }
+    // Act on the k-th match and on every match after it. A rule that must remove a segment
+    // and everything behind it needs this: nth(k) alone removes one frame, and the rest of
+    // the window still reaches the receiver, which answers with the duplicate
+    // acknowledgments that repair the loss before the timer can see it.
+    Interception& fromNth(int k) { fromOccurrence = k; return *this; }
     Interception& drop() { action = "drop"; return *this; }
+    // An explicit no-op. It earns its place now that the rules are ordered: it shadows a
+    // later rule for the frames it names, so "never touch a SYN, drop the data" is two
+    // clauses rather than one expression that has to say both.
+    Interception& pass() { action = "pass"; return *this; }
     Interception& delay(double t) { action = "delay"; delayTime = t; return *this; }
     Interception& mutate(std::function<void(Packet *)> fn) { action = "mutate"; mutator = std::move(fn); return *this; }
     Interception& describe(const char *phrase) { description = phrase; return *this; }
@@ -98,21 +108,40 @@ struct Step {
     EventPattern pattern2;             // Delivery "to" (holds the delivery window in its within)
     int count = 0;                     // ExactlyTimes
     int cardMin = 0, cardMax = 0;      // Count: required occurrences [min, max]; max < 0 = unbounded
+    bool concurrent = false;           // meanwhile(...): runs beside the steps after it
 };
 
-// Entry point of the fluent injection chain.
-Injection inject(const char *nodeName);
+// Free builders that make a step without a program to hold it. They exist so that a guard
+// can be handed to meanwhile(...), which is the only way to write one that does not block.
+// The methods of the same name on ProtocolTest are unchanged and still add a blocking step.
+Step never(EventPattern pattern);
+Step atMostTimes(int n, EventPattern pattern);
+Step atLeastTimes(int n, EventPattern pattern);
+Step exactlyTimes(int n, EventPattern pattern);
 
-// Entry point of the fluent interception chain (names the PacketTap to drive).
-Interception intercept(const char *tapName);
+// Entry points of the fluent injection and interception chains.
+//
+// The builder and the step that carries it must not share a word. A line that reads
+// `tap(tap("tap")...)` says the same thing twice and neither time says which
+// role it means: the inner call builds a clause, the outer adds it to the program. `on` and
+// `once` avoid this by accident, because the two words differ.
+//
+// So the builder takes the noun and the step keeps the verb:
+//
+//     .intercept(tap("tap").filterPacket("tcp.synBit == true").nth(1).drop())
+//     .inject(at("host1").into("eth[0]", "upperLayerOut").after(0.001).packet(buildSynAck))
+//
+Injection at(const char *nodeName);
+Interception tap(const char *tapName);
+
 
 //
 // A protocol test program: an ordered list of steps with a name. Built with the
 // fluent API, e.g.:
 //
 //   ProtocolTest("udp")
-//       .expect(on("host1").sentToLower().match("udp.destPort == 5000").within(0.2))
-//       .expect(on("host2").receivedFromLower().match("udp.destPort == 5000").within(0.1));
+//       .expect(on("host1").sentToLower().filterPacket("udp.destPort == 5000").within(0.2))
+//       .expect(on("host2").receivedFromLower().filterPacket("udp.destPort == 5000").within(0.1));
 //
 class INET_API ProtocolTest
 {
@@ -150,7 +179,10 @@ class INET_API ProtocolTest
     }
 
     // Exactly n: advance when the nth matching event is observed (fail on deadline).
-    ProtocolTest& exactlyTimes(int n, const EventPattern& pattern)
+    // The next n matches, in sequence. The step resolves on the nth and the steps after it
+    // begin there, so this word **sequences**; it does not bound. An n+1th match is not
+    // forbidden, because by then the step has finished and a later step owns the stream.
+    ProtocolTest& nextTimes(int n, const EventPattern& pattern)
     {
         steps.push_back(Step{StepType::ExactlyTimes, pattern, {}, {}, {}, n});
         return *this;
@@ -164,9 +196,31 @@ class INET_API ProtocolTest
     ProtocolTest& atLeastTimes(int n, const EventPattern& pattern)       { return addCount(pattern, n, -1); }  // n..*
     ProtocolTest& atMostTimes(int n, const EventPattern& pattern)        { return addCount(pattern, 0, n); }   // 0..n
     ProtocolTest& betweenTimes(int a, int b, const EventPattern& pattern) { return addCount(pattern, a, b); }  // a..b
+    // Exactly n in the window: an n+1th fails at once, and fewer than n fails when the
+    // window closes. This is a cardinality, so it waits the window out. For "the next n,
+    // then carry on", which resolves on the nth, the word is nextTimes.
+    ProtocolTest& exactlyTimes(int n, const EventPattern& pattern)       { return addCount(pattern, n, n); }   // n..n
 
     // All patterns must match, in any order, before advancing. The group window is
     // the longest within() among its patterns.
+    // Start a step and do not wait for it. The engine keeps the step running beside the
+    // steps that follow, and an event reaches every running step rather than only the first.
+    //
+    //     .meanwhile(never(on("host1.ipv4").signal("packetSentToUpper").within(0.5)))
+    //     .meanwhile(never(on("host1.eth[0].mac").signal("packetSentToLower")
+    //                          .filterPacket("icmpv4.type == 3").within(0.5)))
+    //     .once(on("router.ipv4.ip").signal("packetDropped").within(0.2))
+    //
+    // Without this, a guard holds the cursor for its whole window, so two guards cannot
+    // cover one window and nothing can be observed inside either of them. Four standards
+    // passes worked around that, each in its own way.
+    ProtocolTest& meanwhile(Step step)
+    {
+        step.concurrent = true;
+        steps.push_back(std::move(step));
+        return *this;
+    }
+
     ProtocolTest& unordered(std::vector<EventPattern> patterns)
     {
         steps.push_back(Step{StepType::Unordered, {}, {}, std::move(patterns)});

@@ -158,7 +158,10 @@ static const ProtocolGroup::Protocols ieee8022Protocols {
 };
 
 static const ProtocolGroup::Protocols udpProtocols {
+    { 67, &Protocol::dhcp },
+    { 68, &Protocol::dhcp },
     { 554, &Protocol::rtsp },
+    { 654, &Protocol::aodv },
     { 6696, &Protocol::babel },
     { 11111, &Protocol::unknown }, // INET specific non-standard protocol
 };
@@ -168,6 +171,7 @@ static const ProtocolGroup::Protocols tcpProtocols {
     { 22, &Protocol::ssh },
     { 23, &Protocol::telnet },
     { 80, &Protocol::http },
+    { 179, &Protocol::bgp },
     { 554, &Protocol::rtsp },
     { 11111, &Protocol::unknown }, // INET specific non-standard protocol
 };
