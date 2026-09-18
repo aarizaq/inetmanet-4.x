@@ -346,14 +346,16 @@ library, one folder per subject:
 | [`../arp/`](../arp), [`../ipv4/`](../ipv4), [`../ipv6/`](../ipv6), [`../ethernet/`](../ethernet) | one folder per protocol |
 | [`../wifi/`](../wifi) | the IEEE 802.11 conformance suite (its own runner) |
 
-Build the library, then run a suite:
+Before running, follow the
+[INET library freshness and build-mode guidance](../../../doc/project/guide/run-the-gates.md#keep-the-tested-library-current).
+The runner builds the applicable test support library and generated executables automatically.
+Run from the repository root, selecting the suite and test files for focused development:
 
 ```sh
-cd tests/protocol/lib
-./build.sh
-inet_run_protocol_tests                      # every suite
-inet_run_protocol_tests -w self              # one suite (the folder name)
-inet_run_protocol_tests -w ipv               # every suite whose folder matches
+inet_run_protocol_tests -p inet -m debug -w '<suite-regex>' -f '<test-path-regex>'
+inet_run_protocol_tests -p inet -m debug -w self  # one suite (the folder name)
+inet_run_protocol_tests -p inet -m debug -w ipv   # every suite whose folder matches
+inet_run_protocol_tests -p inet -m debug          # every suite
 ```
 
 The runner finds the suites itself: every direct subfolder of `tests/protocol` that holds
@@ -390,10 +392,20 @@ an explicit `@namespace`, which keeps them immune to a consumer `.test`'s root `
 
 A test's verdict (pass/fail) is one dimension; whether that verdict was *expected* is a
 separate one. Always assert the honest, spec-conformant line with `%contains`
-(`PROTOCOLTEST <name>: PASS`). If a feature is known to be unimplemented so the faithful
-assertion currently *fails*, declare that up front instead of faking it:
+(`PROTOCOLTEST <name>: PASS`). If the faithful assertion currently *fails* for one of two
+reasons, declare that up front instead of faking it:
 
-    %# expected-result: FAIL
+- a feature is known to be unimplemented, or
+- a defect is known, and a known limitation blocks its repair, maybe for a long time.
+
+```
+%# expected-result: FAIL
+```
+
+The second case needs its reason in the test file: the `%description` names the defect, the
+limitation that blocks the repair, and the results file that records both. A defect that is to be
+fixed soon gets no declaration; it fails the run until somebody fixes it. See
+[the class of a failure](../../../doc/project/guide/derive-tests-from-a-standard.md#the-class-of-a-failure-and-when-to-declare-it-expected).
 
 opp_test ignores `%#` comment lines, so this is metadata for the opp_repl test wrapper
 (`opp_run_opp_tests`), which reads it and reports the pair: a matching failure shows
