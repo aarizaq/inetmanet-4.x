@@ -14,7 +14,8 @@ The tests land in `tests/protocol/`; the test framework itself is documented in
 process around it. The artifacts land in three trees under `doc/project/evidence/`:
 `standard/<doc>/` holds what belongs to one standard document, `protocol/<proto>/` what
 belongs to the protocol as a whole, and `model/<proto>/` everything that depends on the
-simulation model.
+simulation model. The texts of the standards are not in the INET tree: they live in the
+sibling `standards` project, see [step 1](#step-1--download-the-standards).
 
 ## Principle: specification first
 
@@ -214,7 +215,7 @@ exists to find.
 
 | Step | Action | Artifact |
 | --- | --- | --- |
-| 1 | Download the standard and its relatives | `evidence/standard/<doc>/<doc>.txt` |
+| 1 | Download the standard and its relatives | `../standards/RFC/rfcNNNN.txt`, outside the INET tree |
 | 2 | Map the standards family, select the in-scope set, declare the target level | `evidence/protocol/<proto>/standards.md` |
 | 3 | Extract checkable statements, per document | `evidence/standard/<doc>/catalog.md` |
 | 4 | Map the features across the combined standards | `evidence/protocol/<proto>/features.md` |
@@ -228,8 +229,9 @@ exists to find.
 Three trees, and which one an artifact belongs to. The first two hold nothing that depends
 on the simulation model; the third holds everything that does.
 
-- `evidence/standard/<doc>/` holds what belongs to **one standard document**: the cached
-  text and the catalog of its statements. A document serves every protocol that uses it.
+- `evidence/standard/<doc>/` holds what belongs to **one standard document**: the catalog
+  of its statements. The text itself is in the `standards` project. A document serves every
+  protocol that uses it.
   RFC 792 belongs to IPv4 and to ICMP; RFC 1122 states rules for IP, ICMP, UDP, and TCP.
   One folder per document keeps one copy of each catalog.
 - `evidence/protocol/<proto>/` holds what belongs to **the protocol as a whole**, across
@@ -257,33 +259,48 @@ Naming:
   `<Doc>` is the same slug in camel case (`Rfc791`, `Ieee8021q`), and `<DOC>` in capitals
   is the ID prefix (`RFC791`, `IEEE8021Q`).
 - The folder carries the document identity, so the files inside it do not repeat it:
-  `rfc791/catalog.md`, not `rfc791/rfc791-catalog.md`. The cached text keeps its full
-  name, because every quote in every later artifact cites it by name and line number.
+  `rfc791/catalog.md`, not `rfc791/rfc791-catalog.md`. The text in the `standards` project
+  keeps the name its publisher gives it, `rfc791.txt`, because every quote in every later
+  artifact cites it by name and line number.
 - The document identity stays stable across versions; the standards map (step 2) pins the
-  exact version or edition behind each slug. Only the cached text file carries the version
-  when the body revises in place, for example `ieee8021q-2022.txt`.
+  exact version or edition behind each slug. Only the file of the text carries the edition,
+  when the body revises in place, for example `802.1Q-2018.pdf`.
 
 ## Step 1 — download the standards
 
-Cache the standard text in the evidence folder:
+The texts of the standards live in the `standards` project, a sibling folder of the INET
+checkout: `../standards/` from the root of the INET tree. It is not part of the INET
+repository, so a text under a licence never enters it. One folder for each standards body:
+
+| Folder | Holds | File name |
+| --- | --- | --- |
+| `standards/RFC/` | the RFCs, as the plain text of the RFC Editor | `rfcNNNN.txt` |
+| `standards/IEEE/<family>/` | the IEEE standards, as PDF; `<family>` is `802`, `802.1`, `802.3`, `802.11`, … | the designation and the edition, `802.1Q-2018.pdf` |
+| `standards/AS/` | the documents of other bodies, for example SAE AS6802 | the designation |
+
+Download a missing RFC into it, from the root of the INET tree:
 
 ```sh
-curl -s https://www.rfc-editor.org/rfc/rfc791.txt -o doc/project/evidence/standard/rfc791/rfc791.txt
+curl -s https://www.rfc-editor.org/rfc/rfc791.txt -o ../standards/RFC/rfc791.txt
 ```
 
 - Record the source URL and the download date in `standards.md` (step 2).
-- Also cache the companion documents that the primary document delegates to. Error signals
-  often live in a companion (IPv4 delegates error reports to ICMP, RFC 792).
-- Also cache the relatives of the primary document: the documents that update, obsolete,
-  or amend it. For an RFC, the RFC-editor metadata (the `Updated by` and `Obsoleted by`
-  lines) lists them. For an IEEE standard, the amendments and the later editions are the
-  relatives.
+- Also download the companion documents that the primary document delegates to. Error
+  signals often live in a companion (IPv4 delegates error reports to ICMP, RFC 792).
+- Also download the relatives of the primary document: the documents that update,
+  obsolete, or amend it. For an RFC, the RFC-editor metadata (the `Updated by` and
+  `Obsoleted by` lines) lists them. For an IEEE standard, the amendments and the later
+  editions are the relatives.
 - Not every standards body gives a free text; IEEE sells most standards and gives some
-  through the IEEE GET program. Cache what the license permits. When you cannot cache a
-  text, record the source and the exact version in `standards.md`, and quote by clause
-  number instead of line number in all later artifacts.
-- A cached file gives stable line numbers. All quotes in later artifacts point into it,
-  for example `rfc791.txt:1013-1014`.
+  through the IEEE GET program, under a personal licence. Put such a text into the
+  `standards` project and nowhere else. Record the exact edition in `standards.md`, and
+  quote by clause number, with the page, instead of line number in all later artifacts.
+- The `.txt` of an RFC gives stable line numbers. All quotes in later artifacts point into
+  it, for example `rfc791.txt:1013-1014`. A `.docx` beside it has one paragraph for each
+  line, so its paragraph numbers are the same.
+- A document of the INET tree links to a text by its path in the sibling project, for
+  example `../../../../../../standards/RFC/rfc791.txt` from a file under
+  `evidence/protocol/<proto>/`. The link gate checks the link where the sibling exists.
 
 ## Step 2 — map the standards family (`standards.md`)
 
@@ -299,7 +316,7 @@ One file per protocol; it contains:
   date.
 - **Override table** — one row per clause-level conflict: the area, the base clause, the
   clause of the later document that changes it, and the document that governs. Give line
-  references into both cached texts, or clause references when a text is not cached.
+  references into both texts, or clause references for a text that has no line numbers.
 - **In-scope set** — the exact document versions that the current pass tests against,
   taken from the standards register and not from the model's claim. All later artifacts
   are pinned to this set. A related document outside the set is out of scope, not unknown;
@@ -328,8 +345,8 @@ the statement as the bold lead sentence. An entry contains:
 
 - **ID** — `<DOC>-AREA-n`, for example `RFC791-TTL-1` or `IEEE8021Q-VLAN-1`. The ID is
   stable forever. Never renumber; append new entries at the end of an area.
-- **Quote** — the verbatim sentence of the standard with a line reference into the cached
-  file, or a clause reference when no text is cached.
+- **Quote** — the verbatim sentence of the standard with a line reference into its text in
+  the `standards` project, or a clause reference for a text that has no line numbers.
 - **Strength** — the word the document uses: `must`, `shall`, `should`, `may`, or
   `description` for normative prose without a keyword. Old RFCs predate RFC 2119, and each
   standards body has its own keyword conventions; record the words as written.
@@ -516,6 +533,7 @@ The run record answers one question: what ran, and where? These fields are manda
 | --- | --- |
 | Date | The date and the time of the run, with the time zone. |
 | INET | The branch, the commit, and the state of the working tree. |
+| Trees | The tree hashes of `src/` and of `tests/protocol/` at that commit. |
 | OMNeT++ | The version, and the commit when the checkout is a git repository. |
 | Build | The mode, `debug` or `release`, and where the libraries come from. |
 | Compiler | The name and the full version. |
@@ -524,6 +542,20 @@ The run record answers one question: what ran, and where? These fields are manda
 
 Do not write a commit hash for a working tree that has uncommitted changes. The hash then
 names code that did not run. Write `dirty` beside the hash and list the changed files.
+
+A commit hash does not survive a rebase. A topic branch that lands on `master` by a rebase
+gets new commits, and the hash in the record then names a commit that no branch holds. This
+happened to every run record of the first seven passes. The two tree hashes survive: a
+rebase that does not change `src/` keeps the same `src/` tree, so a reader can find the
+commits on `master` that hold the code that ran:
+
+```sh
+T=$(git rev-parse <src-tree>); git rev-list master | while read c; do [ "$(git rev-parse $c:src)" = "$T" ] && echo $c; done
+```
+
+`src/` decides the behaviour of the model, and `tests/protocol/` decides what the checks
+ask. When a rebase changes either tree, run the suite again on `master` and write a new
+record.
 
 Check that the build is newer than the sources. A stale `libINET.so` gives you the
 verdicts of an older commit under the name of the new one, and it gives no warning.
@@ -541,6 +573,7 @@ if [ -z "$(git status --porcelain)" ]; then TREE=clean; else TREE="DIRTY -- the 
 if [ -n "$(find src -name '*.cc' -newer "$LIB" -print -quit)" ]; then BUILD="STALE -- rebuild before you trust the run"; else BUILD="built from this commit"; fi
 echo "- Date: $(date '+%Y-%m-%d %H:%M %z')"
 echo "- INET: branch \`$(git symbolic-ref --quiet --short HEAD || echo detached)\`, commit \`$(git rev-parse --short HEAD)\`, tree $TREE"
+echo "- Trees: src \`$(git rev-parse --short HEAD:src)\`, tests/protocol \`$(git rev-parse --short HEAD:tests/protocol)\`"
 echo "- OMNeT++: $(opp_run -v | sed -n 's/^Version: \([^,]*\),.*/\1/p')"
 echo "- Build: $MODE, $BUILD"
 echo "- Compiler: $(clang++ --version | head -1)"
@@ -552,6 +585,7 @@ It gives a block of this shape:
 ```markdown
 - Date: 2026-09-10 15:11 +0200
 - INET: branch `master`, commit `7c6e39829e`, tree clean
+- Trees: src `16dc528e10`, tests/protocol `6f0a6bdb05`
 - OMNeT++: 6.4.0
 - Build: debug, built from this commit
 - Compiler: Ubuntu clang version 23.0.0 (...)
@@ -564,6 +598,10 @@ configuration option, a patched source file, or a container image.
 
 Three documents carry the run record: `results.md`, `coverage.md` and `conformance.md`.
 `categories.md` records decisions, not run data, so it does not need one.
+
+A level 1 pass has no run. Its `conformance.md` and `coverage.md` carry a read record
+instead: the date, the INET branch, the commit, the trees, and the words "no build, no
+run". The claims of part 1 were read from that code.
 
 ### The class of a failure, and when to declare it expected
 
@@ -783,10 +821,13 @@ document leaves the in-scope set and its successor enters:
 ## Where everything lives
 
 ```
+../standards/                            the sibling project, outside the INET repository
+  RFC/rfc791.txt                         step 1: the text of an RFC
+  RFC/rfc792.txt                         step 1
+  IEEE/802.1/802.1Q-2018.pdf             step 1: the text of an IEEE standard
+
 doc/project/evidence/standard/<doc>/     one folder per standard document, INET-free
-  rfc791/rfc791.txt                      step 1: the cached text
   rfc791/catalog.md                      step 3: the statements, no run data
-  rfc792/rfc792.txt                      step 1
   rfc792/catalog.md                      step 3
 
 doc/project/evidence/protocol/<proto>/   one folder per protocol, INET-free
