@@ -1,0 +1,127 @@
+# MPLS level 2 — catalogs, feature map, checks and tests for RFC 3031, RFC 3032, RFC 3443, RFC 5462
+
+**Status:** done on 2026-09-24, in seven commits on `topic/standards-tests-mpls-level2`, from
+`origin/master` at `7772a7e4ef`. Worktree: `/home/levy/workspace/inet-standards-tests-mpls-level2`.
+Not merged and not pushed. Level 2 is reached for the normal path: 21 tests, 5 PASS, 16 FAIL (6
+declared expected), seven gaps of the model, 2 statements owed.
+
+The fifth and last pass of wave 1, after RIP, ND, IGMP with MLD, and IPsec. It follows
+[`derive-tests-from-a-standard.md`](../../doc/project/guide/derive-tests-from-a-standard.md),
+steps 2 to 9, at **level 2, Core**. The level 1 pass of wave 0 wrote the standards map and part 1
+of the conformance document; this pass starts from them.
+
+The user's decision of 2026-09-24 holds here too: the pass measures the model and repairs
+nothing; the failures are repaired later.
+
+Commit group: `mpls-standards-tests`. Gates before each commit: `check-links.sh`,
+`check-seals.sh`, and `check-commits.sh` and `check-classification.sh` on `origin/master..HEAD`.
+The pass delivers every output of the section "What a pass delivers" of the guide (on
+`topic/standards-tests-igmp-mld-level2`, not yet on this branch), `notes.md` included.
+
+## What the pass takes over from the earlier passes
+
+- Catalogs drafted by agents with one brief, every quote checked, drafts merged with the lead
+  and strength normalization of the IPsec merge.
+- A feature map and a closing list from generators that refuse an unplaced entry.
+- Tests from a generator with shared mockups; the exploration dump before a failure counts.
+- A count with an assertion matches once; a delivered datagram is seen at `<host>.udp`
+  (`packetSentToUpper`); IPsec-like per-node parameters go to the right nodes only.
+- `notes.md` gets each lesson when it occurs; `standards.md` gets the target level of the pass.
+
+## Steps
+
+1. [x] **Plan** — this file.
+2. [x] **Step 2, the standards map** — `protocol/mpls/standards.md`: target level 2, and the
+   sections that level 2 needs beyond the level 1 list.
+3. [x] **Step 3, catalogs** — `standard/rfc3031/catalog.md`, `standard/rfc3032/catalog.md`,
+   `standard/rfc3443/catalog.md`, `standard/rfc5462/catalog.md`; every quote checked.
+4. [x] **Step 4, feature map** — `protocol/mpls/features.md` (`MPLS-F-*`).
+5. [x] **Step 5, checks** — `protocol/mpls/checks.md` and `protocol/mpls/checks/*.md`, with the
+   closing list.
+6. [x] **Step 6, tests** — `tests/protocol/mpls/Rfc30*.test`, `Rfc3443*.test`, and the helper
+   header `MplsChecks.h`.
+7. [x] **Steps 7 to 9, and the ledger** — `model/mpls/results.md`, `conformance.md` part 2,
+   `categories.md`, `coverage.md`, from one fresh run.
+8. [x] **Notes** — `model/mpls/notes.md`, with every gap by number in the follow-ups.
+9. [x] Gates, then move this plan to `plan/done/`.
+
+Working scripts: `audit/mpls-level2/` in `inet-master` (outside git), with a `README.md`; the
+generators rerun there give the committed outputs again.
+
+## Decisions and facts found on the way
+
+- **The in-scope sections grow for level 2.** RFC 3031 adds the labeled packet (§3.3), the LSP
+  with its ingress and egress (§3.15) and the Implicit NULL label (§4.1.5), which §3.16 needs.
+  RFC 3032 adds fragmentation and path MTU (§3, nine MUST lines), and the encapsulation on PPP
+  links (§4) and on LAN media (§5), because a labeled packet crosses a link in every test. RFC
+  3443 takes §2 and §3 whole; RFC 5462 takes §2.1 and §3.
+- **The catalogs are drafted by three agents** (scratchpad `mpls/mpls-catalog-brief.md`): RFC
+  3031, RFC 3032, and RFC 3443 with RFC 5462.
+- **The model's own static ingress binding serves the tests.** `RsvpClassifier` binds a
+  destination to a label of the LIB without RSVP signaling (`<fecentry>` with a `<label>`,
+  `RsvpClassifier::readItemFromXML`), and `LibTable` reads a static LIB, as the example
+  `examples/mpls/testte_tunnel` does. The tests need no module of their own for the FTN.
+- **The mockups use PPP links, because MPLS over Ethernet does not work in the model.** On an
+  Ethernet interface, the ARP module gets a labeled packet and throws "Unknown message received"
+  (the FIXME of `Mpls.cc:210-214`). With `GlobalArp`, the labeled packet reaches the MAC without
+  an Ethernet header, and "Cannot convert chunk from type inet::MplsHeader to type
+  inet::EthernetMacHeader" stops the run. On PPP links, the path A — R1 — R2 — R3 — B works:
+  R1 pushes 100, R2 swaps to 200, R3 pops. The PPP protocol field of a labeled packet is 0281
+  hex. The Ethernet encapsulation of RFC 3032 §5 becomes a check of its own.
+- **Facts of the exploration run that the checks must expect.** The MPLS TTL is 0 in every
+  entry: `Mpls::pushLabel` and `swapLabel` never set it. The IPv4 TTL stays 32 from A to B,
+  because the ingress labels the packet before the IPv4 forwarding step, and the egress pops it
+  and sends it to the link with no decrement. The model has no MTU code: a labeled packet of 1032
+  octets crossed a link whose MTU is 500. An incoming label without a LIB entry is discarded
+  (`Mpls.cc:241-246`). The pop of the last label gives the packet to IPv4, whatever its protocol.
+- **The feature map has 14 features** (11 mandatory, 3 optional) and places all 157 entries:
+  RFC 3031 with 49, RFC 3032 with 81, RFC 3443 with 24, RFC 5462 with 3. RFC 3031 and RFC 3443
+  have few keywords, so three features are `mandatory` by the "only path" rule: the label stack
+  encoding, the label forwarding and the LAN encapsulation. ICMP is `optional`: its must holds
+  only for an LSR that sends an ICMP message. Penultimate hop popping stays `mandatory`: its
+  condition, an LSR that can pop at all, holds for every LSR that ends an LSP.
+- **15 checks in six files** (`encoding`, `forwarding`, `reserved-labels`, `ttl`,
+  `fragmentation`, `links`) place 99 entries; the closing list places the other 58 in 14 groups.
+  Every mandatory feature has a core check except the discard of a label without a binding,
+  which the standards map puts at level 3. The mockups use one path, A — R1 — R2 — R3 — B, on PPP
+  links, and one Ethernet variant for RFC 3032 §5. A rule makes the bindings by hand, as a label
+  distribution protocol would, for the request for penultimate hop popping and for the Explicit
+  NULL and Implicit NULL labels. A second rule fixes the Uniform Model and RFC 1812 IPv4
+  forwarding in the LSRs, so that the TTL on each link is known.
+- **IPv6 and the Router Alert label go to the closing list.** A labeled IPv6 datagram needs an
+  IPv6 mockup; the Router Alert label needs local software in the LSR and a rule for what that
+  software does, which RFC 3032 does not give. The ledger decides whether each is owed.
+- **21 tests for the 15 checks.** A test ends at its first failure, so a rule that fails in the
+  model would hide the rules after it; where two rules of a check could both fail, each gets a
+  test of its own (the TTL checks give seven tests, the check of the DF bit two). A filter that
+  throws is swallowed by the tester, so every rule with a value is an assertion on a `.once`
+  step, which prints the value. `MplsChecks.h` reads each label stack entry from its serialized
+  octets, and compares the TTL of one datagram on two links through a record by its IPv4
+  Identification.
+- **Two tests stop the run.** The LIB asserts that a label value is above 0
+  (`LibTable.cc:132` and `:142`), so the Explicit NULL test stops at initialization. On an
+  Ethernet link, the ARP request of R1 reaches the MPLS module of R2 at 0.008 s, and
+  `Mpls::processPacketFromL2` throws "Unknown message received" (`Mpls.cc:210-214`).
+- **The first run:** 5 PASS (the label stack entry, two entries, label switching, penultimate hop
+  popping, the PPP encapsulation), 6 expected FAIL (the two NULL labels, the three fragmentation
+  tests, the MPLS Control Protocol), 10 FAIL (nine TTL tests and the Ethernet test).
+- **The fresh run at `daac3593fb`** gives 21 tests: 5 PASS, 10 FAIL, 6 FAIL declared expected.
+  Seven gaps: four defects (the TTL field is 0; the LSP does not count its hops in the IPv4
+  TTL; a TTL that reaches zero goes on; an MPLS router on an Ethernet link stops the run) and
+  three unimplemented features (the reserved labels; the MTU check and fragmentation; the MPLS
+  Control Protocol). An order problem of the first run is repaired in the amended test commit:
+  the guard of observation 3 of `Rfc3032TooBigFragments` failed before observation 2 matched.
+- **The claim of the matrix.** The model names no document; the matrix reads "the MPLS
+  protocol" (`Mpls.ned:14`) as a claim of RFC 3031, RFC 3032 and the field rename of RFC 5462,
+  not of the Pipe and Short Pipe Models of RFC 3443. Result: 5 `confirmed`, 3 `partial`, 2
+  `defect`, 3 `unverified`, 1 `out of claim`. The ledger: 74 selected, 25 covered, 2 owed (the
+  Router Alert label, which `MplsPacket.msg:16` names), 23 later, 33 no check. Level 2 is
+  reached for the normal path.
+- **notes.md names every gap in a follow-up**: gaps 1 to 3 in the first, then 4, 5, 6 and 7.
+  Three tooling quirks hold for every protocol (a test ends at its first failure; the order of
+  the steps by the time of their events; a value reaches the report only through an assertion).
+  They stay in the MPLS notes, because the shared section of `ipv4/notes.md` changes on the
+  unmerged IGMP and MLD branch.
+- **Step 9.** The four gates pass on `origin/master..HEAD`. The scripts, the drafts, the
+  exploration test and its runner are in `audit/mpls-level2/` of `inet-master`; a rerun of the
+  ledger, the matrix, the placement check and the feature map from there leaves the tree clean.
