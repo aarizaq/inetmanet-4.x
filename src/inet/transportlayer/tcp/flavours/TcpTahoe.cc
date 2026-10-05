@@ -10,13 +10,14 @@
 #include <algorithm> // min,max
 
 #include "inet/transportlayer/tcp/Tcp.h"
+#include "inet/transportlayer/tcp/TcpSimsignals.h"
 
 namespace inet {
 namespace tcp {
 
 Register_Class(TcpTahoe);
 
-TcpTahoe::TcpTahoe() : TcpTahoeRenoFamily(),
+TcpTahoe::TcpTahoe() : TcpClassicAlgorithmBase(),
     state((TcpTahoeStateVariables *&)TcpAlgorithm::state)
 {
 }
@@ -34,7 +35,7 @@ void TcpTahoe::recalculateSlowStartThreshold()
 
 void TcpTahoe::processRexmitTimer(TcpEventCode& event)
 {
-    TcpTahoeRenoFamily::processRexmitTimer(event);
+    TcpClassicAlgorithmBase::processRexmitTimer(event);
 
     if (event == TCP_E_ABORT)
         return;
@@ -54,9 +55,9 @@ void TcpTahoe::processRexmitTimer(TcpEventCode& event)
     conn->retransmitOneSegment(true);
 }
 
-void TcpTahoe::receivedDataAck(uint32_t firstSeqAcked)
+void TcpTahoe::receivedAckForUnackedData(uint32_t firstSeqAcked)
 {
-    TcpTahoeRenoFamily::receivedDataAck(firstSeqAcked);
+    TcpClassicAlgorithmBase::receivedAckForUnackedData(firstSeqAcked);
 
     //
     // Perform slow start and congestion avoidance.
@@ -108,7 +109,7 @@ void TcpTahoe::receivedDataAck(uint32_t firstSeqAcked)
 
 void TcpTahoe::receivedDuplicateAck()
 {
-    TcpTahoeRenoFamily::receivedDuplicateAck();
+    TcpClassicAlgorithmBase::receivedDuplicateAck();
 
     if (state->dupacks == state->dupthresh) {
         EV_DETAIL << "Tahoe on dupAcks == DUPTHRESH(=" << state->dupthresh << ": perform Fast Retransmit, and enter Slow Start:\n";

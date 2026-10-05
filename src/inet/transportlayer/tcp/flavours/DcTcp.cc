@@ -9,6 +9,7 @@
 #include <algorithm> // min,max
 
 #include "inet/transportlayer/tcp/Tcp.h"
+#include "inet/transportlayer/tcp/TcpSimsignals.h"
 
 namespace inet {
 namespace tcp {
@@ -30,9 +31,9 @@ void DcTcp::initialize()
     state->dctcp_gamma = conn->getTcpMain()->par("dctcpGamma");
 }
 
-void DcTcp::receivedDataAck(uint32_t firstSeqAcked)
+void DcTcp::receivedAckForUnackedData(uint32_t firstSeqAcked)
 {
-    TcpTahoeRenoFamily::receivedDataAck(firstSeqAcked);
+    TcpClassicAlgorithmBase::receivedAckForUnackedData(firstSeqAcked);
 
     if (state->dupacks >= state->dupthresh) {
         //

@@ -1,6 +1,6 @@
 # Agent-Review Checklist (T4 enforcement)
 
-> **Kind:** procedure · **Status:** current · **Seal:** none · **Owns:** — · **Stands on:** [rule/architecture.md](../../rule/architecture.md), [rule/quality.md](../../rule/quality.md), [rule/release.md](../../rule/release.md), [review-a-code-change.md](../../guide/review-a-code-change.md), [README.md](../README.md)
+> **Kind:** procedure · **Status:** current · **Seal:** none · **Owns:** — · **Stands on:** [rule/architecture.md](../../rule/architecture.md), [rule/quality.md](../../rule/quality.md), [rule/release.md](../../rule/release.md), [rule/pull-request.md](../../rule/pull-request.md), [review-a-code-change.md](../../guide/review-a-code-change.md), [README.md](../README.md)
 The tier-4 gate from [enforcement/README.md](../README.md). It enforces the **semantic project
 rules** that no compiler or linter can express by having an LLM reviewer judge a diff against each
 item. Run it as a CI step on every change (and locally before pushing). For diffs touching
@@ -58,6 +58,19 @@ outcome distinction declared by its contract, including a default argument whose
 with the caller's static type. *Not a violation:* a contract that deliberately combines outcome
 categories and whose implementations and callers preserve that declared meaning.
 
+**[PR-SPLIT-ONE-CHANGE / PR-SPLIT-SIZE] Does a commit hold a part that can stand alone?**
+FLAG a commit with a part that builds, passes its tests and has a reason of its own, and name the
+part. Use the signs that the rule lists: baseline rows with more than one explanation, a test for a
+separate symptom, a new mechanism together with its first production user. FLAG a commit above the
+size limit whose body does not say why it does not divide. *Not a violation:* a contract and the
+update of every implementation of it, or another change whose body says why it does not divide.
+
+**[PR-SPLIT-PREPARE] Does preparation come before the change that needs it?**
+FLAG a commit called a refactor that changes behavior, a feature commit that holds the fix of a
+separate symptom, and a commit that adds a mechanism and also turns on its first production user.
+*Not a violation:* a mechanism that lands before its user in the same pull request, with tests that
+reach it directly.
+
 **[PR-MSG-BODY / PR-MSG-WHY] Does a substantial commit explain itself?**
 FLAG a commit that repairs a defect, changes behavior, or implements a standard and carries no body —
 the gate catches the empty ones above 50 lines, you catch the small ones. FLAG a body that restates
@@ -65,6 +78,18 @@ the subject in longer words, or that lists the files and methods the diff alread
 body: does it give the symptom, the cause, and why this solution rather than the obvious one?
 *Not a violation:* a bare subject on a rename, an include ordering, a whitespace commit, a plan or
 documentation commit, a regenerated file, or a `WHATSNEW` entry.
+
+**[PR-MSG-SUMMARY] Does a commit body start with a summary?**
+FLAG a body whose first paragraphs do not state the problem and the idea of the solution, or that
+starts with a list of actions that the diff already shows. FLAG a body that a reviewer cannot
+understand in about two minutes without the diff. *Not a violation:* a commit without a body under
+PR-MSG-BODY, or a body of one short paragraph that states the reason.
+
+**[PR-MSG-FACTS] Does a commit message describe only the final change?**
+FLAG a message with a section on the history of the pull request — an audit correction, a review
+round, an earlier revision — and a message that carries a test log that belongs in the pull request
+description. *Not a violation:* the regression test of a fix, or the case that shows that a moved
+baseline is right.
 
 **[AR-ORG-CONTRACT-PURITY] Does a contract header declare anything that is not part of the role?**
 FLAG a `static` helper, a utility function, a non-trivial inline body, or a policy decision added to a

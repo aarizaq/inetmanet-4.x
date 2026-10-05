@@ -32,6 +32,7 @@ Every rule in document order. The identifier links to the rule; the statement is
 | Rule | Statement |
 | --- | --- |
 | [PR-SPLIT-ONE-CHANGE](#pr-split-one-change) | One commit makes exactly one change |
+| [PR-SPLIT-SIZE](#pr-split-size) | A commit above 400 changed source lines says why it does not divide |
 | [PR-SPLIT-WHITESPACE](#pr-split-whitespace) | A whitespace change touches only whitespace |
 | [PR-SPLIT-MECHANICAL](#pr-split-mechanical) | A mechanical sweep is separate from work that needs thought |
 | [PR-SPLIT-MOVE](#pr-split-move) | A file move is its own commit |
@@ -54,6 +55,7 @@ Every rule in document order. The identifier links to the rule; the statement is
 | --- | --- |
 | [PR-MSG-SUBJECT](#pr-msg-subject) | `area: what the commit does` |
 | [PR-MSG-BODY](#pr-msg-body) | A commit whose subject cannot carry its reason has a body |
+| [PR-MSG-SUMMARY](#pr-msg-summary) | The body starts with a summary that a reviewer understands in two minutes |
 | [PR-MSG-WHY](#pr-msg-why) | The body gives the reason, not the content |
 | [PR-MSG-REPRODUCE](#pr-msg-reproduce) | A fix says how to reproduce the defect |
 | [PR-MSG-PLAN](#pr-msg-plan) | A commit that implements a plan names it |
@@ -66,7 +68,7 @@ Every rule in document order. The identifier links to the rule; the statement is
 | Rule | Statement |
 | --- | --- |
 | [PR-REQ-TOPIC](#pr-req-topic) | One pull request, one topic |
-| [PR-REQ-STORY](#pr-req-story) | The description states the topic, the reason, and the reading order |
+| [PR-REQ-STORY](#pr-req-story) | The description starts with a summary, then gives the commits and the evidence |
 | [PR-REQ-ARCH](#pr-req-arch) | The description names the architectural surface |
 | [PR-REQ-CLEAN](#pr-req-clean) | No leftovers |
 
@@ -76,13 +78,62 @@ Every rule in document order. The identifier links to the rule; the statement is
 
 **One commit makes exactly one change**
 
-A commit contains one self-contained change, and the whole of that change.
+A commit contains one self-contained change, and the whole of that change. Half a change is not
+a commit: the tree after the commit must build, and the model after the commit must be consistent
+(PR-SERIES-BUILDS). "One change" means one *decision*, not one file — a decision that touches eight
+files is still one commit.
 
-Use the subject line as the test: if you cannot say what the commit does in one line without
-"and" or a list, the commit holds more than one change. The opposite fault counts too. Half a
-change is not a commit: the tree after the commit must build, and the model after the commit
-must be consistent (PR-SERIES-BUILDS). "One change" means one *decision*, not one file — a
-decision that touches eight files is still one commit.
+**Divide a commit wherever a part of it can stand alone.** A part stands alone when it builds,
+passes its tests, and has a reason of its own that its own message can give. That part is a commit
+of its own, even when the larger feature needs it. One change is the smallest step that a reviewer
+can judge alone, not the largest feature that the steps serve: a feature that five steps build is
+five commits.
+
+The subject line is a quick test, but a weak one. If you cannot say what the commit does in one
+line without "and" or a list, the commit holds more than one change. But an abstract subject such
+as "enforce the TXOP limit" passes this test and can still cover several changes. These signs show
+a second change:
+
+| Sign | What it usually shows |
+| --- | --- |
+| the moved baseline rows need more than one explanation | one behavior change for each explanation |
+| a new test shows a symptom that the rest of the commit does not need | a fix or a feature that can land first |
+| the commit adds a mechanism and also turns on its first production user | two steps ([PR-SPLIT-PREPARE](#pr-split-prepare)) |
+| the subject carries a mixed marker such as `add+change:` | two changes, unless the parts cannot be divided ([CR-TAG-SUBJECT](classification.md#cr-tag-subject)) |
+| the plan of the work lists the content as more than one step | one commit for each step |
+| the body needs a paragraph for each of several topics | one topic for each commit |
+
+A sign is a question, not a verdict. Some changes do not divide: a contract and the update of every
+implementation of it must build together, for example. The body of such a commit says why it does
+not divide.
+
+*Enforced at T4 — agent review: can a part of the commit stand alone? T3 gives a note:
+[check-commits.sh](../enforcement/check-commits.sh) names a commit whose fingerprint rows move in
+more than one way.*
+
+### PR-SPLIT-SIZE
+
+**A commit above 400 changed source lines says why it does not divide**
+
+Count the changed lines of `.cc`, `.h`, `.ned` and `.msg` files under `src/`, without the generated
+`_m.h` and `_m.cc` files. Tests, recorded expectations and documentation do not count. Above 400
+lines, the body of the commit says why the commit cannot be divided
+([PR-SPLIT-ONE-CHANGE](#pr-split-one-change)).
+
+The number is measured, not chosen. Across master's last 1000 commits, 95 % of the commits that
+change source change at most 425 source lines, and the median is 34. Most commits above the line add
+a new protocol, import reference code, or do a sweep. A reviewer can hold a commit below the line in
+the head at once. Above it, the reviewer reads the commit in pieces and must find the boundaries that
+the author did not draw.
+
+The limit asks a question; it does not forbid a large commit. A new protocol module, imported
+reference code, a mechanical sweep ([PR-SPLIT-MECHANICAL](#pr-split-mechanical)) and a move
+([PR-SPLIT-MOVE](#pr-split-move)) can be larger, and one sentence in the body says so. A large
+commit that builds one feature in several steps is the case that this rule is for: divide it.
+
+*Enforced at T3 — [check-commits.sh](../enforcement/check-commits.sh) gives a note above 400 changed
+source lines, except on a `comment`, `format`, `location` or `name` commit; T4 — agent review: is
+the reason in the body true?*
 
 ### PR-SPLIT-WHITESPACE
 
@@ -139,13 +190,28 @@ from a rename git cannot see is permanent, and the loss from a broken middle com
 
 **Preparation comes before the change that needs it**
 
-When a fix needs a refactor first, commit the refactor alone, and keep it behavior-preserving.
-The fix follows in the next commit.
+When a change needs preparation, commit the preparation first, in one or more commits of its own.
+Preparation has three forms:
 
-The reviewer then answers two simple questions instead of one hard one: *is the refactor
-safe?* — and the fingerprint tests answer it — and *is the fix right?*, on a diff of a few
-lines. In a mixed commit neither question has a safe answer, because every changed line is a
-candidate cause of the behavior change.
+- **A refactor.** Keep it behavior-preserving. The fingerprint tests then answer the question *is
+  the refactor safe?*, and the change that follows is a diff of a few lines.
+- **A prerequisite fix.** A defect that the change exposes, or that the change needs repaired, is a
+  fix of its own. It has its own symptom, its own reproduction
+  ([PR-MSG-REPRODUCE](#pr-msg-reproduce)) and often its own baselines. Commit it before the change.
+- **A new mechanism before its first user.** A contract, a data structure or a procedure that the
+  change needs can land before the commit that uses it, with tests that reach it directly. No
+  behavior moves, so every recorded expectation stays where it is, and the reviewer judges the
+  mechanism alone. Say in the body which later commit of the series uses it; a mechanism whose user
+  is not in the pull request is speculative ([AR-EXT-REUSE](architecture.md#ar-ext-reuse)).
+
+A last, small commit then turns the behavior on. It carries the baselines that move
+([PR-SPLIT-BASELINE](#pr-split-baseline)), and its diff shows exactly where the behavior changes.
+
+The reviewer then answers several simple questions instead of one hard one. In a mixed commit no
+question has a safe answer, because every changed line is a candidate cause of the behavior change.
+
+*Enforced at T4 — agent review: does a refactor commit change behavior, and does one commit both
+add a mechanism and turn on its first user?*
 
 ### PR-SPLIT-UPSTREAM
 
@@ -323,7 +389,7 @@ itself. Of the nine commits above it that carry no body, six are the exempt kind
 
 | | Where it belongs |
 | --- | --- |
-| **what** the commit does | the subject names it; the diff shows it. The body must not restate it. |
+| **what** the commit does | the subject names it, and the summary describes it at the level of components and contracts ([PR-MSG-SUMMARY](#pr-msg-summary)). The diff shows the lines; the body must not restate them. |
 | **how** it does it | the diff shows it. *Which* mechanism, and *why that one and not the obvious alternative*, is part of the reason and belongs in the body. |
 | **why** it was done | the body, and nothing else carries it. The symptom, the cause, the alternative rejected, and what the change deliberately leaves unrepaired. |
 
@@ -333,11 +399,40 @@ the time to discover that it says nothing.
 *Enforced at T3 — [check-commits.sh](../enforcement/check-commits.sh) fails an empty body above 50
 changed lines, outside the exempt kinds; T4 for whether the body gives a reason at all.*
 
+### PR-MSG-SUMMARY
+
+**The body starts with a summary that a reviewer understands in two minutes**
+
+Start the body with a summary of one to three short paragraphs. The summary says which problem the
+commit solves, what the solution does at the level of components and contracts, and which effect a
+user or a later developer sees. A reviewer who reads only the summary knows what the commit does and
+why, without the diff.
+
+Details come after the summary: the mechanism and why it was chosen, edge cases, standard clauses,
+migration notes, the account of moved baselines. A reader who needs them reads on. A reader who
+scans `git log` stops after the summary.
+
+The summary is not a list of actions. "Add X. Change Y. Remove Z." repeats the diff and leaves the
+reader to find the reason. Write the problem first, then the idea of the solution.
+
+**Keep the body short.** The first paragraph aims for about 100 words, and the whole body for about
+300. Both numbers are measured: across master's last 1000 commits, 99 % of first paragraphs have at
+most 121 words, and 95 % of bodies have at most 291. A body that needs much more usually describes
+more than one change ([PR-SPLIT-ONE-CHANGE](#pr-split-one-change)), or carries evidence that belongs
+in the pull request ([PR-MSG-FACTS](#pr-msg-facts)).
+
+A commit whose subject is the whole story needs no body ([PR-MSG-BODY](#pr-msg-body)). In a body of
+one short paragraph, that paragraph is the summary.
+
+*Enforced at T3 — [check-commits.sh](../enforcement/check-commits.sh) gives a note when the first
+paragraph has more than 120 words or the body more than 300; T4 — agent review: does the summary
+state the problem and the idea of the solution?*
+
 ### PR-MSG-WHY
 
 **The body gives the reason, not the content**
 
-The diff already shows what changed. The body says why: the symptom, the cause, why this
+The diff already shows what changed, line by line. The body says why: the symptom, the cause, why this
 solution and not an obvious alternative, and what the change deliberately does not repair.
 
 For a bug fix, write the symptom in the words a future reader will search for — the error
@@ -426,6 +521,22 @@ the fact itself. An issue or pull request number is a useful addition, never a r
 No attribution trailers for tools or assistants, no progress notes, no apologies, and no
 speculation about future work. Keep a `Fixes #<n>` style reference when it is accurate.
 
+**The message describes the final change, not the way to it.** A pull request goes through
+revisions, and the commits that land show only the result ([PR-SERIES-ORDER](#pr-series-order)). A
+section such as "audit correction", "after review" or "the earlier revision" records the history of
+the pull request, and it means nothing to a reader of `git log`. Write the message for the final
+change.
+
+**Test logs belong in the pull request.** The commands that ran, their results, the run counts and
+the seeds go in the description ([PR-REQ-STORY](#pr-req-story)). They describe one run on one
+machine, and they are often the same for every commit of a series. A message names a test only when
+the test is part of the reason: the regression test of a fix
+([PR-MSG-REPRODUCE](#pr-msg-reproduce)), or the case that shows that a moved baseline is right.
+
+*Enforced at T3 — [check-commits.sh](../enforcement/check-commits.sh) fails an attribution trailer
+and gives a note for words of revision history and for a `Validation:` paragraph; T4 — agent review
+for other progress notes.*
+
 ### The classification trailer
 
 Every commit also ends with one `Change:` line that states its scope, its depth, what must move
@@ -444,14 +555,37 @@ A pull request carries one topic, at a size a reviewer can hold in the head at o
 are two pull requests, even when the same developer wrote them on the same day. A long series
 on one topic is fine; a short series on three topics is not.
 
+**A step that is useful alone and moves behavior outside the topic goes first, in a pull request of
+its own.** A fix that moves the fingerprints of configurations that the topic does not reach is the
+usual case. The reviewers of that behavior are not always the reviewers of the topic, and the fix
+can land while the topic is still in review. The topic pull request then builds on it. When a pull
+request keeps such a step, the description says why.
+
+*Enforced at T4 — agent review: does a commit move behavior outside the topic, and can it land
+alone? T5 — the size of the topic is human judgment.*
+
 ### PR-REQ-STORY
 
-**The description states the topic, the reason, and the reading order**
+**The description starts with a summary, then gives the commits and the evidence**
 
-The description says what the change achieves and why it is needed, and it names the order in
-which the commits should be read when that order is not obvious. It lists the tests that were
-run, with the exact commands and the resulting status, and it names every baseline update
-(*Contributor workflow*, step 6).
+A description has three parts, in this order:
+
+1. **A summary of a few short paragraphs.** What the change achieves, why it is needed, the idea of
+   the solution, and its risk. A reviewer reads the summary in about five minutes and then knows
+   what to expect from the commits. The summary describes the change at the level of components and
+   contracts; it does not repeat the commit messages.
+2. **The commits, in the order to read them**, one line each. Say which commits only prepare and
+   which commit moves behavior ([PR-SPLIT-PREPARE](#pr-split-prepare)). The architectural surface
+   ([PR-REQ-ARCH](#pr-req-arch)) follows the commits.
+3. **The evidence.** The tests that ran, with the exact commands and the resulting status, every
+   baseline update (*Contributor workflow*, step 6), and what remains unverified.
+
+A reviewer who stops after the summary must still be able to say what the pull request does and
+why. Long material — a table for each test, a log excerpt, the complete account of moved baselines —
+goes to the end of the description, or into the plan.
+
+*Enforced at T4 — agent review: does the summary state the change, the reason and the risk, and can
+a reviewer read it in about five minutes?*
 
 ### PR-REQ-ARCH
 
@@ -479,6 +613,8 @@ draft.
 | You rename a class in 200 files and add a feature | one commit | mechanical commit, then feature commit (PR-SPLIT-MECHANICAL) |
 | You move a file and edit it | one commit | move commit, then edit commit (PR-SPLIT-MOVE) |
 | A refactor makes the fix possible | one commit | behavior-preserving refactor, then fix (PR-SPLIT-PREPARE) |
+| A feature needs a defect repaired first | fold the fix into the feature | the fix with its own baselines, then the feature (PR-SPLIT-PREPARE) |
+| A feature needs a new contract | the contract and its first user in one commit | the contract with its tests, then a small commit that turns the behavior on (PR-SPLIT-PREPARE) |
 | An 802.11 fix needs a queueing feature | one commit | generic queueing feature, then 802.11 fix (PR-SPLIT-UPSTREAM) |
 | Your fix changes fingerprints | a baseline commit after the fix | the source and the `.csv` in one commit, with the reason in the message (PR-SPLIT-BASELINE) |
 | A compiler update moves fingerprints | fold them into the next fix | a baseline-only commit that names the cause (PR-SPLIT-BASELINE) |
@@ -486,6 +622,8 @@ draft.
 | A reviewer finds a defect in commit 2 of 5 | add commit 6 | rebase the correction into commit 2 (PR-SERIES-ORDER) |
 | The target branch moved under you | merge it in | rebase the series (PR-SERIES-LINEAR) |
 | The subject needs an "and" | write the "and" | divide the commit (PR-SPLIT-ONE-CHANGE) |
+| The commit changes more than 400 source lines | leave the size unexplained | divide it, or say in the body why it does not divide (PR-SPLIT-SIZE) |
+| A part of the commit builds and has its own reason | keep it inside the feature commit | make it a commit of its own (PR-SPLIT-ONE-CHANGE) |
 
 ## Enforcement
 
@@ -500,15 +638,17 @@ argue about.
 | PR-SPLIT-MOVE | T3 | per-commit check: a delete/add pair with high similarity plus a content change |
 | PR-SPLIT-BASELINE | T3+T4 | per-commit check: a baseline-only commit directly after a source commit, or one with no reason in the body (T3) + agent review that the commit which moves the values explains the movement (T4) |
 | PR-SPLIT-MECHANICAL | T3+T4 | diff-size and hunk-uniformity heuristic (T3) + agent review |
+| PR-SPLIT-SIZE | T3+T4 | note: more than 400 changed source lines (T3) + agent review of the reason in the body (T4) |
 | PR-SERIES-BUILDS | T2 | CI builds and tests every commit of the branch, not only the head |
 | PR-SERIES-ORDER | T3 | subject-line check for `fixup!`, `squash!`, "typo", "address review" |
 | PR-SERIES-LINEAR | T3 | branch check: no merge commit between the merge base and the head |
 | PR-MSG-SUBJECT | T3 | commit-message lint: `area: summary`, no file paths, no links; length fails above 80 and is a note above 72 |
-| PR-MSG-FACTS | T3 | commit-message lint: no attribution trailers |
-| PR-SPLIT-ONE-CHANGE | T4 | agent review: does the commit contain two independent decisions? |
+| PR-MSG-FACTS | T3+T4 | commit-message lint: no attribution trailers; note for words of revision history and for a `Validation:` paragraph (T3) + agent review for other progress notes (T4) |
+| PR-SPLIT-ONE-CHANGE | T3+T4 | note: the fingerprint rows of one commit move in more than one way (T3) + agent review: can a part of the commit stand alone? The rule lists the signs (T4) |
 | PR-SPLIT-UPSTREAM | T4 | agent review: does the commit change a shared component to serve one protocol? |
-| PR-SPLIT-PREPARE | T4 | agent review: does a "refactor" commit change behavior? |
+| PR-SPLIT-PREPARE | T4 | agent review: does a "refactor" commit change behavior, and does one commit both add a mechanism and turn on its first user? |
 | PR-SPLIT-DRIVEBY | T4 | agent review: is a hunk unrelated to the subject line? |
 | PR-MSG-BODY | T3+T4 | commit-message lint: an empty body above 50 changed lines, outside the exempt kinds; agent review for a body that restates the subject |
+| PR-MSG-SUMMARY | T3+T4 | note: a first paragraph above 120 words or a body above 300 words (T3) + agent review: does the summary state the problem and the idea of the solution? (T4) |
 | PR-MSG-WHY, PR-MSG-GENERIC, PR-MSG-STANDALONE | T4 | agent review of the message against the diff |
 | PR-REQ-* | T4→T5 | agent review for completeness; topic and size are human judgment |

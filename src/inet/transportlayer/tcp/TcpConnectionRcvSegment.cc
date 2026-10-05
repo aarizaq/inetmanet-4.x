@@ -14,6 +14,7 @@
 #include "inet/transportlayer/tcp/TcpReceiveQueue.h"
 #include "inet/transportlayer/tcp/TcpSackRexmitQueue.h"
 #include "inet/transportlayer/tcp/TcpSendQueue.h"
+#include "inet/transportlayer/tcp/TcpSimsignals.h"
 #include "inet/transportlayer/tcp_common/TcpHeader.h"
 
 namespace inet {
@@ -86,8 +87,8 @@ TcpEventCode TcpConnection::process_RCV_SEGMENT(Packet *tcpSegment, const Ptr<co
 
     emit(tcpRcvPayloadBytesSignal, int(tcpSegment->getByteLength() - tcpHeader->getHeaderLength().get<B>()));
     //
-    // Note: this code is organized exactly as RFC 793, section "3.9 Event
-    // Processing", subsection "SEGMENT ARRIVES".
+    // Note: this code is organized exactly as
+    // RFC 9293, section "3.10 Event Processing", subsection "3.10.7. SEGMENT ARRIVES".
     //
     TcpEventCode event;
 
@@ -501,9 +502,9 @@ TcpEventCode TcpConnection::processSegment1stThru8th(Packet *tcpSegment, const P
 
                 if (seqGreater(state->snd_una, old_snd_una)) {
                     // notify
-                    tcpAlgorithm->receivedDataAck(old_snd_una);
+                    tcpAlgorithm->receivedAckForUnackedData(old_snd_una);
 
-                    // in the receivedDataAck we need the old value
+                    // in the receivedAckForUnackedData we need the old value
                     state->dupacks = 0;
 
                     emit(dupAcksSignal, state->dupacks);
@@ -1222,7 +1223,7 @@ bool TcpConnection::processAckInEstabEtc(Packet *tcpSegment, const Ptr<const Tcp
         // which are thereby entirely acknowledged."
         if (state->ts_enabled)
             tcpAlgorithm->rttMeasurementCompleteUsingTS(getTSecr(tcpHeader));
-        // Note: If TS is disabled the RTT measurement is completed in TcpBaseAlg::receivedDataAck()
+        // Note: If TS is disabled the RTT measurement is completed in TcpBaseAlg::receivedAckForUnackedData()
 
         uint32_t discardUpToSeq = state->snd_una;
 
@@ -1247,9 +1248,9 @@ bool TcpConnection::processAckInEstabEtc(Packet *tcpSegment, const Ptr<const Tcp
         // otherwise we would use an old ACKNo
         if (payloadLength == 0 && fsm.getState() != TCP_S_SYN_RCVD) {
             // notify
-            tcpAlgorithm->receivedDataAck(old_snd_una);
+            tcpAlgorithm->receivedAckForUnackedData(old_snd_una);
 
-            // in the receivedDataAck we need the old value
+            // in the receivedAckForUnackedData we need the old value
             state->dupacks = 0;
 
             emit(dupAcksSignal, state->dupacks);
@@ -1259,7 +1260,7 @@ bool TcpConnection::processAckInEstabEtc(Packet *tcpSegment, const Ptr<const Tcp
         ASSERT(seqGreater(tcpHeader->getAckNo(), state->snd_max)); // from if-ladder
 
         // send an ACK, drop the segment, and return.
-        tcpAlgorithm->receivedAckForDataNotYetSent(tcpHeader->getAckNo());
+        tcpAlgorithm->receivedAckForUnsentData(tcpHeader->getAckNo());
         state->dupacks = 0;
 
         emit(dupAcksSignal, state->dupacks);

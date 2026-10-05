@@ -10,13 +10,14 @@
 #include <algorithm> // min,max
 
 #include "inet/transportlayer/tcp/Tcp.h"
+#include "inet/transportlayer/tcp/TcpSimsignals.h"
 
 namespace inet {
 namespace tcp {
 
 Register_Class(TcpReno);
 
-TcpReno::TcpReno() : TcpTahoeRenoFamily(),
+TcpReno::TcpReno() : TcpClassicAlgorithmBase(),
     state((TcpRenoStateVariables *&)TcpAlgorithm::state)
 {
 }
@@ -44,7 +45,7 @@ void TcpReno::recalculateSlowStartThreshold()
 
 void TcpReno::processRexmitTimer(TcpEventCode& event)
 {
-    TcpTahoeRenoFamily::processRexmitTimer(event);
+    TcpClassicAlgorithmBase::processRexmitTimer(event);
 
     if (event == TCP_E_ABORT)
         return;
@@ -76,9 +77,9 @@ void TcpReno::processRexmitTimer(TcpEventCode& event)
     conn->retransmitOneSegment(true);
 }
 
-void TcpReno::receivedDataAck(uint32_t firstSeqAcked)
+void TcpReno::receivedAckForUnackedData(uint32_t firstSeqAcked)
 {
-    TcpTahoeRenoFamily::receivedDataAck(firstSeqAcked);
+    TcpClassicAlgorithmBase::receivedAckForUnackedData(firstSeqAcked);
 
     if (state->dupacks >= state->dupthresh) {
         //
@@ -227,7 +228,7 @@ void TcpReno::receivedDataAck(uint32_t firstSeqAcked)
 
 void TcpReno::receivedDuplicateAck()
 {
-    TcpTahoeRenoFamily::receivedDuplicateAck();
+    TcpClassicAlgorithmBase::receivedDuplicateAck();
 
     if (state->dupacks == state->dupthresh) {
         EV_INFO << "Reno on dupAcks == DUPTHRESH(=" << state->dupthresh << ": perform Fast Retransmit, and enter Fast Recovery:";

@@ -127,15 +127,22 @@ sections. `opp_summarize_changes` does not generate it yet.
 
 ## 5. Judge what a script cannot
 
-Read each commit against the rules that need judgment:
+Read each commit against the rules that need judgment. **Give each judgment rule a verdict with
+evidence for each commit.** A gate that gives no signal is not evidence: a large commit with an
+abstract subject passes every mechanical check and can still hold several changes.
 
-- **[PR-SPLIT-ONE-CHANGE](../rule/pull-request.md#pr-split-one-change)** — does the subject need an
-  "and"? Then the commit holds two decisions.
+- **[PR-SPLIT-ONE-CHANGE](../rule/pull-request.md#pr-split-one-change)** — can a part of the commit
+  stand alone: does it build, pass its tests, and have a reason of its own? Look for the signs that
+  the rule lists. For a `FLAG`, name the parts and the order in which they can land. For a `PASS` on
+  a large commit, give the reason why it does not divide.
+- **[PR-SPLIT-SIZE](../rule/pull-request.md#pr-split-size)** — for each commit with the size note,
+  does the body say why it does not divide, and is that reason true?
 - **[PR-SPLIT-UPSTREAM](../rule/pull-request.md#pr-split-upstream)** — does a commit change a shared
   component to serve one protocol? Try to describe the shared change without naming that protocol; if
   you cannot, the feature is in the wrong place or it is too narrow.
 - **[PR-SPLIT-PREPARE](../rule/pull-request.md#pr-split-prepare)** — does a commit called a refactor
-  change behavior?
+  change behavior? Does a feature commit hold a fix that can land first? Does one commit both add a
+  mechanism and turn on its first production user?
 - **[PR-SPLIT-DRIVEBY](../rule/pull-request.md#pr-split-driveby)** — is a hunk unrelated to the
   subject line?
 - **[PR-SPLIT-BASELINE](../rule/pull-request.md#pr-split-baseline)** — the regenerated values belong
@@ -148,15 +155,29 @@ Read each commit against the rules that need judgment:
   a different thing from one where the habit is absent. `git log --format='%h %s' --no-walk
   $(git log --format=%H $MB..HEAD | while read c; do [ -z "$(git log -1 --format=%b $c | grep -v '^$')" ] && echo $c; done)`
   lists every commit with no body at all.
+- **[PR-MSG-SUMMARY](../rule/pull-request.md#pr-msg-summary)** — read only the summary of each body.
+  After about two minutes, do you know what the commit does and why? A summary that is a list of
+  actions, or a body that needs the diff to make sense, is a `FLAG`.
 - **[PR-MSG-WHY](../rule/pull-request.md#pr-msg-why)** — does the body give the reason, or repeat the
   diff?
+- **[PR-MSG-FACTS](../rule/pull-request.md#pr-msg-facts)** — does a message describe only the final
+  change? A section on the history of the pull request, or a test log that the description should
+  carry, is a `FLAG`.
 - **[PR-MSG-REPRODUCE](../rule/pull-request.md#pr-msg-reproduce)** — every commit the breakdown
   counts under `fix` must say how to see the defect happen. Steps are enough for most; ask for a
   regression test only where the defect sits on a crossed path, could return under a refactor, or
   came from a misread standard. `git log --format='%h %s' --grep='^Change:.*\.fix' $MB..HEAD` lists
   the candidates once the branch carries trailers.
 - **[PR-MSG-PLAN](../rule/pull-request.md#pr-msg-plan)** — if the series follows a plan, does each
-  commit name it, and does the path still exist?
+  commit name it, and does the path still exist? Do the commits follow the plan's steps, one or more
+  commits for each step? A commit that spans two steps without a reason in the plan is a `FLAG` under
+  [PR-SPLIT-ONE-CHANGE](../rule/pull-request.md#pr-split-one-change).
+- **[PR-REQ-TOPIC](../rule/pull-request.md#pr-req-topic)** — does a commit move behavior outside
+  the topic, such as the fingerprints of configurations that the topic does not reach? Can it land
+  first, in a pull request of its own?
+- **[PR-REQ-STORY](../rule/pull-request.md#pr-req-story)** — read only the summary of the
+  description. After about five minutes, do you know what the pull request does, why, and what its
+  risk is? Do the commits follow in the order to read them, with the evidence last?
 - **[TR-BASELINE-PROVENANCE](../rule/testing.md#tr-baseline-provenance)** — **every moved row is
   accounted for**, not the set as a whole. Rows that share one explanation are named together; a
   count is not an explanation. An unexplained row is an unintended change until somebody shows

@@ -6,7 +6,7 @@
 //
 
 import inet.common.INETDefs;
-import inet.transportlayer.tcp.flavours.TcpBaseAlgState;
+import inet.transportlayer.tcp.flavours.TcpAlgorithmBaseState;
 import inet.transportlayer.tcp.flavours.TcpSegmentTransmitInfoList;
 
 namespace inet::tcp;
@@ -14,7 +14,7 @@ namespace inet::tcp;
 ///
 /// State variables for TcpVegas.
 ///
-struct TcpVegasStateVariables extends TcpBaseAlgStateVariables
+struct TcpVegasStateVariables extends TcpAlgorithmBaseStateVariables
 {
     @descriptor(readonly);
 
@@ -24,7 +24,7 @@ struct TcpVegasStateVariables extends TcpBaseAlgStateVariables
     simtime_t v_baseRTT = SIMTIME_MAX;
     simtime_t v_sumRTT = SIMTIME_ZERO; // sum of rtt's measured within one RTT
     int v_cntRTT = 0; // # of rtt's measured within one RTT
-    uint32_t v_begseq = 0; // register next pkt to be sent,for rtt calculation in receivedDataAck
+    uint32_t v_begseq = 0; // register next pkt to be sent,for rtt calculation in receivedAckForUnackedData
     simtime_t v_begtime = 0; // register time for rtt calculation
 
     simtime_t v_rtt_timeout = 1000.0; // vegas fine-grained timeout

@@ -4,6 +4,89 @@ Migrating Code from INET 3.x
 ============================
 Release: |release|
 
+IEEE 802.11 PHY Mode Properties
+-------------------------------
+
+The physical layer (PHY) mode interface ``IIeee80211Mode`` gains three pure
+virtual methods. Direct implementations outside INET must implement them:
+
+.. code-block:: c++
+
+   ModulationClass getModulationClass() const override;
+   PreambleType getLegacyPreambleType() const override;
+   bps getNonHtReferenceRate() const override;
+
+``ModulationClass`` identifies the mode family. Its values are ``UNKNOWN``,
+``DSSS_HRDSSS``, ``OFDM``, ``ERP_OFDM``, ``HT``, and ``VHT``.
+HT means High Throughput; VHT means Very High Throughput.
+
+``PreambleType`` describes the legacy preamble, which precedes the frame header.
+Its values are ``UNKNOWN``, ``LONG``, ``SHORT``, and ``NOT_APPLICABLE``.
+``LONG`` and ``SHORT`` apply only to legacy direct-sequence modes.
+OFDM, HT, and VHT modes return ``NOT_APPLICABLE`` for this query.
+OFDM means orthogonal frequency-division multiplexing.
+
+``getNonHtReferenceRate()`` returns a bound for response-rate selection, in
+bits per second. Supported legacy modes return their data rate. HT and VHT
+modes derive the bound from the modulation and code rate of stream 1.
+The bound does not depend on channel width, guard interval, or stream count.
+An unsupported mapping returns ``bps(NaN)``, where NaN means not a number.
+Check the value with ``std::isnan(rate.get())`` before rate comparisons.
+
+Subclasses of ``Ieee80211ModeBase`` inherit defaults and need no new override
+to compile. Those defaults return ``UNKNOWN`` for both enum queries and
+``bps(NaN)`` for the reference rate.
+Override each query that the custom mode supports.
+Custom rate selectors can use these queries instead of concrete mode casts
+or a second copy of the reference-rate formula.
+
+IEEE 802.11 MIB Rate State and Listeners
+----------------------------------------
+
+``Ieee80211Mib`` adds rate state to the Management Information Base (MIB).
+``Ieee80211RateSetState`` contains ``supported``, ``basic``, and ``operational``
+rate sets. Each ``Ieee80211RateSet`` has a ``known`` flag, legacy rates in bits
+per second, and HT modulation and coding scheme (MCS) indexes.
+The default ``known=false`` means that the information is unknown.
+A set with ``known=true`` and no rates is a known empty set.
+Check ``known`` before you use an empty rate set.
+
+Read the state with ``getLocalRateSet()``, ``getBssRateSet()``, and
+``findPeerRateSet(address)``. BSS means Basic Service Set.
+``findPeerRateSet()`` returns ``nullptr`` when no peer record exists.
+The getters return views that remain valid until the corresponding update
+or clear operation. Copy any state that you need after such an operation.
+This includes an update that a synchronous signal listener makes.
+
+Use ``setLocalRateSet()`` for local state.
+Use ``setBssRateSet()`` for BSS state.
+Use ``installBssAndPeerRateSets()`` to install BSS and peer state together.
+
+These methods validate all input before they change the rate records.
+Unknown sets must contain no rates. Known basic and operational sets must
+respect the subset checks in ``validateIeee80211RateSetState()``.
+An equal rate-set update emits no signal.
+
+``clearBssRateSet()`` restores unknown BSS rate state.
+``removePeerRateSet()`` and ``clearPeerRateSets()`` remove peer rate records.
+
+Subscribe to ``Ieee80211Mib::rateStateChangedSignal`` for state notifications.
+The signal name is ``rateStateChanged``. A notification carries boolean
+``true`` and no details object. The MIB emits it after a committed rate,
+HT capability, or channel-operation change. Query the MIB in the listener
+to obtain current state.
+``installBssAndPeerRateSets()`` publishes both records before one notification.
+
+``releaseAssociationId()`` and ``clearAssociationIds()`` remove peer HT
+capabilities and peer rate sets before notification. A teardown that removes
+either kind of peer state emits one signal. Empty teardown emits no signal.
+A listener can install replacement peer state from the callback.
+The teardown leaves that replacement intact.
+Standalone HT and rate removal methods retain their own notifications when
+they remove state.
+
+Existing configuration parameters and MIB method signatures need no change.
+
 IEEE 802.11 EDCA Management Recovery
 -----------------------------------
 

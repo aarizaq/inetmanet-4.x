@@ -9,13 +9,14 @@
 #include <algorithm> // min,max
 
 #include "inet/transportlayer/tcp/Tcp.h"
+#include "inet/transportlayer/tcp/TcpSimsignals.h"
 
 namespace inet {
 namespace tcp {
 
 Register_Class(TcpNewReno);
 
-TcpNewReno::TcpNewReno() : TcpTahoeRenoFamily(),
+TcpNewReno::TcpNewReno() : TcpClassicAlgorithmBase(),
     state((TcpNewRenoStateVariables *&)TcpAlgorithm::state)
 {
 }
@@ -43,7 +44,7 @@ void TcpNewReno::recalculateSlowStartThreshold()
 
 void TcpNewReno::processRexmitTimer(TcpEventCode& event)
 {
-    TcpTahoeRenoFamily::processRexmitTimer(event);
+    TcpClassicAlgorithmBase::processRexmitTimer(event);
 
     if (event == TCP_E_ABORT)
         return;
@@ -84,9 +85,9 @@ void TcpNewReno::processRexmitTimer(TcpEventCode& event)
     conn->retransmitOneSegment(true);
 }
 
-void TcpNewReno::receivedDataAck(uint32_t firstSeqAcked)
+void TcpNewReno::receivedAckForUnackedData(uint32_t firstSeqAcked)
 {
-    TcpTahoeRenoFamily::receivedDataAck(firstSeqAcked);
+    TcpClassicAlgorithmBase::receivedAckForUnackedData(firstSeqAcked);
 
     // RFC 3782, page 5:
     // "5) When an ACK arrives that acknowledges new data, this ACK could be
@@ -248,7 +249,7 @@ void TcpNewReno::receivedDataAck(uint32_t firstSeqAcked)
 
 void TcpNewReno::receivedDuplicateAck()
 {
-    TcpTahoeRenoFamily::receivedDuplicateAck();
+    TcpClassicAlgorithmBase::receivedDuplicateAck();
 
     if (state->dupacks == state->dupthresh) {
         if (!state->lossRecovery) {

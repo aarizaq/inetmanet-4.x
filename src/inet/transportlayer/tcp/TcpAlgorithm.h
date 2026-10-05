@@ -9,7 +9,10 @@
 #define __INET_TCPALGORITHM_H
 
 #include "inet/transportlayer/tcp/TcpConnection.h"
+#include "inet/transportlayer/tcp/TcpSimsignals.h"
 #include "inet/transportlayer/tcp_common/TcpHeader.h"
+#include "inet/transportlayer/tcp/ITcpCongestionControl.h"
+#include "inet/transportlayer/tcp/ITcpRecovery.h"
 
 namespace inet {
 namespace tcp {
@@ -102,7 +105,7 @@ class INET_API TcpAlgorithm : public cObject
     /**
      * Called after receiving data which are in the window, but not at its
      * left edge (seq != rcv_nxt). This indicates that either segments got
-     * re-ordered in the way, or one segment was lost. RFC 1122 and RFC 2001
+     * re-ordered in the way, or one segment was lost. RFC 1122 and RFC 5681
      * recommend sending an immediate ACK here (Fast Retransmit relies on
      * that).
      */
@@ -110,7 +113,7 @@ class INET_API TcpAlgorithm : public cObject
 
     /**
      * Called after rcv_nxt got advanced, either because we received in-sequence
-     * data ("text" in RFC 793 lingo) or a FIN. At this point, rcv_nxt has
+     * data ("text" in RFC 9293 lingo) or a FIN. At this point, rcv_nxt has
      * already been updated. This method should take care to send or schedule
      * an ACK some time.
      */
@@ -124,7 +127,7 @@ class INET_API TcpAlgorithm : public cObject
      * (snd_una - firstSeqAcked). The dupack counter still reflects the old value
      * (needed for Reno and NewReno); it'll be reset to 0 after this call returns.
      */
-    virtual void receivedDataAck(uint32_t firstSeqAcked) = 0;
+    virtual void receivedAckForUnackedData(uint32_t firstSeqAcked) = 0;
 
     /**
      * Called after we received a duplicate ACK (that is: ackNo == snd_una,
@@ -135,10 +138,18 @@ class INET_API TcpAlgorithm : public cObject
     virtual void receivedDuplicateAck() = 0;
 
     /**
-     * Called after we received an ACK for data not yet sent.
-     * According to RFC 793 this function should send an ACK.
+     * Whether this flavour implements SACK-based (RFC 6675) loss recovery.
+     * SACK is orthogonal to congestion control (as in Linux): a flavour that
+     * returns false will have SACK disabled even if the host is willing, so that
+     * turning sackSupport on by default does not break non-SACK flavours.
      */
-    virtual void receivedAckForDataNotYetSent(uint32_t seq) = 0;
+    virtual bool supportsSackRecovery() const { return false; }
+
+    /**
+     * Called after we received an ACK for data not yet sent.
+     * According to RFC 9293 this function should send an ACK.
+     */
+    virtual void receivedAckForUnsentData(uint32_t seq) = 0;
 
     /**
      * Called after we sent an ACK. This hook can be used to cancel
@@ -181,6 +192,36 @@ class INET_API TcpAlgorithm : public cObject
      * This function process ECN marks.
      */
     virtual void processEcnInEstablished() = 0;
+
+    /**
+     * Returns the sender's estimation of total bytes in flight in the network.
+     */
+    virtual uint32_t getBytesInFlight() const = 0;
+
+    /**
+     * The new ssthresh when entering fast recovery, per this congestion-control
+     * flavour (Linux icsk_ca_ops->ssthresh). Rfc6675Recovery::step4() calls this
+     * instead of hardcoding FlightSize/2 so a flavour such as CUBIC can apply its own
+     * reduction factor (beta). Non-pure with a 0 default so flavours without a
+     * recovery engine (DumbTcp) need no change.
+     */
+    virtual uint32_t calculateSsthreshForFastRecovery() { return 0; }
+
+    /**
+     * The ssthresh this flavour's multiplicative decrease yields for a given flight
+     * size (Linux icsk_ca_ops->ssthresh with an explicit argument). Same role as
+     * calculateSsthreshForFastRecovery(), for the callers that have already computed
+     * the flight size they want the reduction taken from.
+     */
+    virtual uint32_t calculateSsthresh(uint32_t bytesInFlight) { return 0; }
+
+    /**
+     * The connection's loss-recovery strategy, or nullptr for flavours that do
+     * not use the ITcpRecovery split (DumbTcp, TcpNoCongestionControl, Vegas,
+     * Westwood). Lets the connection reach RACK/PRR/etc. without knowing the
+     * concrete algorithm class.
+     */
+    virtual ITcpRecovery *getRecovery() { return nullptr; }
 };
 
 } // namespace tcp

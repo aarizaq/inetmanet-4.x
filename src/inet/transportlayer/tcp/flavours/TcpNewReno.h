@@ -7,7 +7,7 @@
 #ifndef __INET_TCPNEWRENO_H
 #define __INET_TCPNEWRENO_H
 
-#include "inet/transportlayer/tcp/flavours/TcpTahoeRenoFamily.h"
+#include "inet/transportlayer/tcp/flavours/TcpClassicAlgorithmBase.h"
 
 namespace inet {
 namespace tcp {
@@ -15,12 +15,12 @@ namespace tcp {
 /**
  * State variables for TcpNewReno.
  */
-typedef TcpTahoeRenoFamilyStateVariables TcpNewRenoStateVariables;
+typedef TcpClassicAlgorithmBaseStateVariables TcpNewRenoStateVariables;
 
 /**
  * Implements TCP NewReno.
  */
-class INET_API TcpNewReno : public TcpTahoeRenoFamily
+class INET_API TcpNewReno : public TcpClassicAlgorithmBase
 {
   protected:
     TcpNewRenoStateVariables *& state; // alias to TcpAlgorithm's 'state'
@@ -42,7 +42,7 @@ class INET_API TcpNewReno : public TcpTahoeRenoFamily
     TcpNewReno();
 
     /** Redefine what should happen when data got acked, to add congestion window management */
-    virtual void receivedDataAck(uint32_t firstSeqAcked) override;
+    virtual void receivedAckForUnackedData(uint32_t firstSeqAcked) override;
 
     /** Redefine what should happen when dupAck was received, to add congestion window management */
     virtual void receivedDuplicateAck() override;

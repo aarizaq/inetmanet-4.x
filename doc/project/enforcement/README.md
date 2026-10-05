@@ -51,7 +51,7 @@ measured.
 | [check-cpp.sh](check-cpp.sh) | T3 | by hand; not yet in CI | the C++ half of `NR-*` and the bug and modernization rules of `QR-*`, through the root [`.clang-tidy`](../../../.clang-tidy) |
 | [check-naming.sh](check-naming.sh) | T3 | by hand; not yet in CI | the path and asset half of `NR-*`: directory names, generated pairs, icon names, workflow names |
 | [check-ned-msg-naming.py](check-ned-msg-naming.py) | T3 | by hand; not yet in CI | declaration-level `NR-*`: NED/MSG package and file/type agreement, casing, fields, signals/statistics, and gate names |
-| [check-commits.sh](check-commits.sh) | T3 | by hand; not yet in CI | `PR-SPLIT-WHITESPACE`, `PR-SPLIT-MOVE`, `PR-SPLIT-BASELINE`, `PR-SERIES-ORDER`, `PR-SERIES-LINEAR`, `PR-MSG-SUBJECT`, `PR-MSG-FACTS` |
+| [check-commits.sh](check-commits.sh) | T3 | by hand; not yet in CI | `PR-SPLIT-WHITESPACE`, `PR-SPLIT-MOVE`, `PR-SPLIT-BASELINE`, `PR-SERIES-ORDER`, `PR-SERIES-LINEAR`, `PR-MSG-SUBJECT`, `PR-MSG-FACTS`; notes for `PR-SPLIT-ONE-CHANGE` (through [fingerprint_moves.py](fingerprint_moves.py)), `PR-SPLIT-SIZE`, `PR-MSG-SUMMARY` and `PR-MSG-FACTS` |
 | [check-interfaces.sh](check-interfaces.sh) | T3 | by hand; not yet in CI | the `I<Stem>` promise of `NR-CPP-TYPE` and `AR-ORG-CONTRACT-PURITY`: a C++ interface holds no implementation |
 | [check-seals.sh](check-seals.sh) | T3 | by hand; not yet in CI | `SR-FLAG-PLACEMENT`, `SR-FLAG-COVERAGE`, and the generated index of [seal-list.md](../audit/seal-list.md) |
 | [check-source-seals.sh](check-source-seals.sh) | T3 | pull-request CI and by hand | source-path `SR-*`: recursive and generated-file seal coverage from [seal-list.md](../audit/seal-list.md) |
@@ -62,7 +62,7 @@ measured.
 | [check-series-builds.sh](check-series-builds.sh) | T2 | by hand; minutes per commit | `PR-SERIES-BUILDS` and `TR-CI-EVERY-COMMIT` in full — it compiles every commit of a range. The static gates beside it find a header, a parameter or a state field used early; only a compiler finds a method or a signal used early |
 | [check-includes.sh](check-includes.sh) | T3 | by hand; not yet in CI | that every `#include "inet/…"` a commit writes resolves at that commit — a header that arrives later makes every commit before it fail to compile |
 | [check-ned-params.sh](check-ned-params.sh) | T3 | by hand; not yet in CI | that every `par("x")` a commit reads is declared by a NED in the tree at that commit — a read ahead of its declaration compiles and cannot run |
-| [check-classification.sh](check-classification.sh) | T3 | by hand; not yet in CI | `CR-TAG-TRAILER`, `CR-TAG-FORM`, `CR-TAG-SUBJECT`, `CR-SCOPE-AREA`, `CR-DEPTH-ONE`, `CR-OBL-INERT`; it also prints the commit breakdown through [commit_breakdown.py](commit_breakdown.py) |
+| [check-classification.sh](check-classification.sh) | T3 | by hand; not yet in CI | `CR-TAG-TRAILER`, `CR-TAG-FORM`, `CR-TAG-SUBJECT`, `CR-SCOPE-AREA`, `CR-DEPTH-ONE`, `CR-OBL-INERT`, and a note for each mixed direction under `CR-DEPTH-DIRECTION`; it also prints the commit breakdown through [commit_breakdown.py](commit_breakdown.py) |
 
 The pull-request [enforcement-tests workflow](../../../.github/workflows/enforcement-tests.yml) runs
 the checker regressions without privileged credentials. The trusted

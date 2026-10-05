@@ -7,13 +7,13 @@
 #ifndef __INET_TCPWESTWOOD_H
 #define __INET_TCPWESTWOOD_H
 
-#include "inet/transportlayer/tcp/flavours/TcpBaseAlg.h"
+#include "inet/transportlayer/tcp/flavours/TcpAlgorithmBase.h"
 #include "inet/transportlayer/tcp/flavours/TcpWestwoodState_m.h"
 
 namespace inet {
 namespace tcp {
 
-class INET_API TcpWestwood : public TcpBaseAlg
+class INET_API TcpWestwood : public TcpAlgorithmBase
 {
   protected:
     TcpWestwoodStateVariables *& state; // alias to TCLAlgorithm's 'state'
@@ -38,7 +38,7 @@ class INET_API TcpWestwood : public TcpBaseAlg
     TcpWestwood();
 
     /** Redefine what should happen when data got acked, to add congestion window management */
-    virtual void receivedDataAck(uint32_t firstSeqAcked) override;
+    virtual void receivedAckForUnackedData(uint32_t firstSeqAcked) override;
 
     /** Redefine what should happen when dupAck was received, to add congestion window management */
     virtual void receivedDuplicateAck() override;

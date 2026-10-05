@@ -3,7 +3,8 @@
 # The commit gate for INET — a T3 fitness function (see AR-QUAL-ENFORCED).
 # It enforces the mechanical half of doc/project/rule/pull-request.md over a commit range.
 # The judgment rules — PR-SPLIT-ONE-CHANGE, PR-SPLIT-UPSTREAM, PR-SPLIT-PREPARE,
-# PR-SPLIT-DRIVEBY, PR-MSG-WHY — are T4 agent review.
+# PR-SPLIT-DRIVEBY, PR-MSG-WHY — are T4 agent review. For some of their signs the gate gives a
+# note: a note asks the reviewer a question and never changes the exit status.
 #
 #   PR-SPLIT-WHITESPACE  — a file whose diff is empty ignoring whitespace, in a commit with real changes
 #   PR-SPLIT-MOVE        — a rename together with a content change
@@ -13,7 +14,10 @@
 #   PR-MSG-BODY          — an empty body above 50 changed lines, outside the exempt kinds
 #   PR-MSG-SUBJECT       — "area: what it does", no file path, no link; length fails above 80,
 #                          and is reported as a note between 73 and 80
-#   PR-MSG-FACTS         — no attribution trailer
+#   PR-MSG-FACTS         — no attribution trailer; note: words of revision history, a test log
+#   PR-SPLIT-ONE-CHANGE  — note: the fingerprint rows of one commit move in more than one way
+#   PR-SPLIT-SIZE        — note: more than 400 changed source lines in one commit
+#   PR-MSG-SUMMARY       — note: a first paragraph above 120 words, or a body above 300 words
 #
 # Usage (from the INET repository root):
 #   doc/project/enforcement/check-commits.sh origin/master..HEAD
@@ -91,6 +95,46 @@ done <<< "$COMMITS"
 [ "$ok" -eq 1 ] && echo "  ok"
 
 echo
+echo "== PR-MSG-SUMMARY: the body starts with a short summary (notes only) =="
+# 120 and 300 are measured: across master's last 1000 commits, 99 % of first paragraphs have at
+# most 121 words and 95 % of bodies have at most 291. The trailers are not part of the body.
+quiet=1
+while read -r sha; do
+  [ -z "$sha" ] && continue
+  body=$(git log -1 --format=%b "$sha" \
+         | grep -vE '^(Change|Plan|Fixes|Closes|Refs|Co-Authored-By|Signed-off-by|Reviewed-by):')
+  words=$(wc -w <<< "$body")
+  first=$(awk 'NF == 0 && seen {exit} NF {seen = 1; print}' <<< "$body" | wc -w)
+  if [ "$first" -gt 120 ]; then
+    note "${sha:0:9} starts its body with $first words, above 120: is the first paragraph a summary?"
+    quiet=0
+  fi
+  if [ "$words" -gt 300 ]; then
+    note "${sha:0:9} has a body of $words words, above 300: one change, and no pull-request evidence?"
+    quiet=0
+  fi
+done <<< "$COMMITS"
+[ "$quiet" -eq 1 ] && echo "  ok"
+
+echo
+echo "== PR-MSG-FACTS: the final change, without revision history or test logs (notes only) =="
+# The phrases are the ones that only the history of a pull request explains. A 'Validation:'
+# paragraph is a test log: one run on one machine, which the pull request description carries.
+quiet=1
+while read -r sha; do
+  [ -z "$sha" ] && continue
+  msg=$(git log -1 --format=%b "$sha")
+  history=$(grep -oiE 'audit correction|correction validation|after review|review round|former library|(earlier|previous) revision' <<< "$msg" | head -1)
+  if [ -n "$history" ]; then
+    note "${sha:0:9} says '$history': describe the final change, not the way to it"; quiet=0
+  fi
+  if grep -qE '^Validation:' <<< "$msg"; then
+    note "${sha:0:9} has a 'Validation:' paragraph: test logs belong in the pull request"; quiet=0
+  fi
+done <<< "$COMMITS"
+[ "$quiet" -eq 1 ] && echo "  ok"
+
+echo
 echo "== PR-SPLIT-BASELINE: a baseline update travels with the change that causes it =="
 # A baseline belongs in the commit that moves it, so that the commit passes its own
 # fingerprint test (PR-SERIES-BUILDS) and a bisect over the suite stays truthful.
@@ -116,6 +160,43 @@ while read -r sha; do
   fi
 done <<< "$COMMITS"
 [ "$ok" -eq 1 ] && echo "  ok"
+
+echo
+echo "== PR-SPLIT-ONE-CHANGE: signs of a second change (notes only) =="
+# Fingerprint rows that move in different ways usually have different causes. 26 rows that move
+# only in the event order and 11 rows that move in every ingredient set are two explanations, and
+# each explanation is a behavior change that can be a commit of its own.
+quiet=1
+while read -r sha; do
+  [ -z "$sha" ] && continue
+  moves=$(git show -U0 --format= "$sha" -- 'tests/fingerprint/*.csv' \
+          | python3 "$(dirname "$0")/fingerprint_moves.py")
+  ways=$(grep -c . <<< "$moves")
+  if [ "$ways" -gt 1 ]; then
+    detail=$(awk -F'\t' '{printf "%s%s %s %s", (NR > 1 ? "; " : ""), $1, ($1 == 1 ? "row changes" : "rows change"), $2}' <<< "$moves")
+    note "${sha:0:9} moves fingerprint rows in $ways ways, one explanation each? $detail"; quiet=0
+  fi
+done <<< "$COMMITS"
+[ "$quiet" -eq 1 ] && echo "  ok"
+
+echo
+echo "== PR-SPLIT-SIZE: a large commit says why it does not divide (notes only) =="
+# 400 is measured: 95 % of master's last 1000 commits that change source change at most 425
+# source lines. A comment, format, location or name commit is mechanical, and
+# PR-SPLIT-MECHANICAL owns its size.
+quiet=1
+while read -r sha; do
+  [ -z "$sha" ] && continue
+  kind=$(git log -1 --format='%(trailers:key=Change,valueonly)' "$sha" | awk -F'|' '{gsub(/ /,""); print $2}')
+  case "$kind" in comment|format|location|name) continue ;; esac
+  lines=$(git show --numstat --format= "$sha" -- 'src/*.cc' 'src/*.h' 'src/*.ned' 'src/*.msg' \
+          | awk -F'\t' '$1 != "-" && $3 !~ /_m\.(h|cc)$/ {n += $1 + $2} END {print n + 0}')
+  if [ "$lines" -gt 400 ]; then
+    note "${sha:0:9} changes $lines source lines, above 400: does the body say why it does not divide?"
+    quiet=0
+  fi
+done <<< "$COMMITS"
+[ "$quiet" -eq 1 ] && echo "  ok"
 
 echo
 echo "== PR-SPLIT-WHITESPACE: a whitespace-only file inside a functional commit =="

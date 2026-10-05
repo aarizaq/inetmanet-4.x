@@ -293,6 +293,22 @@ Notable backward incompatible changes are the following:
    negotiation. The MacQosWithBlockAck example fingerprints are updated; the
    QoS and NonQos showcase fingerprint controls remain unchanged.
 
+17. IEEE 802.11 PHY mode properties for response-rate selection
+
+   The physical layer (PHY) mode interface now exposes the mode family,
+   legacy preamble type, and non-HT reference rate. Custom rate selectors can
+   query these properties without a dependency on a concrete mode class.
+   HT means High Throughput; VHT means Very High Throughput. The reference rate
+   for HT and VHT modes depends on the modulation and code rate of stream 1.
+   An unsupported reference-rate mapping returns bps(NaN), where NaN means
+   not a number.
+
+   IIeee80211Mode gains three pure virtual methods: getModulationClass(),
+   getLegacyPreambleType(), and getNonHtReferenceRate(). Direct implementations
+   outside INET must implement these methods before they compile again.
+   Ieee80211ModeBase supplies default unknown values for custom subclasses.
+   The migration guide explains the return values and required overrides.
+
 Notable backward compatible changes are the following:
 
 1. IEEE 802.11 per-station rate statistics
@@ -346,6 +362,25 @@ Notable backward compatible changes are the following:
    this happens when ResidenceTimeMeasurer ends a measurement: it removed the
    ResidenceTimeTag and, with it, the FlowTag and the PacketEventTag of the packet.
    Those two tags now survive the measurement.
+
+6. IEEE 802.11 MIB rate state and notifications
+
+   The Management Information Base (MIB) now stores supported, basic, and
+   operational rate sets for the local station, Basic Service Set (BSS), and
+   individual peers. A rate set distinguishes unknown information from a
+   known empty set. Rate-set setters validate the input before they commit it.
+   A combined BSS and peer update installs both records before one notification.
+
+   The rateStateChanged signal reports a committed rate, High Throughput (HT)
+   capability, or channel-operation change. Its value is true, with no details
+   object. Listeners query the MIB for current state. Equal rate-set updates
+   emit no signal. The migration guide explains state access and listener use.
+
+   Association release and bulk teardown remove both peer HT capabilities and
+   rate sets before one notification. A listener can install replacement peer
+   state from the callback; teardown does not remove that replacement.
+   Direct HT or rate removal still emits its own notification if state changes.
+   Empty teardown emits no signal. Existing configuration parameters stay unchanged.
 
 
 INET-4.7 (July 2026) — feature release
