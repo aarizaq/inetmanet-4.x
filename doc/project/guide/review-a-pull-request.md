@@ -30,6 +30,7 @@ not repeatable.
 
 ```bash
 doc/project/enforcement/check-commits.sh $MB..refs/pr/<n>
+doc/project/enforcement/check-pr-description.sh --pr <n> --range $MB..refs/pr/<n>
 ```
 
 What it covers, and what to run by hand when you want the detail:
@@ -155,9 +156,10 @@ abstract subject passes every mechanical check and can still hold several change
   a different thing from one where the habit is absent. `git log --format='%h %s' --no-walk
   $(git log --format=%H $MB..HEAD | while read c; do [ -z "$(git log -1 --format=%b $c | grep -v '^$')" ] && echo $c; done)`
   lists every commit with no body at all.
-- **[PR-MSG-SUMMARY](../rule/pull-request.md#pr-msg-summary)** — read only the summary of each body.
-  After about two minutes, do you know what the commit does and why? A summary that is a list of
-  actions, or a body that needs the diff to make sense, is a `FLAG`.
+- **[PR-MSG-SUMMARY](../rule/pull-request.md#pr-msg-summary)** — read only the summary of each body,
+  and restate the answers to the [reviewer's questions](../rule/pull-request.md#the-reviewers-questions)
+  in your own words, without the diff. A question that the text does not answer is a `FLAG` and a
+  question to the author. A commit whose subject is the whole story needs no summary.
 - **[PR-MSG-WHY](../rule/pull-request.md#pr-msg-why)** — does the body give the reason, or repeat the
   diff?
 - **[PR-MSG-FACTS](../rule/pull-request.md#pr-msg-facts)** — does a message describe only the final
@@ -176,8 +178,9 @@ abstract subject passes every mechanical check and can still hold several change
   the topic, such as the fingerprints of configurations that the topic does not reach? Can it land
   first, in a pull request of its own?
 - **[PR-REQ-STORY](../rule/pull-request.md#pr-req-story)** — read only the summary of the
-  description. After about five minutes, do you know what the pull request does, why, and what its
-  risk is? Do the commits follow in the order to read them, with the evidence last?
+  description, and restate the answers to the reviewer's questions and the risk without the commits.
+  A question that the summary does not answer is a `FLAG` and a question to the author. Do the
+  commits follow in the order to read them, with the evidence last?
 - **[TR-BASELINE-PROVENANCE](../rule/testing.md#tr-baseline-provenance)** — **every moved row is
   accounted for**, not the set as a whole. Rows that share one explanation are named together; a
   count is not an explanation. An unexplained row is an unintended change until somebody shows
@@ -214,6 +217,18 @@ are locally valid in separate commits but inconsistent when composed.
 [audit/README.md](../audit/README.md#where-a-report-lives).
 `audit/pull-request/pr-<n>.md` judges the commits; `audit/pull-request/pr-<n>-summary.md` states
 what the change does and carries the breakdown from step 4.
+
+**Start the summary with the read-back.** Under a heading `## The reviewer's questions`, restate the
+answers to the [reviewer's questions](../rule/pull-request.md#the-reviewers-questions) for the pull
+request, and for each commit with a body: one line per question, in your own words, from the text
+alone and without the diff. Write `not answered` where the text gives no answer. A commit whose
+subject is the whole story gets one line that says so.
+
+**Every `not answered` becomes a question to the author.** Put the questions, numbered, in the audit
+under `## Questions for the author`, after the correctness findings and before the rule rows. A
+question is not a defect, and it carries no severity. The author answers it in the message or the
+description, not only in a comment ([PR-MSG-STANDALONE](../rule/pull-request.md#pr-msg-standalone)),
+and the next review reads the answer from the text.
 
 In the audit, one row per rule with a verdict — `PASS`, `FLAG`, `PARTIAL` or `not verified` — and
 evidence for each. The `CR-*` rows go beside the `PR-*` rows, because the two rule sets check the

@@ -309,6 +309,10 @@ TcpEventCode TcpConnection::processSegment1stThru8th(Packet *tcpSegment, const P
             return TCP_E_IGNORE;
         }
 
+        // the algorithms count with the effective MSS; until segments are sized
+        // against the option space, it is the negotiated MSS
+        state->snd_effmss = state->snd_mss;
+
         // notify tcpAlgorithm and app layer
         tcpAlgorithm->established(false);
 
@@ -1015,6 +1019,7 @@ TcpEventCode TcpConnection::processSegmentInSynSent(Packet *tcpSegment, const Pt
 
             // notify tcpAlgorithm (it has to send ACK of SYN) and app layer
             state->ack_now = true;
+            state->snd_effmss = state->snd_mss;
             tcpAlgorithm->established(true);
             tcpMain->emit(Tcp::tcpConnectionAddedSignal, this);
             sendEstabIndicationToApp();
@@ -1178,30 +1183,12 @@ bool TcpConnection::processAckInEstabEtc(Packet *tcpSegment, const Ptr<const Tcp
         // are ignored anyway if neither seqNo nor ackNo has changed.
         //
         if (state->snd_una == tcpHeader->getAckNo() && payloadLength == 0 && state->snd_una != state->snd_max) {
-            state->dupacks++;
-
-            emit(dupAcksSignal, state->dupacks);
-
             // we need to update send window even if the ACK is a dupACK, because rcv win
             // could have been changed if faulty data receiver is not respecting the "do not shrink window" rule
             updateWndInfo(tcpHeader);
-
-            tcpAlgorithm->receivedDuplicateAck();
         }
-        else {
-            // if doesn't qualify as duplicate ACK, just ignore it.
-            if (payloadLength == 0) {
-                if (state->snd_una != tcpHeader->getAckNo())
-                    EV_DETAIL << "Old ACK: ackNo < snd_una\n";
-                else if (state->snd_una == state->snd_max)
-                    EV_DETAIL << "ACK looks duplicate but we have currently no unacked data (snd_una == snd_max)\n";
-            }
 
-            // reset counter
-            state->dupacks = 0;
-
-            emit(dupAcksSignal, state->dupacks);
-        }
+        tcpAlgorithm->receivedAckForAlreadyAckedData(tcpHeader.get(), payloadLength);
     }
     else if (seqLE(tcpHeader->getAckNo(), state->snd_max)) {
         // ack in window.

@@ -80,16 +80,24 @@ body: does it give the symptom, the cause, and why this solution rather than the
 documentation commit, a regenerated file, or a `WHATSNEW` entry.
 
 **[PR-MSG-SUMMARY] Does a commit body start with a summary?**
-FLAG a body whose first paragraphs do not state the problem and the idea of the solution, or that
-starts with a list of actions that the diff already shows. FLAG a body that a reviewer cannot
-understand in about two minutes without the diff. *Not a violation:* a commit without a body under
-PR-MSG-BODY, or a body of one short paragraph that states the reason.
+FLAG a body from whose summary a reviewer cannot restate the answers to the
+[reviewer's questions](../../rule/pull-request.md#the-reviewers-questions): the problem, how we know
+that it is real and worth solving, what changes, and how. FLAG a summary that is a list of actions
+that the diff already shows. *Not a violation:* a commit without a body under PR-MSG-BODY, or a short
+body that answers the questions in proportion to a small change.
 
 **[PR-MSG-FACTS] Does a commit message describe only the final change?**
 FLAG a message with a section on the history of the pull request — an audit correction, a review
 round, an earlier revision — and a message that carries a test log that belongs in the pull request
 description. *Not a violation:* the regression test of a fix, or the case that shows that a moved
 baseline is right.
+
+**[PR-REQ-STORY] Does a pull request description answer the reviewer's questions up front?**
+For a pull request, restate from the summary of the description alone: the problem, how we know that
+it is real and worth solving, what changes, how, and the risk. FLAG a description whose summary
+leaves one of them open, and list each open question for the author. *Not a violation:* a pull
+request of one small commit whose message answers the questions, or a short description in
+proportion to a small change.
 
 **[AR-ORG-CONTRACT-PURITY] Does a contract header declare anything that is not part of the role?**
 FLAG a `static` helper, a utility function, a non-trivial inline body, or a policy decision added to a

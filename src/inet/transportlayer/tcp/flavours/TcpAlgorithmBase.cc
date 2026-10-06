@@ -541,6 +541,42 @@ void TcpAlgorithmBase::receivedAckForUnackedData(uint32_t firstSeqAcked)
     //
 }
 
+void TcpAlgorithmBase::receivedAckForAlreadyAckedData(const TcpHeader *tcpHeader, uint32_t payloadLength)
+{
+    countDuplicateAck(tcpHeader, payloadLength);
+}
+
+bool TcpAlgorithmBase::isDuplicateAck(const TcpHeader *tcpHeader, uint32_t payloadLength)
+{
+    // A received TCP segment is a duplicate ACK if all of the following apply:
+    //    (1) snd_una == ackNo
+    //    (2) segment contains no data
+    //    (3) there's unacked data (snd_una != snd_max)
+    return state->snd_una == tcpHeader->getAckNo() && payloadLength == 0 && state->snd_una != state->snd_max;
+}
+
+void TcpAlgorithmBase::countDuplicateAck(const TcpHeader *tcpHeader, uint32_t payloadLength)
+{
+    if (isDuplicateAck(tcpHeader, payloadLength)) {
+        state->dupacks++;
+        conn->emit(dupAcksSignal, state->dupacks);
+        receivedDuplicateAck();
+    }
+    else {
+        // if doesn't qualify as duplicate ACK, just ignore it.
+        if (payloadLength == 0) {
+            if (state->snd_una != tcpHeader->getAckNo())
+                EV_DETAIL << "Old ACK: ackNo < snd_una\n";
+            else if (state->snd_una == state->snd_max)
+                EV_DETAIL << "ACK looks duplicate but we have currently no unacked data (snd_una == snd_max)\n";
+        }
+
+        // reset counter
+        state->dupacks = 0;
+        conn->emit(dupAcksSignal, state->dupacks);
+    }
+}
+
 void TcpAlgorithmBase::receivedDuplicateAck()
 {
     EV_INFO << "Duplicate ACK #" << state->dupacks << "\n";
@@ -598,10 +634,19 @@ void TcpAlgorithmBase::dataSent(uint32_t fromseq)
     }
 
     state->time_last_data_sent = simTime();
+
+    // record per-segment transmit times (used by Vegas and Westwood RTT sampling).
+    // A send that starts below the range this list covers is not recorded: the
+    // list only records forward progress and must stay contiguous.
+    state->sentInfo.clearTo(state->snd_una);
+    if (seqLess(fromseq, state->snd_max) && state->sentInfo.isInRange(fromseq))
+        state->sentInfo.set(fromseq, state->snd_max, simTime());
 }
 
 void TcpAlgorithmBase::segmentRetransmitted(uint32_t fromseq, uint32_t toseq)
 {
+    if (seqLess(fromseq, toseq) && state->sentInfo.isInRange(fromseq))
+        state->sentInfo.set(fromseq, toseq, simTime());
 }
 
 void TcpAlgorithmBase::restartRexmitTimer()
