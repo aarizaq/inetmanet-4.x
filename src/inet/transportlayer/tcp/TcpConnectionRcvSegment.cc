@@ -504,12 +504,26 @@ TcpEventCode TcpConnection::processSegment1stThru8th(Packet *tcpSegment, const P
                 uint32_t old_usedRcvBuffer = state->usedRcvBuffer;
                 state->rcv_nxt = receiveQueue->insertBytesFromSegment(tcpSegment, tcpHeader);
 
+                // RFC 5681, page 8:
+                // "3.2 Fast Retransmit/Fast Recovery
+                // (...)
+                // In addition, a TCP receiver SHOULD send an immediate ACK
+                // when the incoming segment fills in all or part of a gap in the
+                // sequence space."
+                // The segment filled all of a gap if rcv_nxt moved past its end, and
+                // the first part of a gap if out-of-order data stays above rcv_nxt.
+                // Set ack_now before the notification below: a data segment that it
+                // sends carries the ACK and clears ack_now.
+                if (state->rcv_nxt != old_rcv_nxt && (tcpHeader->getSequenceNo() + payloadLength != state->rcv_nxt || receiveQueue->hasOutOfOrderData()))
+                    state->ack_now = true;
+
                 if (seqGreater(state->snd_una, old_snd_una)) {
                     // notify
                     tcpAlgorithm->receivedAckForUnackedData(old_snd_una);
 
                     // in the receivedAckForUnackedData we need the old value
                     state->dupacks = 0;
+                    state->limitedTransmitBytes = 0;
 
                     emit(dupAcksSignal, state->dupacks);
                 }
@@ -960,8 +974,7 @@ TcpEventCode TcpConnection::processSegmentInSynSent(Packet *tcpSegment, const Pt
             state->snd_una = tcpHeader->getAckNo();
             sendQueue->discardUpTo(state->snd_una);
 
-            if (state->sack_enabled)
-                rexmitQueue->discardUpTo(state->snd_una);
+            rexmitQueue->discardUpTo(state->snd_una);
 
             // although not mentioned in RFC 793, seems like we have to pick up
             // initial snd_wnd from the segment here.
@@ -1117,8 +1130,7 @@ TcpEventCode TcpConnection::processRstInSynReceived(const Ptr<const TcpHeader>& 
 
     sendQueue->discardUpTo(sendQueue->getBufferEndSeq()); // flush send queue
 
-    if (state->sack_enabled)
-        rexmitQueue->discardUpTo(rexmitQueue->getBufferEndSeq()); // flush rexmit queue
+    rexmitQueue->discardUpTo(rexmitQueue->getBufferEndSeq()); // flush rexmit queue
 
     if (state->active) {
         // signal "connection refused"
@@ -1226,8 +1238,7 @@ bool TcpConnection::processAckInEstabEtc(Packet *tcpSegment, const Ptr<const Tcp
         sendQueue->discardUpTo(discardUpToSeq);
 
         // acked data no longer needed in rexmit queue
-        if (state->sack_enabled)
-            rexmitQueue->discardUpTo(discardUpToSeq);
+        rexmitQueue->discardUpTo(discardUpToSeq);
 
         updateWndInfo(tcpHeader);
 
@@ -1239,6 +1250,7 @@ bool TcpConnection::processAckInEstabEtc(Packet *tcpSegment, const Ptr<const Tcp
 
             // in the receivedAckForUnackedData we need the old value
             state->dupacks = 0;
+            state->limitedTransmitBytes = 0;
 
             emit(dupAcksSignal, state->dupacks);
         }
@@ -1249,6 +1261,7 @@ bool TcpConnection::processAckInEstabEtc(Packet *tcpSegment, const Ptr<const Tcp
         // send an ACK, drop the segment, and return.
         tcpAlgorithm->receivedAckForUnsentData(tcpHeader->getAckNo());
         state->dupacks = 0;
+        state->limitedTransmitBytes = 0;
 
         emit(dupAcksSignal, state->dupacks);
 

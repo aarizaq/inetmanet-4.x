@@ -308,6 +308,12 @@ void TcpAlgorithmBase::startRexmitTimer()
     conn->scheduleAfter(state->rexmit_timeout, rexmitTimer);
 }
 
+void TcpAlgorithmBase::ensureRexmitTimerArmed()
+{
+    if (state->snd_una != state->snd_max && !rexmitTimer->isScheduled())
+        startRexmitTimer();
+}
+
 void TcpAlgorithmBase::rttMeasurementComplete(simtime_t tSent, simtime_t tAcked)
 {
     //
@@ -427,15 +433,6 @@ void TcpAlgorithmBase::receiveSeqChanged()
 //        tcpEV << "ACK has already been sent (possibly piggybacked on data)\n";
     }
     else {
-        // RFC 2581, page 6:
-        // "3.2 Fast Retransmit/Fast Recovery
-        // (...)
-        // In addition, a TCP receiver SHOULD send an immediate ACK
-        // when the incoming segment fills in all or part of a gap in the
-        // sequence space."
-        if (state->lossRecovery)
-            state->ack_now = true; // although not mentioned in [Stevens, W.R.: TCP/IP Illustrated, Volume 2, page 861] seems like we have to set ack_now
-
         if (!state->delayed_acks_enabled) { // delayed ACK disabled
             EV_INFO << "rcv_nxt changed to " << state->rcv_nxt << ", (delayed ACK disabled) sending ACK now\n";
             conn->sendAck();
@@ -573,6 +570,7 @@ void TcpAlgorithmBase::countDuplicateAck(const TcpHeader *tcpHeader, uint32_t pa
 
         // reset counter
         state->dupacks = 0;
+        state->limitedTransmitBytes = 0;
         conn->emit(dupAcksSignal, state->dupacks);
     }
 }
@@ -582,8 +580,11 @@ void TcpAlgorithmBase::receivedDuplicateAck()
     EV_INFO << "Duplicate ACK #" << state->dupacks << "\n";
 
     bool fullSegmentsOnly = state->nagle_enabled && state->snd_una != state->snd_max;
-    if (state->dupacks < state->dupthresh && state->limited_transmit_enabled) // DUPTRESH = 3
+    if (state->dupacks < state->dupthresh && state->limited_transmit_enabled) { // DUPTRESH = 3
+        uint32_t oldSndMax = state->snd_max;
         conn->sendOneNewSegment(fullSegmentsOnly, state->snd_cwnd); // RFC 3042
+        state->limitedTransmitBytes += state->snd_max - oldSndMax;
+    }
 
     //
     // Leave to subclasses (e.g. TcpTahoe, TcpReno) whatever they want to do
@@ -689,6 +690,13 @@ bool TcpAlgorithmBase::shouldMarkAck()
 
 void TcpAlgorithmBase::processEcnInEstablished()
 {
+}
+
+uint32_t TcpAlgorithmBase::calculateSsthreshForFastRecovery()
+{
+    // RFC 5681 equation (4), also RFC 6675 section 5 step (4.2):
+    // ssthresh = max(FlightSize / 2, 2*SMSS)
+    return std::max(conn->getFlightSize() / 2, 2 * state->snd_mss);
 }
 
 uint32_t TcpAlgorithmBase::calculateSsthresh(uint32_t bytesInFlight)

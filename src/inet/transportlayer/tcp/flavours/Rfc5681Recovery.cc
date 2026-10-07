@@ -72,21 +72,13 @@ void Rfc5681Recovery::receivedDuplicateAck()
     if (state->dupacks == state->dupthresh) {
         EV_INFO << "Reno on dupAcks == DUPTHRESH(=" << state->dupthresh << ": perform Fast Retransmit, and enter Fast Recovery:";
 
-        if (state->sack_enabled) {
-            // RFC 3517, page 6: "When a TCP sender receives the duplicate ACK corresponding to
-            // DupThresh ACKs, the scoreboard MUST be updated with the new SACK information (via
-            // Update ()).  If no previous loss event has occurred on the connection or the cumulative
-            // acknowledgment point is beyond the last value of RecoveryPoint, a loss recovery phase
-            // SHOULD be initiated, per the fast retransmit algorithm outlined in [RFC2581]."
-            if (state->recoveryPoint == 0 || seqGE(state->snd_una, state->recoveryPoint)) { // HighACK = snd_una
-                state->recoveryPoint = state->snd_max; // HighData = snd_max
-                state->lossRecovery = true;
-                EV_DETAIL << " recoveryPoint=" << state->recoveryPoint;
-            }
-        }
-
-        // The flight size is estimated as min(cwnd, snd_wnd).
-        state->ssthresh = algorithm->calculateSsthresh(std::min(state->snd_cwnd, state->snd_wnd));
+        //"
+        //   ssthresh = max (FlightSize / 2, 2*SMSS)            (4)
+        //
+        // When [RFC3042] is in use, additional data sent in limited transmit
+        // MUST NOT be included in this calculation.
+        //"
+        state->ssthresh = algorithm->calculateSsthresh(conn->getFlightSize());
         conn->emit(ssthreshSignal, state->ssthresh);
 
         //"
@@ -101,19 +93,6 @@ void Rfc5681Recovery::receivedDuplicateAck()
         EV_DETAIL << " set cwnd=" << state->snd_cwnd << ", ssthresh=" << state->ssthresh << "\n";
 
         conn->retransmitOneSegment(false);
-
-        if (state->sack_enabled) {
-            // RFC 3517, page 7: "(4) Run SetPipe ()" and "(5) In order to take advantage of
-            // potential additional available cwnd, proceed to step (C) below."
-            conn->setPipe();
-            if (state->lossRecovery) {
-                EV_INFO << "Retransmission sent during recovery, restarting REXMIT timer.\n";
-                algorithm->restartRexmitTimer();
-
-                if (((int)state->snd_cwnd - (int)state->pipe) >= (int)state->snd_mss) // Note: Typecast needed to avoid prohibited transmissions
-                    conn->sendDataDuringLossRecoveryPhase(state->snd_cwnd);
-            }
-        }
 
         // try to transmit new segments (RFC 2581)
         algorithm->sendData(false);

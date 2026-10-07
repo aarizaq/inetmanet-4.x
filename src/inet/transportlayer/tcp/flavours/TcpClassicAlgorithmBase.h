@@ -41,10 +41,10 @@ class INET_API TcpClassicAlgorithmBase : public TcpAlgorithmBase
     virtual bool isInFastRecovery() const { return state->lossRecovery; }
 
     /**
-     * The ECN-Echo reaction on an ACK of new data. Returns true if it took the
-     * place of the window growth. Only TcpReno reacts.
+     * The ECN-Echo reaction on an ACK of new data (RFC 3168): halve cwnd once per
+     * round trip. Returns true if it took the place of the window growth.
      */
-    virtual bool processEce() { return false; }
+    virtual bool processEce();
 
     /**
      * Called after the window update of an ACK of new data, before the sending:
@@ -53,11 +53,17 @@ class INET_API TcpClassicAlgorithmBase : public TcpAlgorithmBase
      */
     virtual void ackProcessed(bool inFastRecovery) {}
 
+    /** The ssthresh that an expired retransmission timer sets: RFC 5681 equation (4), with the outstanding data as FlightSize. */
+    virtual uint32_t calculateSsthreshForRto() { return std::max((state->snd_max - state->snd_una) / 2, 2 * state->snd_mss); }
+
     /** Redefine what should happen on retransmission */
     virtual void processRexmitTimer(TcpEventCode& event) override;
 
     /** Called by the base class for each duplicate ACK; the recovery strategy reacts */
     virtual void receivedDuplicateAck() override;
+
+    /** The recovery strategy decides what a duplicate ACK is */
+    virtual bool isDuplicateAck(const TcpHeader *tcpHeader, uint32_t payloadLength) override;
 
   public:
     /** Ctor */

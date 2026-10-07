@@ -1,4 +1,7 @@
 %description:
+TcpNewReno with SACK, in the RFC 2018 case 3 scenario of tcp_sack_3: NewReno
+recovers with the SACK-based loss recovery of RFC 6675, as TcpReno does.
+
 TCP SACK test
  Examples from [RFC2018]:
    "Assume the left window edge is 5000 and that the data transmitter
@@ -75,7 +78,7 @@ cmdenv-log-prefix="[%c]: "
 *.*_tcp.windowScalingSupport = false                  # Window Scale (RFC 1323) support (header option) (WS will be enabled for a connection if both endpoints support it)
 *.*_tcp.timestampSupport = false                      # Timestamps (RFC 1323) support (header option) (TS will be enabled for a connection if both endpoints support it)
 *.*_tcp.mss = 500                                     # Maximum Segment Size (RFC 793) (header option)
-*.*_tcp.tcpAlgorithmClass = "TcpReno"                 # TcpReno/TcpTahoe/TcpNewReno/TcpNoCongestionControl/DumbTcp
+*.*_tcp.tcpAlgorithmClass = "TcpNewReno"                 # TcpReno/TcpTahoe/TcpNewReno/TcpNoCongestionControl/DumbTcp
 
 %#--------------------------------------------------------------------------------------------------------------
 %file: postrun.pl

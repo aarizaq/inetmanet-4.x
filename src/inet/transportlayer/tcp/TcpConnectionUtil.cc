@@ -653,6 +653,16 @@ void TcpConnection::configureStateVariables()
     state->ecnWillingness = tcpMain->par("ecnWillingness"); // if set, current host is willing to use ECN
     state->dupthresh = tcpMain->par("dupthresh");
     state->sack_support = tcpMain->par("sackSupport"); // if set, this means that current host supports SACK (RFC 2018, 2883, 3517)
+    // SACK-based (RFC 6675) loss recovery is provided by flavours whose createRecovery()
+    // can return an Rfc6675Recovery (TcpReno, TcpNewReno). Other flavours (TcpTahoe,
+    // TcpVegas, TcpWestwood, DumbTcp, ...) have no SACK recovery path. Rather than error,
+    // treat sackSupport as a willingness (as Linux does; SACK is orthogonal to the congestion
+    // control) and simply do not use SACK for a flavour that cannot recover with it.
+    if (state->sack_support && !tcpAlgorithm->supportsSackRecovery()) {
+        EV_WARN << "sackSupport=true but tcpAlgorithmClass=\"" << tcpAlgorithm->getClassName()
+                << "\" has no SACK-based loss recovery; disabling SACK for this connection\n";
+        state->sack_support = false;
+    }
     state->pmtudEnabled = tcpMain->par("pmtudEnabled"); // Path MTU Discovery (RFC 1191, RFC 1981)
     state->pmtudTimeout = tcpMain->par("pmtudTimeout"); // time after which original MSS is restored
     state->pmtudLastMssReduction = -1; // never reduced yet
@@ -661,16 +671,6 @@ void TcpConnection::configureStateVariables()
     WATCH_EXPR("rcv_nxt", state->rcv_nxt);
     WATCH_EXPR("snd_una", state->snd_una);
 
-    if (state->sack_support) {
-        std::string algorithmName1 = "TcpReno";
-        std::string algorithmName2 = tcpMain->par("tcpAlgorithmClass");
-
-        if (algorithmName1 != algorithmName2) { // TODO add additional checks for new SACK supporting algorithms here once they are implemented
-            EV_DEBUG << "If you want to use TCP SACK please set tcpAlgorithmClass to TcpReno\n";
-
-            ASSERT(false);
-        }
-    }
 }
 
 void TcpConnection::selectInitialSeqNum()
@@ -1025,9 +1025,9 @@ uint32_t TcpConnection::sendSegment(uint32_t bytes)
         state->snd_nxt = state->snd_fin_seq + 1;
     }
 
-    // if sack_enabled copy region of tcpHeader to rexmitQueue
-    if (state->sack_enabled)
-        rexmitQueue->enqueueSentData(old_snd_nxt, state->snd_nxt);
+    // copy the region of tcpHeader to rexmitQueue; without SACK, the queue
+    // still records what is in flight
+    rexmitQueue->enqueueSentData(old_snd_nxt, state->snd_nxt);
 
     // add header options and update header length (from tcpseg_temp)
     for (uint i = 0; i < tmpTcpHeader->getHeaderOptionArraySize(); i++)
@@ -1075,11 +1075,12 @@ bool TcpConnection::sendData(uint32_t congestionWindow)
     if (buffered == 0)
         return false;
 
-    // maxWindow is minimum of snd_wnd and congestionWindow (snd_cwnd)
-    uint32_t maxWindow = std::min(state->snd_wnd, congestionWindow);
-
-    // effectiveWindow: number of bytes we're allowed to send now
-    int64_t effectiveWin = (int64_t)maxWindow - (state->snd_nxt - state->snd_una);
+    // effectiveWindow: number of bytes we're allowed to send now. The advertised
+    // window limits the unacknowledged sequence space, and the congestion window
+    // limits the bytes in flight that the algorithm reports.
+    uint32_t unackedInWindow = state->snd_nxt - state->snd_una;
+    uint32_t bytesInFlight = tcpAlgorithm->getBytesInFlight();
+    int64_t effectiveWin = std::min((int64_t)state->snd_wnd - unackedInWindow, (int64_t)congestionWindow - bytesInFlight);
 
     if (effectiveWin <= 0) {
         EV_WARN << "Effective window is zero (advertised window " << state->snd_wnd
@@ -1697,6 +1698,12 @@ uint16_t TcpConnection::updateRcvWnd()
     ASSERT(scaled_rcv_wnd == (uint16_t)scaled_rcv_wnd);
 
     return (uint16_t)scaled_rcv_wnd;
+}
+
+uint32_t TcpConnection::getFlightSize() const
+{
+    uint32_t outstanding = state->snd_max - state->snd_una;
+    return outstanding > state->limitedTransmitBytes ? outstanding - state->limitedTransmitBytes : 0;
 }
 
 void TcpConnection::updateWndInfo(const Ptr<const TcpHeader>& tcpHeader, bool doAlways)
