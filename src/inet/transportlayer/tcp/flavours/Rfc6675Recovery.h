@@ -49,7 +49,52 @@ class INET_API Rfc6675Recovery : public ITcpRecovery
      */
     virtual bool isLost(uint32_t seqNum);
 
+    /**
+     * RFC 8985 RACK: advance the RACK reference to the most recently sent
+     * delivered segment and mark earlier-sent, still-unacked segments as lost
+     * once RACK.rtt + reo_wnd has elapsed. Returns the number of newly lost bytes.
+     */
+    virtual uint32_t rackDetectAndMarkLost(bool fromReoTimer = false);
+
+    /**
+     * Linux tcp_check_sack_reordering(): reordering is proven when data at lowSeq
+     * was delivered while a higher sequence number (the SACK fack) had already been
+     * SACKed. Grows the learned reordering degree, bounded by maxReordering.
+     */
+    virtual void checkSackReordering(uint32_t lowSeq);
+
+    /** @name Loss undo (RFC 2883 D-SACK, RFC 3522 Eifel), Linux tcp_undo_cwnd_reduction() */
+    //@{
+    /** Capture the undo context (marker, priorCwnd/priorSsthresh) at recovery entry. */
+    virtual void undoInit();
+    /** At a retransmission timeout: true if the timeout starts a new loss episode (Linux tcp_enter_loss()). */
+    virtual bool isNewLossEpisode() const;
+    /** A retransmission of [fromSeq, toSeq) went out: stamp the first one (Eifel) and count it. */
+    virtual void countUndoRetransmission(uint32_t fromSeq, uint32_t toSeq);
+    /** A D-SACK for [fromSeq, toSeq) arrived: confirm that many retransmissions as spurious. */
+    virtual void noteDsack(uint32_t fromSeq, uint32_t toSeq);
+    /** Eifel (RFC 3522): the last ACK's TSecr predates our first retransmission. */
+    virtual bool packetDelayed() const;
+    /** True if the cwnd reduction of the current episode may be undone. */
+    virtual bool mayUndo() const;
+    /** Restore cwnd/ssthresh reduced by a now-known-spurious recovery. */
+    virtual void undoCwndReduction();
+    /** RFC 5682 F-RTO: decide/close a spurious-RTO episode. */
+    virtual void processFrtoEpisode();
+    //@}
+
+    /** @name Proportional Rate Reduction (RFC 6937), Linux tcp_cwnd_reduction() */
+    //@{
+    /** Newly acked+sacked bytes carried by the ACK currently being processed. */
+    virtual uint32_t prrNewlyDelivered() const;
+    /** Per-ACK cwnd sizing: snd_cwnd = pipe + sndcnt. */
+    virtual void prrCwndReduction(int newlyAckedSacked, int newlyLost, bool sndUnaAdvanced);
+    /** Recovery exit: snd_cwnd = ssthresh. */
+    virtual void prrEndCwndReduction();
+    //@}
+
     virtual void onRexmitTimeout() override;
+    virtual void reoTimeout() override;
     virtual void segmentsAcked(uint32_t fromSeq, uint32_t toSeq) override;
     virtual void dataSent(uint32_t fromSeq) override;
     virtual void segmentRetransmitted(uint32_t fromSeq, uint32_t toSeq) override;

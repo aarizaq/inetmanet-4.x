@@ -30,7 +30,7 @@ class INET_API TcpClassicAlgorithmBase : public TcpAlgorithmBase
     ITcpRecovery *recovery = nullptr;
 
   protected:
-    virtual ITcpCongestionControl *createCongestionControl() = 0;
+    virtual ITcpCongestionControl *createCongestionControl() { return nullptr; } // a flavour with its own window growth (TcpCubic) has none
     virtual ITcpRecovery *createRecovery() = 0;
 
     /**
@@ -43,8 +43,10 @@ class INET_API TcpClassicAlgorithmBase : public TcpAlgorithmBase
     /**
      * The ECN-Echo reaction on an ACK of new data (RFC 3168): halve cwnd once per
      * round trip. Returns true if it took the place of the window growth.
+     * numBytesAcked is for a flavour that weighs its reaction by the acknowledged
+     * bytes (DCTCP); RFC 3168 does not use it.
      */
-    virtual bool processEce();
+    virtual bool processEce(uint32_t numBytesAcked);
 
     /**
      * Called after the window update of an ACK of new data, before the sending:
@@ -56,8 +58,14 @@ class INET_API TcpClassicAlgorithmBase : public TcpAlgorithmBase
     /** The ssthresh that an expired retransmission timer sets: RFC 5681 equation (4), with the outstanding data as FlightSize. */
     virtual uint32_t calculateSsthreshForRto() { return std::max((state->snd_max - state->snd_una) / 2, 2 * state->snd_mss); }
 
+    /** The loss window that an expired retransmission timer restarts slow start from. */
+    virtual uint32_t calculateCwndForRto() { return state->snd_mss; }
+
     /** Redefine what should happen on retransmission */
     virtual void processRexmitTimer(TcpEventCode& event) override;
+
+    /** The congestion response of a fast recovery, without the recovery (Linux tcp_process_tlp_ack()). */
+    virtual void tlpLossResponse() override;
 
     /** Called by the base class for each duplicate ACK; the recovery strategy reacts */
     virtual void receivedDuplicateAck() override;
@@ -79,6 +87,24 @@ class INET_API TcpClassicAlgorithmBase : public TcpAlgorithmBase
 
     /** Redefine what should happen when data got acked, to add congestion window management */
     virtual void receivedAckForUnackedData(uint32_t firstSeqAcked) override;
+
+    virtual void receivedAckForAlreadyAckedData(const TcpHeader *tcpHeader, uint32_t payloadLength) override;
+
+    /** Forwarded to the recovery strategy too (RFC 6937 accounting of the sent bytes). */
+    virtual void dataSent(uint32_t fromseq) override;
+
+    /** Forwarded to the recovery strategy too (RFC 6937 accounting of the sent bytes). */
+    virtual void segmentRetransmitted(uint32_t fromseq, uint32_t toseq) override;
+
+    /** Forwarded to the recovery strategy (pre-discard scoreboard inspection). */
+    virtual void segmentsAcked(uint32_t fromSeq, uint32_t toSeq) override;
+
+    /**
+     * The bytes in flight as Linux counts them: the outstanding data, minus the
+     * SACKed and the lost bytes, plus the retransmitted bytes. Without SACK, each
+     * duplicate ACK counts as the SACK of one segment.
+     */
+    virtual uint32_t getBytesInFlight() const override;
 };
 
 

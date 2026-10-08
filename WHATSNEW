@@ -325,6 +325,21 @@ Notable backward incompatible changes are the following:
    The method identifies both the wait before transmission and the transmission itself.
    The migration guide explains the return values and the order of the completion callback.
 
+19. IEEE 802.11 recipient responses do not extend their local NAV
+
+   Tx requires an explicit local NAV choice in both transmitFrame() overloads.
+   The NAV records a reservation of the medium. Custom C++ implementations and
+   callers must add updateLocalNav. Holder frames use true; recipient responses
+   use false. The migration guide supplies the signatures and completion rules.
+
+   CTS, ACK, and Basic Block Ack responses retain their duration fields without
+   extending the recipient's local NAV. Received reservations still control
+   channel access. For example, a recipient can answer another RTS from the same
+   holder when its own previous CTS would otherwise leave the medium busy.
+
+   HCF clamps response durations to zero and applies ceiling to whole microseconds
+   before transmission. These shared changes can change Wi-Fi simulation results.
+
 Notable backward compatible changes are the following:
 
 1. IEEE 802.11 per-station rate statistics
@@ -416,6 +431,22 @@ Notable backward compatible changes are the following:
    it. A subclass that calls or overrides removeNonInterferingTransmissions()
    and relied on the rescheduling must call that method itself.
 
+
+7. IEEE 802.11 selectable multiple protection in EDCA TXOPs
+
+   EDCA TXOPs support selectable multiple protection. Single protection remains
+   the default. Nominal timing uses the mode set's short interframe space (SIFS)
+   unchanged after the first transmission step. The first step adds no
+   interframe space. Multiple protection stops normally when another exchange
+   cannot use a legal duration field.
+
+   For example, a 200 us PPDU within a 1024 us TXOP advertises 824 us
+   of reservation.
+   A TXOP is a transmission opportunity; a PPDU is one PHY transmission.
+
+   The user guide explains nominal timing, zero-limit estimates, unused
+   reservation time, and support limits. The feature does not implement full
+   shared TXNAV or admission of a complete exchange against the remaining budget.
 
 INET-4.7 (July 2026) — feature release
 --------------------------------------

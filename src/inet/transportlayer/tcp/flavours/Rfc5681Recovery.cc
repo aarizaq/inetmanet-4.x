@@ -59,17 +59,24 @@ void Rfc5681Recovery::receivedAckForUnackedData(uint32_t numBytesAcked)
     EV_INFO << "Fast Recovery: setting cwnd to ssthresh=" << state->ssthresh << "\n";
     state->snd_cwnd = state->ssthresh;
     conn->emit(cwndSignal, state->snd_cwnd);
+    state->lossRecovery = false;
 }
 
 void Rfc5681Recovery::receivedDuplicateAck()
 {
     TcpAlgorithmBase *algorithm = check_and_cast<TcpAlgorithmBase *>(conn->getTcpAlgorithmForUpdate());
 
+    // This recovery runs only without SACK. There, every duplicate ACK takes one
+    // segment out of the bytes in flight (TcpClassicAlgorithmBase::getBytesInFlight()),
+    // as Linux tcp_add_reno_sack() does. So cwnd stays at ssthresh and is not
+    // inflated: cwnd minus the bytes in flight gives the same room to send as the
+    // RFC's inflated cwnd minus FlightSize.
+
     //"
     // 2. When the third duplicate ACK is received, a TCP MUST set ssthresh
     //    to no more than the value given in equation (4).
     //"
-    if (state->dupacks == state->dupthresh) {
+    if (state->dupacks == state->dupthresh && !state->lossRecovery) {
         EV_INFO << "Reno on dupAcks == DUPTHRESH(=" << state->dupthresh << ": perform Fast Retransmit, and enter Fast Recovery:";
 
         //"
@@ -87,12 +94,20 @@ void Rfc5681Recovery::receivedDuplicateAck()
         //    the congestion window by the number of segments (three) that have
         //    left the network and which the receiver has buffered.
         //"
-        state->snd_cwnd = state->ssthresh + 3 * state->snd_mss;
+        // No inflation: the three duplicate ACKs took three segments out of the
+        // bytes in flight.
+        state->snd_cwnd = state->ssthresh;
         conn->emit(cwndSignal, state->snd_cwnd);
 
         EV_DETAIL << " set cwnd=" << state->snd_cwnd << ", ssthresh=" << state->ssthresh << "\n";
 
+        // The retransmission takes the place of the lost head in the bytes in
+        // flight (Linux marks it lost), so the head does not count two times.
+        conn->getRexmitQueueForUpdate()->markHeadLost();
         conn->retransmitOneSegment(false);
+
+        // the fast recovery lasts until an ACK of new data (step 6) or a timeout
+        state->lossRecovery = true;
 
         // try to transmit new segments (RFC 2581)
         algorithm->sendData(false);
@@ -103,11 +118,9 @@ void Rfc5681Recovery::receivedDuplicateAck()
     //    congestion window in order to reflect the additional segment that
     //    has left the network.
     //"
-    else if (state->dupacks > state->dupthresh) {
-        state->snd_cwnd += state->snd_mss;
-        EV_DETAIL << "Reno on dupAcks > DUPTHRESH(=" << state->dupthresh << ": Fast Recovery: inflating cwnd by SMSS, new cwnd=" << state->snd_cwnd << "\n";
-        conn->emit(cwndSignal, state->snd_cwnd);
-
+    // Not done on cwnd: the duplicate ACK already took the segment out of the
+    // bytes in flight, and an increment would count it a second time.
+    else if (state->lossRecovery) {
         //"
         // 5.  When previously unsent data is available and the new value of
         //     cwnd and the receiver's advertised window allow, a TCP SHOULD

@@ -8,6 +8,7 @@
 #include "inet/transportlayer/tcp/flavours/TcpClassicAlgorithmBase.h"
 
 #include "inet/transportlayer/tcp/Tcp.h"
+#include "inet/transportlayer/tcp/TcpSackRexmitQueue.h"
 
 namespace inet {
 namespace tcp {
@@ -73,6 +74,9 @@ void TcpClassicAlgorithmBase::processRexmitTimer(TcpEventCode& event)
     if (recovery != nullptr)
         recovery->onRexmitTimeout();
 
+    // a timeout ends the fast recovery
+    state->lossRecovery = false;
+
     // RFC 5681, page 8:
     // "Furthermore, upon a timeout cwnd MUST be set to no more than the loss
     // window, LW, which equals 1 full-sized segment (regardless of the
@@ -94,7 +98,7 @@ void TcpClassicAlgorithmBase::processRexmitTimer(TcpEventCode& event)
     state->ssthresh = calculateSsthreshForRto();
     conn->emit(ssthreshSignal, state->ssthresh);
 
-    state->snd_cwnd = state->snd_mss;
+    state->snd_cwnd = calculateCwndForRto();
     conn->emit(cwndSignal, state->snd_cwnd);
 
     EV_INFO << "Begin Slow Start: resetting cwnd to " << state->snd_cwnd
@@ -102,7 +106,20 @@ void TcpClassicAlgorithmBase::processRexmitTimer(TcpEventCode& event)
 
     state->afterRto = true;
 
+    conn->markOutstandingLostOnRto();
     conn->retransmitOneSegment(true);
+}
+
+void TcpClassicAlgorithmBase::tlpLossResponse()
+{
+    // RFC 8985 section 7.4.2: "invoke a congestion control response equivalent to a
+    // fast recovery". Linux runs tcp_init_cwnd_reduction() and
+    // tcp_end_cwnd_reduction() at once: the ssthresh of the flavour, and cwnd = ssthresh.
+    state->ssthresh = calculateSsthreshForFastRecovery();
+    state->snd_cwnd = state->ssthresh;
+    conn->emit(ssthreshSignal, state->ssthresh);
+    conn->emit(cwndSignal, state->snd_cwnd);
+    EV_INFO << "TLP: the probe repaired a lost tail, cwnd reduced to ssthresh=" << state->ssthresh << "\n";
 }
 
 void TcpClassicAlgorithmBase::receivedAckForUnackedData(uint32_t firstSeqAcked)
@@ -113,16 +130,41 @@ void TcpClassicAlgorithmBase::receivedAckForUnackedData(uint32_t firstSeqAcked)
     bool inFastRecovery = isInFastRecovery();
     if (inFastRecovery)
         recovery->receivedAckForUnackedData(numBytesAcked);
-    else if (!processEce())
+    else if (!processEce(numBytesAcked))
         congestionControl->receivedAckForUnackedData(numBytesAcked);
 
     ackProcessed(inFastRecovery);
+
+    // Outside a fast recovery, an ACK of new data ends the guesses that the
+    // duplicate ACKs before it made (Linux tcp_reset_reno_sack()).
+    if (!state->sack_enabled && !state->lossRecovery)
+        conn->getRexmitQueueForUpdate()->resetSackedBit();
 
     sendData(false);
     ensureRexmitTimerArmed();
 }
 
-bool TcpClassicAlgorithmBase::processEce()
+void TcpClassicAlgorithmBase::dataSent(uint32_t fromseq)
+{
+    TcpAlgorithmBase::dataSent(fromseq);
+    if (recovery != nullptr)
+        recovery->dataSent(fromseq);
+}
+
+void TcpClassicAlgorithmBase::segmentRetransmitted(uint32_t fromseq, uint32_t toseq)
+{
+    TcpAlgorithmBase::segmentRetransmitted(fromseq, toseq);
+    if (recovery != nullptr)
+        recovery->segmentRetransmitted(fromseq, toseq);
+}
+
+void TcpClassicAlgorithmBase::segmentsAcked(uint32_t fromSeq, uint32_t toSeq)
+{
+    if (recovery != nullptr)
+        recovery->segmentsAcked(fromSeq, toSeq);
+}
+
+bool TcpClassicAlgorithmBase::processEce(uint32_t numBytesAcked)
 {
     if (state->ect && state->gotEce) {
         // RFC 3168, page 18
@@ -179,14 +221,40 @@ bool TcpClassicAlgorithmBase::isDuplicateAck(const TcpHeader *tcpHeader, uint32_
     return recovery->isDuplicateAck(tcpHeader, payloadLength);
 }
 
+void TcpClassicAlgorithmBase::receivedAckForAlreadyAckedData(const TcpHeader *tcpHeader, uint32_t payloadLength)
+{
+    TcpAlgorithmBase::receivedAckForAlreadyAckedData(tcpHeader, payloadLength);
+
+    // Outside a fast recovery, an old ACK that is no duplicate (for example data
+    // of the peer) resets the duplicate-ACK counter. The inferred SACKs of the
+    // duplicate ACKs before it go with it, so that before the fast retransmit
+    // they give the room of at most two segments, as Limited Transmit does
+    // (RFC 3042).
+    if (!state->sack_enabled && !state->lossRecovery && state->dupacks == 0)
+        conn->getRexmitQueueForUpdate()->resetSackedBit();
+}
+
 void TcpClassicAlgorithmBase::receivedDuplicateAck()
 {
     // Without SACK, TcpAlgorithmBase sends the Limited Transmit data; with SACK,
     // the recovery sends it itself, by NextSeg()
-    if (!state->sack_enabled)
+    if (!state->sack_enabled) {
+        // the duplicate ACK tells that one more segment has left the network
+        // (Linux tcp_add_reno_sack())
+        conn->getRexmitQueueForUpdate()->addInferredSack();
         TcpAlgorithmBase::receivedDuplicateAck();
+    }
 
     recovery->receivedDuplicateAck();
+}
+
+uint32_t TcpClassicAlgorithmBase::getBytesInFlight() const
+{
+    // Linux tcp_packets_in_flight(): packets_out - (sacked_out + lost_out) + retrans_out.
+    // Without SACK, the duplicate ACKs set the SACKed marks (addInferredSack()).
+    auto rexmitQueue = conn->getRexmitQueue();
+    int64_t inFlight = (int64_t)(state->snd_max - state->snd_una) - rexmitQueue->getSacked() - rexmitQueue->getLost() + rexmitQueue->getRetrans();
+    return inFlight < 0 ? 0 : inFlight;
 }
 
 } // namespace tcp

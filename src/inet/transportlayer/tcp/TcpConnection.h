@@ -133,6 +133,7 @@ class INET_API TcpConnection : public SimpleModule
     cMessage *connEstabTimer = nullptr;
     cMessage *finWait2Timer = nullptr;
     cMessage *synRexmitTimer = nullptr; // for retransmitting SYN and SYN+ACK
+    cMessage *rackReoTimer = nullptr; // RACK reordering timer (Linux ICSK_TIME_REO_TIMEOUT): fires when a not-yet-lost segment's RACK.rtt+reo_wnd deadline matures between ACKs
 
     // statistics
     long rcvdSegments = 0;
@@ -191,7 +192,6 @@ class INET_API TcpConnection : public SimpleModule
     virtual bool processMSSOption(const Ptr<const TcpHeader>& tcpHeader, const TcpOptionMaxSegmentSize& option);
     virtual bool processWSOption(const Ptr<const TcpHeader>& tcpHeader, const TcpOptionWindowScale& option);
     virtual bool processSACKPermittedOption(const Ptr<const TcpHeader>& tcpHeader, const TcpOptionSackPermitted& option);
-    virtual bool processSACKOption(const Ptr<const TcpHeader>& tcpHeader, const TcpOptionSack& option);
     virtual bool processTSOption(const Ptr<const TcpHeader>& tcpHeader, const TcpOptionTimestamp& option);
     //@}
 
@@ -201,7 +201,30 @@ class INET_API TcpConnection : public SimpleModule
     virtual void process_TIMEOUT_CONN_ESTAB();
     virtual void process_TIMEOUT_FIN_WAIT_2();
     virtual void process_TIMEOUT_SYN_REXMIT(TcpEventCode& event);
+
+    /**
+     * rackReoTimer expired: re-run RACK loss detection (time has advanced, so
+     * pending deadlines may have matured) and let the recovery strategy react
+     * (enter fast recovery / retransmit) via ITcpRecovery::reoTimeout().
+     */
+    virtual void processRackReoTimeout();
     //@}
+
+  public:
+    /**
+     * (Re)arms the RACK reordering timer for the given delay, or cancels it when
+     * delay is negative. Called by the recovery strategy from RACK loss detection.
+     */
+    virtual void rescheduleRackReoTimer(simtime_t delay);
+
+    /**
+     * Maps INET's independent loss-recovery bools onto Linux's tcp_ca_state
+     * ordinals (TCP_CA_Open=0, Disorder=1, CWR=2, Recovery=3, Loss=4), for
+     * TcpStatusInfo::caState.
+     */
+    virtual int deriveLinuxCaState() const;
+
+  protected:
 
     /** Utility: clone a listening connection. Used for forking. */
     virtual TcpConnection *cloneListeningConnection();
@@ -259,6 +282,20 @@ class INET_API TcpConnection : public SimpleModule
     /** Utility: retransmit one segment from snd_una */
     virtual void retransmitOneSegment(bool called_at_rto);
 
+    /**
+     * RFC 8985 section 7.3 loss probe: send one segment of new data if the data
+     * and the receive window allow it, else the FIN again, else the last segment
+     * again. Returns true if a segment was sent.
+     */
+    virtual bool sendTlpProbe();
+
+    /**
+     * Called at a retransmission timeout: marks the outstanding data lost in the
+     * retransmission queue, as Linux tcp_timeout_mark_lost() does. Without SACK,
+     * it also removes the inferred SACKs and the retransmitted marks.
+     */
+    virtual void markOutstandingLostOnRto();
+
     /** Utility: retransmit all from snd_una to snd_max */
     virtual void retransmitData();
 
@@ -278,6 +315,9 @@ class INET_API TcpConnection : public SimpleModule
      * Returns the number of bytes sent.
      */
     virtual uint32_t sendSegment(uint32_t bytes);
+
+    /** Puts the data of a SEND command into the send queue, and starts the busy time of TCP_INFO. */
+    virtual void enqueueSendCommandData(Packet *packet);
 
     /** Utility: adds control info to segment and sends it to IP */
     virtual void sendToIP(Packet *tcpSegment, const Ptr<TcpHeader>& tcpHeader);
@@ -340,6 +380,12 @@ class INET_API TcpConnection : public SimpleModule
     virtual uint32_t getFlightSize() const;
 
     virtual void updateWndInfo(const Ptr<const TcpHeader>& tcpHeader, bool doAlways = false);
+
+    /**
+     * The MSS that congestion control counts with: snd_mss less the space of the
+     * TCP options that every segment of the established connection carries.
+     */
+    virtual uint32_t calculateEffectiveMss();
 
   public:
     TcpConnection() {}

@@ -36,6 +36,7 @@
 #include "inet/transportlayer/tcp/TcpSackRexmitQueue.h"
 #include "inet/transportlayer/tcp/TcpSendQueue.h"
 #include "inet/transportlayer/tcp/TcpSimsignals.h"
+#include "inet/transportlayer/tcp/flavours/Rfc6675Recovery.h"
 #include "inet/transportlayer/tcp_common/TcpHeader.h"
 
 namespace inet {
@@ -406,7 +407,7 @@ bool TcpConnection::processIcmpv4Error(Indication *indication)
                 EV_DETAIL << "PMTUD: reducing snd_mss from " << state->snd_mss
                           << " to " << newMss << " (reported MTU=" << mtu << ")\n";
                 state->snd_mss = newMss;
-                state->snd_effmss = state->snd_mss;
+                state->snd_effmss = calculateEffectiveMss();
                 state->pmtudLastMssReduction = simTime();
                 retransmitOneSegment(true);
             }
@@ -471,7 +472,7 @@ bool TcpConnection::processIcmpv6Error(Indication *indication)
                 EV_DETAIL << "PMTUD: reducing snd_mss from " << state->snd_mss
                           << " to " << newMss << " (reported MTU=" << mtu << ")\n";
                 state->snd_mss = newMss;
-                state->snd_effmss = state->snd_mss;
+                state->snd_effmss = calculateEffectiveMss();
                 state->pmtudLastMssReduction = simTime();
                 retransmitOneSegment(true);
             }
@@ -649,6 +650,7 @@ void TcpConnection::configureStateVariables()
     state->limited_transmit_enabled = tcpMain->par("limitedTransmitEnabled"); // Limited Transmit algorithm (RFC 3042) enabled/disabled
     state->increased_IW_enabled = tcpMain->par("increasedIWEnabled"); // Increased Initial Window (RFC 3390) enabled/disabled
     state->snd_mss = tcpMain->par("mss"); // Maximum Segment Size (RFC 793)
+    state->advertisedMss = state->snd_mss; // our own receive limit; stays when snd_mss falls to the MSS of the peer
     state->ts_support = tcpMain->par("timestampSupport"); // if set, this means that current host supports TS (RFC 1323)
     state->ecnWillingness = tcpMain->par("ecnWillingness"); // if set, current host is willing to use ECN
     state->dupthresh = tcpMain->par("dupthresh");
@@ -663,9 +665,33 @@ void TcpConnection::configureStateVariables()
                 << "\" has no SACK-based loss recovery; disabling SACK for this connection\n";
         state->sack_support = false;
     }
+    state->seedRttFromHandshake = tcpMain->par("seedRttFromHandshake");
+    state->prrEnabled = tcpMain->par("prrEnabled");
+    state->lossUndoEnabled = tcpMain->par("lossUndoEnabled");
+    state->frtoEnabled = tcpMain->par("frtoEnabled");
+    state->tlpEnabled = tcpMain->par("tlpEnabled");
+    state->adaptiveReorderingEnabled = tcpMain->par("adaptiveReorderingEnabled");
+    state->dsack_enabled = tcpMain->par("dsackEnabled");
+    state->maxReordering = tcpMain->par("maxReordering");
+    state->reordering = state->dupthresh; // dynamic DupThresh starts at the static value
+    state->lossDetectionMode = !strcmp(tcpMain->par("lossDetectionMode"), "rack") ? 1 : 0;
+    if (state->lossDetectionMode == 1 && !state->sack_support) {
+        // RACK needs the SACK scoreboard. Rather than make the connection
+        // unusable, fall back to classic DupThresh -- the same "willingness"
+        // treatment sackSupport itself gets just above, so that turning RACK on
+        // by default cannot break a flavour or peer that ends up without SACK.
+        EV_WARN << "lossDetectionMode=\"rack\" requires SACK, which is not enabled for this "
+                   "connection; falling back to DupThresh loss detection\n";
+        state->lossDetectionMode = 0;
+    }
     state->pmtudEnabled = tcpMain->par("pmtudEnabled"); // Path MTU Discovery (RFC 1191, RFC 1981)
     state->pmtudTimeout = tcpMain->par("pmtudTimeout"); // time after which original MSS is restored
     state->pmtudLastMssReduction = -1; // never reduced yet
+
+    // TCP_INFO time counters: idle and not limited until the first SEND or
+    // sendData() call says otherwise (enqueueSendCommandData(), sendData()).
+    state->busyStartTime = -1;
+    state->rwndLimitedStartTime = -1;
 
     WATCH_EXPR("snd_nxt", state->snd_nxt);
     WATCH_EXPR("rcv_nxt", state->rcv_nxt);
@@ -752,6 +778,7 @@ void TcpConnection::sendSyn()
     tcpHeader->setWindow(state->rcv_wnd);
 
     state->snd_max = state->snd_nxt = state->iss + 1;
+    emit(sndMaxSignal, state->snd_max);
 
     // ECN
     if (state->ecnWillingness) {
@@ -774,6 +801,8 @@ void TcpConnection::sendSyn()
     // write header options
     writeHeaderOptions(tcpHeader);
     Packet *fp = new Packet("SYN");
+
+    state->handshakeSentTime = simTime(); // for the handshake RTT seed on ESTABLISHED
 
     // send it
     sendToIP(fp, tcpHeader);
@@ -822,6 +851,8 @@ void TcpConnection::sendSynAck()
     writeHeaderOptions(tcpHeader);
 
     Packet *fp = new Packet("SYN+ACK");
+
+    state->handshakeSentTime = simTime(); // for the handshake RTT seed on ESTABLISHED
 
     // send it
     sendToIP(fp, tcpHeader);
@@ -952,7 +983,7 @@ uint32_t TcpConnection::sendSegment(uint32_t bytes)
         EV_INFO << "PMTUD: probe timeout elapsed, restoring snd_mss from " << state->snd_mss
                 << " to original " << state->pmtudOriginalMss << "\n";
         state->snd_mss = state->pmtudOriginalMss;
-        state->snd_effmss = state->snd_mss;
+        state->snd_effmss = calculateEffectiveMss();
         state->pmtudLastMssReduction = -1;
     }
 
@@ -974,6 +1005,17 @@ uint32_t TcpConnection::sendSegment(uint32_t bytes)
     if (bytes > buffered) // last segment?
         bytes = buffered;
 
+    // After a retransmission timeout, the forward above can move snd_nxt to the end
+    // of the send queue, when the receiver has SACKed or the sender has retransmitted
+    // all data above it. A segment of zero bytes cannot be made. Send nothing and
+    // return 0; the callers stop their send loops at a zero return. The go-back-N
+    // after the timeout is then complete.
+    if (bytes == 0) {
+        if (state->afterRto && seqGE(state->snd_nxt, state->snd_max))
+            state->afterRto = false;
+        return 0;
+    }
+
     // if header options will be added, this could reduce the number of data bytes allowed for this segment,
     // because following condition must to be respected:
     //     bytes + options_len <= snd_mss
@@ -986,6 +1028,29 @@ uint32_t TcpConnection::sendSegment(uint32_t bytes)
 
     if (bytes + options_len > state->snd_mss)
         bytes = state->snd_mss - options_len;
+
+    // A retransmission never extends past the previously sent high-water mark
+    // in the same segment: Linux retransmits skbs from the rtx queue (possibly
+    // collapsed together, but only from already-SENT data); unsent data goes
+    // out in its own segments behind it.
+    if (seqLess(state->snd_nxt, state->snd_max) && bytes > state->snd_max - state->snd_nxt)
+        bytes = state->snd_max - state->snd_nxt;
+
+    // ... and it honors the ORIGINAL segment boundaries: Linux's rtx queue
+    // holds whole skbs, and tcp_retrans_try_collapse merges only ENTIRE
+    // adjacent sent skbs that fit cur_mss together -- it never splits the
+    // next skb to top a retransmit up to the MSS. Cap at the largest recorded
+    // transmission boundary inside the budget. A budget that ends at snd_max
+    // ends with a whole segment, so it needs no cap.
+    if (seqLess(state->snd_nxt + bytes, state->snd_max) && bytes > 0 && rexmitQueue != nullptr) {
+        const auto& starts = rexmitQueue->xmitSegmentStarts;
+        auto it = starts.upper_bound(state->snd_nxt + bytes);
+        if (it != starts.begin()) {
+            uint32_t b = *std::prev(it);
+            if (seqGreater(b, state->snd_nxt) && seqLess(b, state->snd_nxt + bytes))
+                bytes = b - state->snd_nxt;
+        }
+    }
 
     uint32_t sentBytes = bytes;
 
@@ -1052,10 +1117,56 @@ uint32_t TcpConnection::sendSegment(uint32_t bytes)
     // remember highest seq sent (snd_nxt may be set back on retransmission,
     // but we'll need snd_max to check validity of ACKs -- they must ack
     // something we really sent)
-    if (seqGreater(state->snd_nxt, state->snd_max))
+    if (seqGreater(state->snd_nxt, state->snd_max)) {
         state->snd_max = state->snd_nxt;
+        emit(sndMaxSignal, state->snd_max);
+    }
+
+    // The peak segments in flight in the current window of data, as Linux
+    // tcp_cwnd_validate() keeps it: a new window starts when snd_una has passed
+    // the snd_nxt of the last start. A partial segment counts as a whole one,
+    // as Linux counts packets.
+    if (state->snd_effmss > 0) {
+        uint32_t packetsOut = (state->snd_max - state->snd_una + state->snd_effmss - 1) / state->snd_effmss;
+        if (!seqLess(state->snd_una, state->cwndUsageSeq) || packetsOut > state->maxPacketsOut) {
+            state->maxPacketsOut = packetsOut;
+            state->cwndUsageSeq = state->snd_nxt;
+        }
+    }
 
     return sentBytes;
+}
+
+void TcpConnection::enqueueSendCommandData(Packet *packet)
+{
+    // TCP_INFO time counters (busy_time): read-only bookkeeping -- if the connection
+    // was fully idle (nothing outstanding, nothing queued) before this SEND, it
+    // becomes busy now. See processAckInEstabEtc() for the matching "back to idle" exit.
+    if (state->busyStartTime < SIMTIME_ZERO && state->snd_una == state->snd_max
+        && sendQueue->getBytesAvailable(state->snd_nxt) == 0)
+    {
+        state->busyStartTime = simTime();
+    }
+
+    sendQueue->enqueueAppData(packet);
+}
+
+int TcpConnection::deriveLinuxCaState() const
+{
+    if (state->afterRto)
+        return 4; // TCP_CA_Loss
+    if (state->lossRecovery)
+        return 3; // TCP_CA_Recovery
+    if (state->sndCwr)
+        return 2; // TCP_CA_CWR
+    // TCP_CA_Disorder: SACK/dup information has arrived (segments sit above
+    // snd_una) but not enough to enter recovery yet -- Linux tcp_fastretrans_alert
+    // holds ca_state at Disorder while sacked_out > 0 without a confirmed loss.
+    // sackedBytes is kept current on both the SACK and the cumulative-ACK path, so
+    // this reverts to Open as soon as snd_una catches up to the SACKed data.
+    if (state->sack_enabled && state->sackedBytes > 0)
+        return 1; // TCP_CA_Disorder
+    return 0; // TCP_CA_Open
 }
 
 bool TcpConnection::sendData(uint32_t congestionWindow)
@@ -1082,6 +1193,22 @@ bool TcpConnection::sendData(uint32_t congestionWindow)
     uint32_t bytesInFlight = tcpAlgorithm->getBytesInFlight();
     int64_t effectiveWin = std::min((int64_t)state->snd_wnd - unackedInWindow, (int64_t)congestionWindow - bytesInFlight);
 
+    // TCP_INFO time counters (rwnd_limited): read-only bookkeeping, consulted only
+    // by TcpStatusInfo -- never influences the send decision below. "rwnd-limited"
+    // here means: there is more buffered data than can be sent right now, and the
+    // peer's advertised window (not the congestion window) is the binding
+    // constraint.
+    bool rwndBinding = (state->snd_wnd < congestionWindow)
+        && ((int64_t)buffered > std::max<int64_t>(effectiveWin, 0));
+    if (rwndBinding) {
+        if (state->rwndLimitedStartTime < SIMTIME_ZERO)
+            state->rwndLimitedStartTime = simTime();
+    }
+    else if (state->rwndLimitedStartTime >= SIMTIME_ZERO) {
+        state->rwndLimitedAccumulated += simTime() - state->rwndLimitedStartTime;
+        state->rwndLimitedStartTime = -1;
+    }
+
     if (effectiveWin <= 0) {
         EV_WARN << "Effective window is zero (advertised window " << state->snd_wnd
                 << ", congestion window " << congestionWindow << "), cannot send.\n";
@@ -1106,6 +1233,10 @@ bool TcpConnection::sendData(uint32_t congestionWindow)
     // send whole segments
     while (bytesToSend >= effectiveMss) {
         uint32_t sentBytes = sendSegment(effectiveMss);
+        if (sentBytes == 0) { // no data left after the forward of snd_nxt
+            bytesToSend = 0;
+            break;
+        }
         ASSERT(bytesToSend >= sentBytes);
         bytesToSend -= sentBytes;
     }
@@ -1171,6 +1302,31 @@ bool TcpConnection::sendProbe()
     return true;
 }
 
+void TcpConnection::markOutstandingLostOnRto()
+{
+    if (rexmitQueue == nullptr || rexmitQueue->getQueueLength() == 0)
+        return;
+    // With SACK, TcpAlgorithmBase::processRexmitTimer() has already reset the SACKed
+    // and retransmitted bits. Without SACK, the SACKed bits are inferred SACKs
+    // (Linux tcp_reset_reno_sack()), and the retransmissions after the timeout are
+    // the only data in flight.
+    if (!state->sack_enabled) {
+        rexmitQueue->resetSackedBit();
+        rexmitQueue->resetRexmittedBit();
+    }
+    // Clamp to the scoreboard's range: snd_una may sit below the queue start (already
+    // discarded) and snd_max may sit above the queue end (e.g. an outstanding FIN,
+    // which carries no data byte in the rexmit queue).
+    uint32_t from = state->snd_una;
+    uint32_t to = state->snd_max;
+    if (seqLess(from, rexmitQueue->getBufferStartSeq()))
+        from = rexmitQueue->getBufferStartSeq();
+    if (seqGreater(to, rexmitQueue->getBufferEndSeq()))
+        to = rexmitQueue->getBufferEndSeq();
+    if (seqLess(from, to))
+        rexmitQueue->markLost(from, to);
+}
+
 void TcpConnection::retransmitOneSegment(bool called_at_rto)
 {
     // rfc-3168, page 20:
@@ -1185,7 +1341,7 @@ void TcpConnection::retransmitOneSegment(bool called_at_rto)
     state->snd_nxt = state->snd_una;
 
     // When FIN sent the snd_max - snd_nxt larger than bytes available in queue
-    uint32_t bytes = std::min(std::min(state->snd_mss, state->snd_max - state->snd_nxt),
+    uint32_t bytes = std::min(std::min(state->snd_effmss, state->snd_max - state->snd_nxt),
                 sendQueue->getBytesAvailable(state->snd_nxt));
 
     // FIN (without user data) needs to be resent
@@ -1202,8 +1358,8 @@ void TcpConnection::retransmitOneSegment(bool called_at_rto)
     else {
         ASSERT(bytes != 0);
 
-        sendSegment(bytes);
-        tcpAlgorithm->segmentRetransmitted(state->snd_una, state->snd_nxt);
+        if (sendSegment(bytes) > 0) // 0: no data left after the forward of snd_nxt
+            tcpAlgorithm->segmentRetransmitted(state->snd_una, state->snd_nxt);
 
         if (!called_at_rto) {
             if (seqGreater(old_snd_nxt, state->snd_nxt))
@@ -1224,6 +1380,69 @@ void TcpConnection::retransmitOneSegment(bool called_at_rto)
 
     if (state && state->ect)
         state->rexmit = false;
+}
+
+bool TcpConnection::sendTlpProbe()
+{
+    // RFC 8985 section 7.3, Linux tcp_send_loss_probe(): send new data if a segment
+    // of it exists and the receive window allows it. The receiver can acknowledge
+    // it normally, and its ACK or SACK shows the loss of the tail.
+    uint32_t available = sendQueue->getBytesAvailable(state->snd_max);
+    if (available > 0 && seqLess(state->snd_max, state->snd_una + state->snd_wnd)) {
+        uint32_t win = state->snd_una + state->snd_wnd - state->snd_max;
+        uint32_t bytes = std::min(std::min(state->snd_mss, available), win);
+        uint32_t old_snd_nxt = state->snd_nxt;
+        state->snd_nxt = state->snd_max;
+        uint32_t sent = sendSegment(bytes);
+        if (seqGreater(old_snd_nxt, state->snd_nxt))
+            state->snd_nxt = old_snd_nxt;
+        if (sent > 0) {
+            state->tlpRetrans = false;
+            EV_INFO << "TLP: probing with " << sent << " bytes of new data\n";
+            return true;
+        }
+    }
+
+    // A FIN that the connection sent is the highest segment: send the FIN again
+    // (Linux retransmits the last skb, which holds only the FIN then).
+    if (state->send_fin && state->snd_fin_seq == sendQueue->getBufferEndSeq()
+            && state->snd_max == state->snd_fin_seq + 1)
+    {
+        state->snd_nxt = state->snd_fin_seq;
+        sendFin();
+        tcpAlgorithm->segmentRetransmitted(state->snd_fin_seq, state->snd_fin_seq + 1);
+        state->snd_nxt = state->snd_fin_seq + 1;
+        state->tlpRetrans = true;
+        EV_INFO << "TLP: probing by resending the FIN\n";
+        return true;
+    }
+
+    // Else retransmit the last segment that the connection sent (the highest
+    // sequence numbers, at most one MSS). The send queue holds data only, so its
+    // start, not snd_una, limits the segment: an unacknowledged SYN is not in it.
+    uint32_t bufStart = sendQueue->getBufferStartSeq();
+    if (seqGE(bufStart, state->snd_max))
+        return false; // no data to retransmit
+    uint32_t len = std::min(state->snd_mss, state->snd_max - bufStart);
+    uint32_t start = state->snd_max - len;
+
+    // RFC 3168: no ECT on retransmissions (see retransmitOneSegment())
+    if (state->ect)
+        state->rexmit = true;
+    uint32_t old_snd_nxt = state->snd_nxt;
+    state->snd_nxt = start;
+    uint32_t sent = sendSegment(len);
+    if (sent > 0)
+        tcpAlgorithm->segmentRetransmitted(start, start + sent);
+    if (seqGreater(old_snd_nxt, state->snd_nxt))
+        state->snd_nxt = old_snd_nxt;
+    if (state->ect)
+        state->rexmit = false;
+    if (sent == 0)
+        return false;
+    state->tlpRetrans = true;
+    EV_INFO << "TLP: probing by retransmitting the last " << sent << " bytes\n";
+    return true;
 }
 
 void TcpConnection::retransmitData()
@@ -1255,9 +1474,11 @@ void TcpConnection::retransmitData()
 
     // TODO - avoid to send more than allowed - check cwnd and rwnd before retransmitting data!
     while (bytesToSend > 0) {
-        uint32_t bytes = std::min(bytesToSend, state->snd_mss);
+        uint32_t bytes = std::min(bytesToSend, state->snd_effmss);
         bytes = std::min(bytes, sendQueue->getBytesAvailable(state->snd_nxt));
         uint32_t sentBytes = sendSegment(bytes);
+        if (sentBytes == 0) // no data left after the forward of snd_nxt
+            break;
 
         // Do not send packets after the FIN.
         // fixes bug that occurs in examples/inet/bulktransfer at event #64043  T=13.861159213744
@@ -1306,9 +1527,19 @@ void TcpConnection::readHeaderOptions(const Ptr<const TcpHeader>& tcpHeader)
                 ok = processSACKPermittedOption(tcpHeader, *check_and_cast<const TcpOptionSackPermitted *>(option));
                 break;
 
-            case TCPOPTION_SACK: // SACK=5
-                ok = processSACKOption(tcpHeader, *check_and_cast<const TcpOptionSack *>(option));
+            case TCPOPTION_SACK: { // SACK=5
+                // A SACK block from a peer we never negotiated SACK with, or one that
+                // arrives before the algorithm has a SACK-capable recovery object, is
+                // malformed input -- drop the option, never abort the simulation.
+                auto *recovery = state->sack_enabled ? dynamic_cast<Rfc6675Recovery *>(tcpAlgorithm->getRecovery()) : nullptr;
+                if (recovery == nullptr) {
+                    EV_ERROR << "ERROR: " << (state->sack_enabled ? "no SACK-capable recovery in use" : "SACK received but sack_enabled is false") << ", dropping SACK option\n";
+                    ok = false;
+                }
+                else
+                    ok = recovery->processSACKOption(tcpHeader, *check_and_cast<const TcpOptionSack *>(option));
                 break;
+            }
 
             case TCPOPTION_TIMESTAMP: // TS=8
                 ok = processTSOption(tcpHeader, *check_and_cast<const TcpOptionTimestamp *>(option));
@@ -1390,6 +1621,11 @@ bool TcpConnection::processWSOption(const Ptr<const TcpHeader>& tcpHeader, const
 
 bool TcpConnection::processTSOption(const Ptr<const TcpHeader>& tcpHeader, const TcpOptionTimestamp& option)
 {
+    // Eifel input (RFC 3522 / Linux rx_opt.rcv_tsecr): remember the echo so the
+    // undo logic can compare it against the first retransmission's timestamp.
+    if (tcpHeader->getAckBit() && option.getEchoedTimestamp() != 0)
+        state->lastRcvdTSecr = option.getEchoedTimestamp();
+
     if (option.getLength() != 10) {
         EV_ERROR << "ERROR: length incorrect\n";
         return false;
@@ -1454,6 +1690,16 @@ bool TcpConnection::processSACKPermittedOption(const Ptr<const TcpHeader>& tcpHe
     return true;
 }
 
+uint32_t TcpConnection::calculateEffectiveMss()
+{
+    // RFC 5681 defines SMSS as the size of the largest segment that the sender
+    // can transmit, without the TCP/IP headers and options. Of the options of an
+    // established connection, only the timestamp option is on every segment:
+    // 10 bytes and 2 bytes of padding. The SACK option is not counted: its length
+    // varies, and it is on few segments of a data sender.
+    return state->snd_mss - (state->ts_enabled ? 10 + 2 : 0);
+}
+
 TcpHeader TcpConnection::writeHeaderOptions(const Ptr<TcpHeader>& tcpHeader)
 {
     // SYN flag set and connetion in INIT or LISTEN state (or after synRexmit timeout)
@@ -1462,11 +1708,14 @@ TcpHeader TcpConnection::writeHeaderOptions(const Ptr<TcpHeader>& tcpHeader)
                                     && state->syn_rexmit_count > 0)))
     {
         // MSS header option
-        if (state->snd_mss > 0) {
+        // RFC 9293, section 3.7.1: the MSS option announces the maximum segment
+        // size that this side can receive. By the time of the SYN-ACK, snd_mss is
+        // already the minimum with the MSS of the peer, so it is not announced.
+        if (state->advertisedMss > 0) {
             TcpOptionMaxSegmentSize *option = new TcpOptionMaxSegmentSize();
-            option->setMaxSegmentSize(state->snd_mss);
+            option->setMaxSegmentSize(state->advertisedMss);
             tcpHeader->appendHeaderOption(option);
-            EV_INFO << "Tcp Header Option MSS(=" << state->snd_mss << ") sent\n";
+            EV_INFO << "Tcp Header Option MSS(=" << state->advertisedMss << ") sent\n";
         }
 
         // WS header option

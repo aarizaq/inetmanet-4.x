@@ -86,6 +86,15 @@ TcpEventCode TcpConnection::process_RCV_SEGMENT(Packet *tcpSegment, const Ptr<co
     emit(rcvAckSignal, tcpHeader->getAckNo());
 
     emit(tcpRcvPayloadBytesSignal, int(tcpSegment->getByteLength() - tcpHeader->getHeaderLength().get<B>()));
+
+    // snapshot delivered-bytes so consumers can read this segment's newly
+    // acked+sacked bytes as deliveredBytes - prrDeliveredMark (RFC 6937 PRR input)
+    state->prrDeliveredMark = state->deliveredBytes;
+
+    // reset the per-segment D-SACK detection (RFC 2883 loss undo)
+    state->dsackSeen = false;
+    state->dsackBytes = 0;
+    state->dsackEndSeq = 0;
     //
     // Note: this code is organized exactly as
     // RFC 9293, section "3.10 Event Processing", subsection "3.10.7. SEGMENT ARRIVES".
@@ -171,9 +180,14 @@ TcpEventCode TcpConnection::processSegment1stThru8th(Packet *tcpSegment, const P
             if (tcpHeader->getSynBit()) {
                 EV_DETAIL << "SYN with unacceptable seqNum in " << stateName(fsm.getState()) << " state received (SYN duplicat?)\n";
             }
-            else if (payloadLength > 0 && state->sack_enabled && seqLess((tcpHeader->getSequenceNo() + payloadLength), state->rcv_nxt)) {
+            else if (payloadLength + tcpHeader->getSynFinLen() > 0 && state->sack_enabled
+                     && seqLess(tcpHeader->getSequenceNo(), state->rcv_nxt)) {
+                // Linux tcp_send_dupack: ANY old data (seq before rcv_nxt) earns a
+                // D-SACK, including a duplicate ending exactly at rcv_nxt -- the
+                // range's right edge is capped at rcv_nxt by addSacks. SEG.LEN
+                // counts SYN and FIN (Linux end_seq).
                 state->start_seqno = tcpHeader->getSequenceNo();
-                state->end_seqno = tcpHeader->getSequenceNo() + payloadLength;
+                state->end_seqno = tcpHeader->getSequenceNo() + payloadLength + tcpHeader->getSynFinLen();
                 state->snd_dsack = true;
                 EV_DETAIL << "SND_D-SACK SET (dupseg rcvd)\n";
             }
@@ -311,7 +325,15 @@ TcpEventCode TcpConnection::processSegment1stThru8th(Packet *tcpSegment, const P
 
         // the algorithms count with the effective MSS; until segments are sized
         // against the option space, it is the negotiated MSS
-        state->snd_effmss = state->snd_mss;
+        state->snd_effmss = calculateEffectiveMss();
+
+        // Seed the RTT estimator from the handshake RTT (Linux measures the
+        // SYN<->SYN-ACK exchange via tcp_ack_update_rtt/tcp_synack_rtt_meas and
+        // enters ESTABLISHED with srtt/rttvar -- and hence the first RTO -- already
+        // RTT-scaled instead of the initial default). Karn: skipped if our handshake
+        // segment was retransmitted.
+        if (state->seedRttFromHandshake && state->syn_rexmit_count == 0 && state->handshakeSentTime >= SIMTIME_ZERO)
+            tcpAlgorithm->rttMeasurementComplete(state->handshakeSentTime, simTime());
 
         // notify tcpAlgorithm and app layer
         tcpAlgorithm->established(false);
@@ -452,6 +474,11 @@ TcpEventCode TcpConnection::processSegment1stThru8th(Packet *tcpSegment, const P
     //
     uint32_t old_rcv_nxt = state->rcv_nxt; // if rcv_nxt changes, we need to send/schedule an ACK
 
+    // D-SACK bookkeeping (RFC 2883): first duplicated range of this segment,
+    // captured just before the insert merges the regions.
+    bool dupRangeFound = false;
+    uint32_t dupStart = 0, dupEnd = 0;
+
     if (fsm.getState() == TCP_S_SYN_RCVD || fsm.getState() == TCP_S_ESTABLISHED ||
         fsm.getState() == TCP_S_FIN_WAIT_1 || fsm.getState() == TCP_S_FIN_WAIT_2)
     {
@@ -502,6 +529,22 @@ TcpEventCode TcpConnection::processSegment1stThru8th(Packet *tcpSegment, const P
                 // section 2.5).
 
                 uint32_t old_usedRcvBuffer = state->usedRcvBuffer;
+                // D-SACK (RFC 2883): the part of the segment below rcv_nxt is a
+                // duplicate (Linux tcp_data_queue: D-SACK [seq, rcv_nxt)); otherwise
+                // find the first already-buffered range this segment duplicates
+                // BEFORE the insert merges the regions (Linux reports it via
+                // tcp_dsack_set/tcp_dsack_extend as tcp_ofo_queue drains the
+                // out-of-order queue over a gap-filling segment).
+                if (state->sack_enabled && state->dsack_enabled && payloadLength > 0) {
+                    if (seqLess(tcpHeader->getSequenceNo(), state->rcv_nxt)) {
+                        dupStart = tcpHeader->getSequenceNo();
+                        dupEnd = state->rcv_nxt;
+                        dupRangeFound = true;
+                    }
+                    else
+                        dupRangeFound = receiveQueue->findFirstDuplicateRange(tcpHeader->getSequenceNo(),
+                                tcpHeader->getSequenceNo() + payloadLength, dupStart, dupEnd);
+                }
                 state->rcv_nxt = receiveQueue->insertBytesFromSegment(tcpSegment, tcpHeader);
 
                 // RFC 5681, page 8:
@@ -697,7 +740,19 @@ TcpEventCode TcpConnection::processSegment1stThru8th(Packet *tcpSegment, const P
         // received a FIN that needs to be acked (or both), we need to send or
         // schedule an ACK.
         if (state->sack_enabled) {
-            if (receiveQueue->getQueueLength() != 0) {
+            if (dupRangeFound) {
+                // RFC 2883: a gap-filling (or partially duplicate) segment covered
+                // data that was already received -- report the first duplicated
+                // range as a D-SACK block; addSacks() appends the still-missing
+                // out-of-order blocks (if any) after it (Linux tcp_ofo_queue ->
+                // tcp_dsack_extend).
+                state->start_seqno = dupStart;
+                state->end_seqno = dupEnd;
+                state->snd_dsack = true;
+                EV_DETAIL << "SND_D-SACK SET (segment duplicates received range [" << dupStart << ".." << dupEnd << "))\n";
+                state->ack_now = true;
+            }
+            else if (receiveQueue->getQueueLength() != 0) {
                 // RFC 2018, page 4:
                 // "If sent at all, SACK options SHOULD be included in all ACKs which do
                 // not ACK the highest sequence number in the data receiver's queue."
@@ -1032,7 +1087,15 @@ TcpEventCode TcpConnection::processSegmentInSynSent(Packet *tcpSegment, const Pt
 
             // notify tcpAlgorithm (it has to send ACK of SYN) and app layer
             state->ack_now = true;
-            state->snd_effmss = state->snd_mss;
+            state->snd_effmss = calculateEffectiveMss();
+            // Seed the RTT estimator from the handshake RTT (Linux measures the
+            // SYN<->SYN-ACK exchange via tcp_ack_update_rtt/tcp_synack_rtt_meas and
+            // enters ESTABLISHED with srtt/rttvar -- and hence the first RTO -- already
+            // RTT-scaled instead of the initial default). Karn: skipped if our handshake
+            // segment was retransmitted.
+            if (state->seedRttFromHandshake && state->syn_rexmit_count == 0 && state->handshakeSentTime >= SIMTIME_ZERO)
+                tcpAlgorithm->rttMeasurementComplete(state->handshakeSentTime, simTime());
+
             tcpAlgorithm->established(true);
             tcpMain->emit(Tcp::tcpConnectionAddedSignal, this);
             sendEstabIndicationToApp();
@@ -1182,6 +1245,10 @@ bool TcpConnection::processAckInEstabEtc(Packet *tcpSegment, const Ptr<const Tcp
     //"
     // Note: should use SND.MAX instead of SND.NXT in above checks
     //
+    // RFC 8985 section 7.4.2: each ACK can end the episode of a tail loss probe
+    if (seqLE(tcpHeader->getAckNo(), state->snd_max))
+        tcpAlgorithm->processTlpAck(tcpHeader.get(), payloadLength);
+
     if (seqGE(state->snd_una, tcpHeader->getAckNo())) {
         //
         // duplicate ACK? A received TCP segment is a duplicate ACK if all of
@@ -1234,11 +1301,49 @@ bool TcpConnection::processAckInEstabEtc(Packet *tcpSegment, const Ptr<const Tcp
             discardUpToSeq--; // the FIN sequence number is not real data
         }
 
+        // Notify the algorithm while the scoreboard for the acked range is still
+        // valid (i.e. before it is discarded below): transmit counts and SACK state
+        // for [old_snd_una, discardUpToSeq) are what lets a recovery algorithm tell
+        // reordering apart from loss.
+        tcpAlgorithm->segmentsAcked(old_snd_una, discardUpToSeq);
+
         // acked data no longer needed in send queue
         sendQueue->discardUpTo(discardUpToSeq);
 
+        // TCP_INFO time counters (busy_time): read-only bookkeeping -- if this ACK just
+        // caught snd_una up to snd_max with nothing left queued either, the
+        // connection has gone fully idle. See enqueueSendCommandData() for the
+        // matching "became busy" entry.
+        if (state->busyStartTime >= SIMTIME_ZERO && state->snd_una == state->snd_max
+            && sendQueue->getBytesAvailable(state->snd_nxt) == 0)
+        {
+            state->busyTimeAccumulated += simTime() - state->busyStartTime;
+            state->busyStartTime = -1;
+        }
+
         // acked data no longer needed in rexmit queue
+        uint32_t sackedBeforeDiscard = state->sack_enabled ? rexmitQueue->getTotalAmountOfSackedBytes() : 0;
         rexmitQueue->discardUpTo(discardUpToSeq);
+
+        // A plain cumulative ACK carries no SACK option, so processSACKOption()
+        // does not run to recompute the SACK scoreboard byte count. Refresh it
+        // after the discard so the STATUS sackedBytes and caState reflect only what
+        // is still SACKed above snd_una (Linux tp->sacked_out drops as snd_una
+        // catches up); a full ACK that ends recovery must report 0, not the stale
+        // pre-ACK count.
+        if (state->sack_enabled)
+            state->sackedBytes = rexmitQueue->getTotalAmountOfSackedBytes();
+
+        // Delivered-bytes accounting (RFC 6937 DeliveredData, RFC 8985): the change of
+        // snd_una plus the signed change of the SACKed bytes. processSACKOption() counts
+        // the newly SACKed bytes; here count the newly acknowledged bytes, less those
+        // that a SACK reported before, so that each byte counts once (Linux counts a
+        // segment once, at its first SACK or ACK).
+        if (seqGreater(discardUpToSeq, old_snd_una)) {
+            uint32_t sackedCovered = state->sack_enabled ? sackedBeforeDiscard - state->sackedBytes : 0;
+            state->deliveredBytes += (discardUpToSeq - old_snd_una) - sackedCovered;
+            emit(deliveredSignal, (unsigned long)state->deliveredBytes);
+        }
 
         updateWndInfo(tcpHeader);
 

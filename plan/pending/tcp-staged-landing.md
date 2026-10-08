@@ -53,21 +53,21 @@ neighbour or split, when its cherry-picks or its builds show a reason.
 | S5b ✅ | `topic/tcp-flavour-strategies` | 13 (part), new | +450 −470 (about) | the refactor part of commit 13: B1 to B3 of D-6, with master's arithmetic |
 | S5c ✅ | `topic/tcp-classic-recovery` | 13 (part), 16 (part), 39 (part), 41 (part), 54, 70 | +320 −40 (about) | the behavior changes B4, B6, B10, B11 of D-6, and the preparation of the pipe accounting |
 | S5d ✅ | `topic/tcp-sack-recovery` | 10 (part), 13 (part) | +91 −77 | SACK loss recovery in `Rfc6675Recovery`, and DCTCP on it: B12, B13, B16 of D-6; SACK only for a flavour that can recover with it |
-| S5e | `topic/tcp-pipe-recovery` | 13 (part), 39 (part), 56, 71, 72 | — | Reno and NewReno without SACK recover by pipe accounting: B5, B7, B8 of D-6 |
-| S6 | `topic/tcp-cubic` | 14, 45, 55 (`TcpCubic` part), 57, 60, 62, 65 | +840 −326 | `TcpCubic` with HyStart, and `DcTcp` on the shared ACK path |
-| S7 | `topic/tcp-segment-sizing` | 15, 16, 53 | +420 −54 | segment sizing against the option space, bytes in flight |
-| S8 | `topic/tcp-rack` | 17, 18, 19, 49 | +768 −47 | RACK loss detection (RFC 8985), STATUS counters, the reordering window |
-| S9 | `topic/tcp-prr` | 20, 59 | +143 −14 | Proportional Rate Reduction (RFC 6937) |
-| S10 | `topic/tcp-undo-frto-tlp` | 22, 24, 25, 76, 85 | +505 −7 | spurious-loss undo, F-RTO (RFC 5682), the tail loss probe |
-| S11 | `topic/tcp-connection-lifecycle` | 23, 30, 38, 73 | +179 −45 | reset after a full close, SYN-ACK re-send, FIN read clamp, STATUS before open |
-| S12 | `topic/tcp-fast-open` | 26, 43, 44, 51 | +1187 −104 | TCP Fast Open (RFC 7413) |
-| S13 | `topic/tcp-accecn` | 27 | +864 −61 | Accurate ECN |
+| S5e ✅ | `topic/tcp-pipe-recovery` | 13 (part), 34 (part), 39 (part), 56, 71, 72, 80 (part) | +248 −161 | Reno and NewReno without SACK recover by pipe accounting: B5, B7, B8 of D-6 |
+| S6 ✅ | `topic/tcp-cubic` | 14, 45, 55 (`TcpCubic` part), 57, 60, 62, 65 | +840 −326 | `TcpCubic` with HyStart, and `DcTcp` on the shared ACK path |
+| S7 ✅ | `topic/tcp-segment-sizing` | 13 (part), 15 (part), 16 (part) | — | segment sizing against the option space, the peak segments in flight and slow start (B9); before S6 |
+| S8 ✅ | `topic/tcp-rack` | 13 (part), 16 (part), 17, 18, 19, 26 (part), 49, 51 (part), 64 (part) | +768 −47 | RACK loss detection (RFC 8985), STATUS counters, the reordering window; the Linux count of the bytes in flight with SACK (B8) |
+| S9 ✅ | `topic/tcp-prr` | 13 (part), 20, 39 (part), 59, 64 (part) | +143 −14 | Proportional Rate Reduction (RFC 6937) |
+| S10 ✅ | `topic/tcp-undo-frto-tlp` | 22, 24, 25, 37, 76, 85, 86, new | +1807 −25 | spurious-loss undo, F-RTO (RFC 5682), the tail loss probe (D-29 to D-35) |
+| S11 | `topic/tcp-connection-lifecycle` | 15 (part), 16 (part), 23, 30, 38, 73 | +179 −45 | reset after a full close, SYN-ACK re-send, FIN read clamp, STATUS before open |
+| S12 | `topic/tcp-fast-open` | 15 (part), 16 (part), 26, 43, 44, 51 | +1187 −104 | TCP Fast Open (RFC 7413) |
+| S13 | `topic/tcp-accecn` | 27 | +864 −61 | Accurate ECN; DCTCP counts its bytes also in a fast recovery (D-23) |
 | S14 | `topic/tcp-receive-buffer` | 28, 29, 35, new work | +400 −3 | the receive buffer apart from the advertised window, zero-copy, `TCP_NOTSENT_LOWAT`, the receive buffer of a socket before open (D-4) |
-| S15 | `topic/tcp-timers` | 31, 32, 33, 34, 77 | +441 −94 | adaptive delayed ACK, timer parameters, keepalive, loss marking at a timeout |
-| S16 | `topic/tcp-write-boundaries` | 36, 37, 69 | +355 −9 | PSH at write boundaries, `TCP_CORK`, a window smaller than one MSS |
-| S17 | `topic/tcp-connection-leftovers` | 39, 61, 74, 86 | +445 −185 | the remaining connection work, the SACK scoreboard scan, two repairs |
+| S15 | `topic/tcp-timers` | 31, 32, 33, 34 (part), 77 | +441 −94 | adaptive delayed ACK, timer parameters, keepalive, loss marking at a timeout, no new fast recovery before the recovery point of a timeout (D-34, proposed) |
+| S16 | `topic/tcp-write-boundaries` | 15 (part), 16 (part), 36, 69 | +355 −9 | PSH at write boundaries, `TCP_CORK`, a window smaller than one MSS |
+| S17 | `topic/tcp-connection-leftovers` | 39, 61, 74 | +445 −185 | the remaining connection work, the SACK scoreboard scan, two repairs |
 | S18 | `topic/tcp-pmtud-rcvbuf` | 46, 47, 42, 58 | +556 −65 | RFC 4821 path MTU discovery, receive buffer memory, the applications |
-| S19 | `topic/tcp-modern-defaults` | 40, 63, 68, 70, 71, 72, 78, 79, 80, 81, 82, 87 | +863 −488 | the modern defaults, the RFC 6298 and RFC 5681 corrections, the tests under the new defaults |
+| S19 | `topic/tcp-modern-defaults` | 15 (part), 16 (part), 40, 53, 63, 68, 70, 71, 72, 78, 79, 80 (part), 81, 82, 87 | +863 −488 | the modern defaults, the RFC 6298 and RFC 5681 corrections, the tests under the new defaults |
 | S20 | `topic/tcp-modernization-docs` | 48, 66, and the source plan | +700 −200 (about) | the RFC list of the module, the release note, the source plan to `plan/done/` |
 
 The big test commit (41, `tests: add+change: cover the new behavior, and pin the old defaults`,
@@ -147,6 +147,11 @@ behavior goes.
    the Python runner reads the JSON store, which has fewer than half of the CSV rows (753 `tplx`
    rows; for example no `examples/inet/tcp_pmtud` row), and many stored values do not match in
    this environment even on master. They compare the calculated values of two commits.
+
+   Run the TCP fingerprint rows in debug at the stage head (`inet_fingerprinttest -d -m tcp`).
+   Only a debug run checks the `@signal` declarations of NED: the CI job runs release, and the
+   module tests give `--check-signals=false`. S8 and S9 emitted `sndMax` and `delivered`
+   without a declaration, and every TCP simulation in debug stopped at the first emit.
 6. Stop. Give the owner the branch, the list of commits, and the evidence.
 7. After the owner approves: fast-forward `master` to the stage. Push only when the owner says so.
 8. Mark the stage done in this plan, with its results, in a last commit of the stage. Remove the
@@ -231,6 +236,195 @@ plan gives a reason for.
   (`arptest2`, and `bulktransfer` `inet__inet`, `inet_inet_2a`, `inet__lwip`). S5d sets `ack_now`
   directly after the insert into the receive queue, so the data segment clears it, and the four
   rows keep master's values. These are deliberate differences from the source tree.
+- **D-11 — A timeout marks the outstanding data lost, also without SACK.** The Linux count of the
+  bytes in flight takes the lost bytes out and adds the retransmitted bytes. Linux marks all
+  outstanding data lost at a timeout (`tcp_timeout_mark_lost()`) and resets the inferred SACKs of
+  Reno (`tcp_reset_reno_sack()`). The source branch marks only with SACK (commit 34). Without the
+  marks, the count keeps `snd_max - snd_una` in flight after a timeout: in `tcp_newreno_rto_1`,
+  the go-back-N then waits for a new timeout at each hole (2.2 s, 4.2 s, 8.2 s), where with the
+  marks it sends at once. S5e marks with and without SACK; without SACK it also clears the inferred
+  SACKs and the retransmitted marks.
+- **D-12 — A partial ACK of NewReno marks the new head lost.** The source retransmits the new head
+  without a mark, so until the next duplicate ACK the count holds the head two times: the original
+  and the retransmission. Linux marks it lost (`tcp_newreno_mark_lost()`), as the source does at
+  the fast retransmit.
+- **D-13 — NewReno's "recover" follows `snd_una` once the cumulative ACK has passed it.** The source
+  keeps "recover" at the value of the last fast retransmit or timeout, and it starts at 0, because
+  the state is made before the connection chooses its ISS. After 2^31 bytes without a fast
+  retransmit or a timeout, or with an ISS from 2^31 on, `seqGreater(snd_una - 1, recover)` turns
+  false, and NewReno no longer enters fast retransmit. Master's "recover" trails `snd_una` after
+  every ACK of new data, which also ends the protection after a timeout (RFC 6582 step 4). S5e
+  starts "recover" at the ISS and moves it only after `snd_una` has passed it: the check of step 2
+  then gives the result of a fixed "recover", without the turn.
+- **D-14 — Limited Transmit without SACK stays master's RFC 3042 code.** Master sends one new
+  segment for each of the first two duplicate ACKs, while the outstanding data stays within cwnd
+  plus two segments. The source sends what cwnd minus the bytes in flight allows, which is more
+  than one segment when cwnd has room.
+- **D-15 — The duplicate-ACK counter keeps counting in a recovery.** The source stops the counter
+  while `lossRecovery` is set. In S5e the recovery strategies decide by `lossRecovery`, so the
+  counter needs no stop, and the `dupAcks` statistic keeps master's meaning.
+- **D-16 — NewReno's full ACK keeps option (1) of RFC 6582.** The source sets cwnd to
+  ssthresh (option (2)). Without Proportional Rate Reduction, the bytes in flight at the end of a
+  recovery can be far below ssthresh, and option (2) then sends a burst; RFC 6582 asks for a measure
+  against it. Master's option (1), `min(ssthresh, FlightSize + SMSS)`, has none. The plan expected
+  PRR (S9) to keep the bytes in flight near ssthresh, but the source runs PRR only in the SACK
+  recovery (`Rfc6675Recovery`), not in NewReno's recovery without SACK. So NewReno without SACK
+  keeps option (1) after S9 too, and the final tree differs from the source here.
+- **D-17 — The inferred SACKs follow Linux's counts.** Two parts of the emulation of S5c (from
+  source commit 39) counted the pipe wrong once 2c reads it. First, when an ACK
+  leaves the mark of a duplicate ACK on the first unacknowledged segment, `discardUpTo()` (S5c,
+  from source commit 39) marked that segment lost and moved the mark to the next one. The pipe
+  then counted one segment too few: once for the moved mark and once for the loss mark. After a
+  timeout and one duplicate ACK of a go-back-N copy, the sender sent a segment more than cwnd
+  allowed (`tcpclientserver` `inet-reno` run 0 at t=1.4179 s). Linux `tcp_remove_reno_sacks()`
+  only reduces `sacked_out` by the acknowledged segments but one. S5e moves the mark and does not
+  mark the head lost. Second, `addInferredSack()` put the mark on a lost segment and cleared its
+  loss mark. After a timeout, when all outstanding data is lost, the reset of the inferred SACKs at
+  the next ACK of new data then left that segment neither lost nor SACKed, and the pipe counted it
+  again: the sender sent less than cwnd allowed (`arptest` at t=2.1033 s, `styling` `Annotation`
+  at t=2.8848 s). Linux limits `sacked_out` so that it and `lost_out` do not exceed `packets_out`
+  (`tcp_limit_reno_sacked()`). S5e puts an inferred SACK only on a segment that is neither SACKed
+  nor lost.
+- **D-18 — Outside a recovery, the inferred SACKs go with the duplicate-ACK counter.** INET counts
+  duplicate ACKs as BSD does: an old ACK that is no duplicate, for example data of the peer, resets
+  the counter. Linux does not reset its count there, and it removes the inferred SACKs only at an ACK
+  of new data (`tcp_reset_reno_sack()`). With both rules together, a two-way transfer collected
+  marks from several short series of duplicate ACKs, the counter did not reach the fast retransmit,
+  and the pipe gave more room than the two segments of RFC 3042 (`bulktransfer` `inet__inet`: five
+  marks at the third duplicate ACK at t=1.2825 s). S5e removes the marks outside a recovery both at
+  an ACK of new data and when the counter resets; in a recovery the marks stay.
+- **D-19 — S7 holds the sizing parts of source commits 15 and 16; their other parts go to the
+  stages of their features.** Both commits are what remained of one commit that carried many
+  features (their messages say so). S7 takes the effective MSS, the announced MSS, and the peak segments in
+  flight with the cwnd-limited slow start. The other parts go to
+  S8 (`seedRttFromHandshake`, the TCP_INFO time counters, the `sndMax` signal, the STATUS fields
+  `sndEffMss` and `advmss`, with the tests of STATUS), S11 (the RST
+  for a SYN-ACK with an invalid TSecr, the options of the crossing SYN-ACK of a simultaneous open,
+  the `forked` flag, `syncookiesAlways`), S12 (the Nagle exemption of the SYN-ACK slot, the data
+  retransmission in SYN_RCVD, `peerAdvertisedMss`, `alignOptions`, `sendMssOption`, the place of
+  the timestamp option in the SYN, and the default send MSS when the SYN has no MSS option, RFC
+  9293 MUST-15, which the source claims but handles only for an option value of 0), S16
+  (`TCP_MAXSEG`, with the other socket options, whose tests are packetdrill tests; the
+  silly-window hold of the sender, which needs `max_window` from source commit 69: without it, a
+  peer whose window never reaches one MSS receives nothing) and S19
+  (`mss = -1` with the default of the address family, the parameters `initialWindow` and
+  `initialSendSequenceNumber` with the defaults of `initialWindow` and `seedRttFromHandshake`,
+  and source commit 53). For `mss = -1`, the source leaves `snd_mss` unresolved when the SYN of
+  the peer arrives, so a passive side sends segments as large as the peer announces; S19 must
+  resolve the default first.
+- **D-20 — The cwnd-limited gate of slow start uses the peak of each window of data.** The source
+  keeps `maxPacketsOut` as the peak of the whole connection, so after one busy phase the gate stays
+  open: a flow that is application-limited later grows cwnd in slow start without using it. Linux
+  `tcp_cwnd_validate()` keeps `max_packets_out` per window of data. S7 keeps it per window and
+  counts the segments with the effective MSS. In `tcp_cwnd_limited_2`, with the peak of the whole
+  connection, a burst after an idle time and single segments starts with seven segments; per
+  window it starts with two.
+- **D-21 — The ACK that ends a fast recovery does not grow cwnd.** On the source branch,
+  `TcpClassicAlgorithmBase` gives this ACK first to the recovery and then, because the recovery has
+  ended, also to the window growth, as Linux does. RFC 5681 step 6 says that this ACK MUST set cwnd
+  to ssthresh, and RFC 6582 step 3 sets cwnd at the full ACK in the same way. Master's routing
+  does that, and S6 keeps it.
+- **D-22 — DCTCP joins the shared ACK path in three behavior changes and a refactor.** Source
+  commit 65 calls the move a refactor. On this tree, `DcTcp`'s own copy of the ACK path did not get
+  the slow start of S7 or the reset of the inferred SACKs of S5e, and with SACK it ran the steps of
+  RFC 3517 on top of a test of the duplicate-ACK counter, so cwnd grew in the recovery. S6 makes
+  each difference one commit with its own test, in the copy, and then removes the copy, which
+  changes no behavior.
+- **D-23 — DCTCP counts the acknowledged bytes only outside a fast recovery until S13.** RFC 8257
+  section 3.3 counts the acknowledged and the marked bytes at each ACK, and Linux updates alpha at
+  each ACK (`dctcp_update_alpha()` as `in_ack_event`); only the cut of cwnd waits until no
+  recovery runs. Master without SACK and the source branch count only outside a recovery. Master
+  with SACK also counted the ACKs in a recovery after the first partial ACK, because of the counter
+  test that S6 removes, which also grew cwnd there. S6 keeps the count of the source. The repair
+  needs a hook of the shared path at each ACK in a recovery. The owner chose S13, where the AccECN
+  branch changes the same count (2026-10-08).
+- **D-24 — The S8 features land off; S19 turns them on.** The source turns RACK, the learning of
+  the reordering degree and the handshake RTT seed on in their own commits. RACK and the learning
+  then changed only connections with SACK, which the source turns on in commit 40 with the other
+  modern defaults. S8 lands them with defaults that keep master's behavior:
+  `lossDetectionMode = "dupthresh"`, `adaptiveReorderingEnabled = false`, and
+  `seedRttFromHandshake = false` (D-19). The tests of S8 select each feature. S19 sets the source
+  defaults, one commit for each, with its moved rows. A behavior that has no parameter, such as
+  the count of the bytes in flight with SACK (B8), changes in S8.
+- **D-25 — A retransmission that ends at `snd_max` keeps its last whole segment.** Source commit 17
+  cuts a retransmission at the last original segment start inside one SMSS. When the
+  retransmission ends at `snd_max`, it ends with a whole segment, but the source cut it there too:
+  three dropped segments of 300 bytes came back as 600 and then 300 bytes. Linux joins whole
+  segments that fit into one SMSS (`tcp_retrans_try_collapse()`) and sends 900 bytes. S8 cuts
+  only when the retransmission ends before `snd_max`; `tcp_rexmit_boundaries_2` fails with the
+  source form.
+- **D-26 — In RACK mode, the duplicate-ACK count does not start a recovery.** RFC 8985 (step 4 of
+  the detection) enters the fast recovery by RACK's own marks: when DupThresh segments are SACKed
+  and no reordering was seen, the reordering window is 0, and once reordering was seen, "RACK does
+  not trigger fast recovery based on DupThresh". Linux `tcp_time_to_recover()` skips the
+  duplicate-ACK heuristic with RACK. The source kept step (1) of RFC 6675 (`DupAcks >= DupThresh`)
+  in RACK mode, so a reordered segment was retransmitted although RACK waited for it. S8 skips
+  that step in RACK mode; `tcp_reordering_1` fails without this.
+- **D-27 — The handshake RTT seed reads its parameter on both sides.** Source commit 16 seeds the
+  passive side when `seedRttFromHandshake` is set; source commit 26 (S12) seeds the active side
+  always. So the source test `tcp_info_fields_1`, which sets the parameter false through
+  `tcp-legacy.ini`, sees a first RTO of 1 s and expects `backoff=2` at t=4.2 s. S8 seeds both
+  sides only with the parameter, and the test expects `backoff=1`, the one timeout at t=4 s. S12
+  must keep the check of the parameter on the active side.
+- **D-28 — The delivered bytes count each byte once (RFC 6937 DeliveredData).** PRR sizes cwnd
+  by the bytes that each ACK delivers: the change of `snd_una` plus the signed change of the
+  SACKed bytes. Master (S8) counted only the newly SACKed bytes, so a cumulative ACK delivered
+  nothing, and the STATUS field `deliveredBytes` was too small. Source commit 39 adds the change of
+  `snd_una`, but it counts again the bytes that a SACK reported before, so the ACK that fills a
+  hole delivers the whole SACKed range a second time, and PRR sends too much on it. S9 subtracts
+  the SACKed bytes that the cumulative ACK covers, as Linux counts each segment once.
+- **D-29 — The undo counts each D-SACK and each retransmission of the episode.** Linux takes one
+  retransmission back for each D-SACK of data above the undo marker, on any ACK
+  (`tcp_check_dsack()`), and counts each retransmitted segment. The source counted a D-SACK only on
+  an ACK of new data, but the D-SACK of a needless retransmission usually comes on a duplicate
+  ACK, after the original. And the retransmissions of step (C) of RFC 6675 did not count, so one
+  D-SACK could undo a recovery that also repaired a real loss. S10 counts both, as Linux does;
+  with the source form, `tcp_undo_1` does not undo and `tcp_undo_2` undoes wrongly.
+- **D-30 — F-RTO takes no data that the receiver SACKed before the timeout as new evidence.**
+  Linux sets `FLAG_ORIG_SACK_ACKED` only for a segment that it sent once and that was not SACKed,
+  and it keeps the SACK marks at a timeout. The timeout of INET clears them (RFC 2018 section 8).
+  Source commit 86 adds `everSacked` for the SACK blocks; S10 applies it also to the cumulative
+  ACK. `tcp_frto_2` fails without this.
+- **D-31 — A timeout starts a new undo context.** The source kept the context while `undoMarker`
+  was set, also the context of an older episode that no undo had ended, with its old cwnd and its
+  unconfirmed retransmissions. Linux `tcp_enter_loss()` starts a new context, except during a fast
+  recovery and at a repeated timeout with no new ACK. S10 does the same. For this,
+  `TcpAlgorithmBase` no longer ends the fast recovery before the timeout hook of the recovery;
+  `TcpClassicAlgorithmBase` ends it after the hook. `tcp_undo_3` fails with the source form.
+- **D-32 — F-RTO follows steps 1 and 2.b of RFC 5682.** The source opened an episode at each
+  timeout and kept it open until the ACK covered the whole flight. RFC 5682 step 1 opens none
+  during a loss recovery, and step 2.b ends the episode at the first ACK of new data when the
+  sender sends no new data; Linux `tcp_process_loss()` does the same. S10 sends no new data at
+  step 2.b, so its episode ends there. With the source rules, a SACK of late segments after a real
+  loss undid the reduction (`tcp_frto_3`), and so did a SACK after a timeout in a fast recovery
+  (`tcp_frto_4`). A delay of the data path is then found only by the D-SACK undo; the new data of
+  step 2.b can come in a later stage.
+- **D-33 — The repair of the empty segment after a timeout comes forward from S16.** After a
+  timeout with SACK, `sendSegment()` moves `snd_nxt` over SACKed and retransmitted data. At the
+  end of the send queue, master made a segment of zero bytes and stopped with "Returning an empty
+  chunk is not allowed". A usual loss of two segments causes this (`tcp_sack_8`), and the F-RTO
+  tests of S10 meet it. Source commit 37 returns zero there, but then its send loops repeat for
+  ever. S10 brings the zero return and stops each send loop at it.
+- **D-34 — A duplicate ACK after a timeout in a fast recovery starts a new recovery; a later stage
+  repairs it.** RFC 6675 section 5.1: after a timeout during a loss recovery, "a new recovery phase
+  (as described in Section 5) MUST NOT be initiated until HighACK is greater than or equal to the
+  new value of RecoveryPoint". Master and the source start a new fast recovery at the next
+  duplicate ACK, because the duplicate-ACK count or `IsLost()` is still above the limit;
+  `tcp_frto_4` shows it at t=4.002. The repair changes master's behavior with SACK, so it is not
+  part of S10. The proposal is S15, which changes the loss marking at a timeout.
+- **D-35 — The tail loss probe follows RFC 8985 sections 7.2 and 7.4.2.** Four deviations from
+  source commits 25, 76 and 85. (1) An ACK of new data also arms the probe timeout (section 7.2,
+  Linux `tcp_set_xmit_timer()`). In the source only a send armed it, and the RTO restart at each
+  ACK cancelled it, so the RTO repaired a lost tail after the ACKs of a flight (`tcp_tlp_1`).
+  (2) A retransmitted probe shows a loss only at an ACK above it; a D-SACK that ends at the probe,
+  or a duplicate ACK without SACK, shows no loss, and each ACK counts (section 7.4.2, Linux
+  `tcp_process_tlp_ack()`). The source decided at the first ACK that reached the probe, so a late
+  original reduced cwnd (`tcp_tlp_2`). (3) The response uses the ssthresh of the flavour for a
+  fast recovery ("equivalent to a fast recovery", Linux `tcp_init_cwnd_reduction()`), so CUBIC
+  keeps 0.7 (`tcp_tlp_6`); the source halved the bytes in flight. (4) No probe timeout during an
+  RTO recovery (section 7.2); the recovery point of the timeout, which F-RTO keeps, shows it. The
+  processing runs in `TcpAlgorithmBase` for each ACK, so `TcpCubic` needs no call of its own
+  (source commit 14, part).
 - **D-3 — The socket contract lands alone (S3).** Commit 2 is contract surface only, and the
   features of S7 to S18 use it. A split of commit 2 into one part for each feature is possible,
   but it costs more than it gives.
@@ -528,3 +722,406 @@ Evidence, debug build against `omnetpp-6.x`: each commit builds alone with no un
 symbol, and the TCP module tests pass at each commit (352 at the first commit, 356 at the head);
 unit 114, serializer 4 and the TCP protocol tests pass at the head, as on master. The CI
 fingerprint job passes at each commit, after the commit's own new values.
+
+### S5e — `topic/tcp-pipe-recovery`: the steps
+
+Without SACK, master's Reno and NewReno inflate cwnd in fast recovery, as RFC 5681 and RFC 6582
+describe. The source branch counts the pipe instead, as Linux does: each duplicate ACK takes one
+segment out of the bytes in flight (an inferred SACK), the retransmitted head is marked lost, and
+cwnd stays at ssthresh. The sending room, cwnd minus the pipe, is the same as the RFC's inflated
+cwnd minus FlightSize. The later stages need this count: PRR (S9) reduces the window against it.
+
+The count reads the loss marks of the retransmission queue. After a timeout, Linux marks all
+outstanding data lost and clears the retransmitted marks (`tcp_timeout_mark_lost()`), so the
+retransmissions of the go-back-N are the only bytes in flight. The source branch does this from
+commit 34 (S15) on, and only with SACK. Without these marks, the count keeps `snd_max - snd_una`
+in flight after a timeout, and the go-back-N stops until a cumulative ACK arrives. So S5e brings the
+loss marking forward, for connections with and without SACK.
+
+| Step | Commit | B of D-6 | Source |
+| --- | --- | --- | --- |
+| 1 | add: a timeout marks the outstanding data lost; nothing reads the marks yet | — | 34 (part) |
+| 2a | change: the fast recovery is marked by its flag, not by the duplicate-ACK counter | B5 | 13, 56 |
+| 2b | change: NewReno keeps "recover" from the fast retransmit and the timeout | B7 | 13 |
+| 2c | change: Reno and NewReno without SACK count the pipe instead of inflating cwnd | B5, B7, B8 | 13, 39 (part), 72 |
+
+Source commits 56, 71 and 72 repair the source's own recovery code (rule D-1), so their repairs are
+in step 2 from the start. The order can change when a step shows that it depends on a later one.
+
+With SACK, the count of the bytes in flight stays `snd_nxt - snd_una` in S5e. The Linux count needs
+loss marks during the recovery, and with SACK these come from RACK (commit 17). So B8 with SACK
+moves to S8.
+
+### S5e — `topic/tcp-pipe-recovery` — landed 2026-10-08
+
+The owner reviewed and approved S5e on 2026-10-08.
+
+S5e changes the recovery of Reno and NewReno without SACK from the inflated window of RFC 5681 and
+RFC 6582 to the pipe accounting of the source branch. Step 2 of the steps above became three
+commits, because two of its behaviors stand alone and repair master defects:
+
+| Commit | B of D-6 | Source | Moved CI rows |
+| --- | --- | --- | --- |
+| `tcp: add: mark the outstanding data lost at a timeout` | — | 34 (part) | — |
+| `tcp: change: mark the fast recovery by its flag, not by the counter` | B5 | 13, 56 | 17 |
+| `tcp: change: keep NewReno's "recover" after a timeout` | B7 | 13 | — |
+| `tcp: change: count the pipe without SACK, instead of inflating cwnd` | B5, B7, B8 | 13, 39 (part), 72 | 4 |
+
+The commit messages explain each moved row and trace. In short: master's Reno left the fast recovery
+without deflation when data of the peer reset the duplicate-ACK counter, and after a timeout in fast
+recovery it set cwnd to ssthresh at the next ACK; NewReno lost its protection against a fast
+retransmit after a timeout, and at a partial ACK after lost duplicate ACKs its cwnd became 0. With
+the pipe, cwnd minus the bytes in flight gives the room of the inflated window; only a fast
+retransmit soon after a timeout gets less room, as in Linux.
+
+The emulation of the inferred SACKs from S5c needed two repairs before the count could read it, and
+the count needed loss marks at a timeout without SACK; decisions D-11 to D-18 give these and the
+other differences from the source tree. B8 with SACK moves to S8 (RACK).
+
+New tests, each checked to fail on the commit before: `tcp_fastrexmit_rto_1` (a timeout in Reno's
+fast recovery), `tcp_newreno_rto_1` (duplicate ACKs of the go-back-N after a timeout) and
+`tcp_newreno_partial_1` (a partial ACK after lost duplicate ACKs).
+
+The standards test `rfc/Rfc5681FastRetransmit` read the published cwnd, which the pipe model
+keeps at ssthresh. The pipe commit brings its form from source commit 80 (S19): a guard judges
+steps 3 to 5 by the new data that host A sends in recovery. Its ini keeps Reno without SACK; the
+parameters `lossDetectionMode` and `prrEnabled` of the source form come with S8 and S9. With a
+bound one segment lower, the guard fires at t=0.2017 s.
+
+Items for later stages: the ACK that ends a recovery also grows cwnd on the source branch (commit
+13; with DCTCP's shared ACK path in S6); NewReno's full ACK takes option (2) with PRR (S9, D-16);
+the source resets "recover" and `firstPartialACK` at a timeout in the base class, S5e in
+`Rfc6582Recovery::onRexmitTimeout()`.
+
+Before the review, S5e moved onto master `e04a0113b3`, which adds three commits about the radio
+medium and a message class, and before the landing onto `c099761d74`, a fix of the radio medium;
+the CI job passed again at each code commit on both bases.
+
+Evidence, debug build against `omnetpp-6.x`: each commit builds alone with no undefined `inet::`
+symbol, and the TCP module tests pass at each commit (on the first base 356 at the first commit
+and 359 at the head; on `e04a0113b3` 361 at the head);
+the TCP standards tests pass at each code commit (25 pass, 2 expected failures, the packetdrill
+tests skip without inet-gpl); unit 114 and serializer 4 pass at the head. The CI fingerprint job
+passes at each code commit, after the commit's own new values.
+
+### S7 — `topic/tcp-segment-sizing`: the steps
+
+S7 comes before S6. `TcpCubic` counts with the effective MSS, and in slow start it grows only
+while cwnd is below twice the peak segments in flight, which source commit 16 records. Without
+S7, CUBIC would not grow in slow start at all (the trap of D-6).
+
+| Step | Commit | B of D-6 | Source |
+| --- | --- | --- | --- |
+| 1 | add: record the peak segments in flight in each window of data | — | 16 (part) |
+| 2 | change: slow start grows by the acknowledged bytes (RFC 5681 equation (2)) | B9 | 13 |
+| 3 | change: slow start grows only while cwnd is used | B9 | 13, 16 (part) |
+| 4 | change: congestion control counts with the effective MSS | — | 15 (part) |
+| 5 | refactor: retransmissions are cut to the effective MSS | — | 15 (part) |
+| 6 | change: the MSS option announces this side's own receive limit | — | 15 (part) |
+
+The `sendSegment()` of master already cuts each segment so that the data and the options fit in
+`snd_mss`, so step 4 changes no segment. Decision D-19 lists where the other parts of commits 15
+and 16 go. The order can change when a step shows that it depends on a later one.
+
+### S7 — `topic/tcp-segment-sizing` — landed 2026-10-08
+
+The owner reviewed and approved S7 on 2026-10-08.
+
+S7 brings the parts of source commits 15 and 16 that size segments and slow start, before S6,
+because `TcpCubic` needs them. Decision D-19 gives where the other parts of the two commits go.
+
+| Commit | B of D-6 | Source | Moved CI rows |
+| --- | --- | --- | --- |
+| `tcp: add: record the peak segments in flight in each window of data` | — | 16 (part) | — |
+| `tcp: change: grow cwnd in slow start by the acknowledged bytes` | B9 | 13 | 4 |
+| `tcp: change: grow cwnd in slow start only while the sender uses it` | B9 | 13, 16 (part) | 3 |
+| `tcp: change: count with the effective MSS in congestion control` | — | 15 (part) | — |
+| `tcp: refactor: cut retransmissions to the effective MSS` | — | 15 (part) | — |
+| `tcp: change: announce this side's own receive limit in the MSS option` | — | 15 (part) | — |
+
+The commit messages explain each moved row and trace. Slow start now grows cwnd by the bytes that
+an ACK acknowledges (RFC 5681 equation (2)), and only while the sender fills cwnd, with the peak
+of each window of data (D-20). Congestion control counts with the MSS less the timestamp option,
+and the MSS option announces this side's own receive limit. The steps moved out of S7 after a
+check showed a dependency or no test (D-19): the default MSS of `mss = -1` (S19), `TCP_MAXSEG`
+(S16), the silly-window hold (S16), and the parameters `initialWindow` and
+`initialSendSequenceNumber` (S19).
+
+New tests, each checked to fail on the commit before: `tcp_cwnd_limited_1` and
+`tcp_cwnd_limited_2` (the second also fails with the peak of the whole connection),
+`tcp_effective_mss_1` and `tcp_mss_option_1`. `tcp_nagle_2` and `tcp_timestamp_2` have new traces.
+
+Evidence, debug build against `omnetpp-6.x`: each commit builds alone with no undefined `inet::`
+symbol, and the TCP module tests pass at each commit (362 at the first commit, 366 at the head);
+the TCP standards tests pass at each code commit (25 pass, 2 expected failures, the packetdrill
+tests skip without inet-gpl); unit 114 and serializer 4 pass at the head. The CI fingerprint job
+passes at each code commit, after the commit's own new values.
+
+### S6 — `topic/tcp-cubic`: the steps
+
+| Step | Commit | B of D-6 | Source |
+| --- | --- | --- | --- |
+| 1 | add: `TcpCubic` (RFC 9438) with HyStart, in its final form | — | 14, 45, 55 (part), 57, 60 |
+| 2 | refactor: DCTCP on the shared ACK path of the classic flavours | B16 | 62, 65 |
+
+Commits 45, 55, 57 and 60 repair `TcpCubic` before any of it landed, so by rule D-1 step 1 brings
+the final form. It has two temporary forms: it does not call `processTlpAck()` until S10 brings
+the Tail Loss Probe, and it calls `processEce()` without the acknowledged bytes until step 2.
+Commit 62 only adds a comment that commit 65 removes. Commit 65 calls itself a refactor; the CI job
+checks that claim on this tree. The source change of the ACK that ends a recovery does not land
+(D-21).
+
+### S6 — `topic/tcp-cubic` — landed 2026-10-08
+
+The owner reviewed and approved S6 on 2026-10-08.
+
+S6 adds `TcpCubic` (RFC 9438) with HyStart, in the final form of the source branch, and moves
+DCTCP onto the shared ACK path of the classic flavours. Step 1 of the steps above became two
+commits, because HyStart works alone and one commit with both had more than 400 lines. Step 2
+became four commits (D-22): the CI job showed that the move of source commit 65 is no refactor on
+this tree.
+
+| Commit | B of D-6 | Source | Moved CI rows |
+| --- | --- | --- | --- |
+| `tcp: add: TcpCubic (RFC 9438)` | — | 14, 45, 55 (part), 57, 60 | — |
+| `tcp: add: HyStart for TcpCubic` | — | 14, 45, 57 | — |
+| `tcp: change: grow DCTCP's cwnd with the shared congestion control` | B9 | 65 | 1 |
+| `tcp: change: end DCTCP's inferred SACKs at an ACK of new data` | B8 | 65 | — |
+| `tcp: change: let DCTCP with SACK recover as Reno does` | B16 | 65 | — |
+| `tcp: refactor: run DCTCP on the shared ACK path` | B16 | 62, 65 | — |
+
+The commit messages explain the moved row and each trace. In short: DCTCP's own copy of the ACK
+path grew cwnd by one SMSS at each ACK, kept the inferred SACKs of old duplicate ACKs and so sent
+beyond cwnd, and with SACK grew cwnd in the recovery. After the three changes, DCTCP without ECN
+gives the same traces as Reno, and the copy goes. Its ECN-Echo reaction is now the hook
+`processEce()` of the shared path, which gets the acknowledged bytes. The ACK that ends a recovery
+does not grow cwnd (D-21). DCTCP counts no bytes in a fast recovery until S13 (D-23).
+
+New tests, each checked to fail on the commit before: `tcp_algorithm_cubic`, `tcp_cubic_beta_1`,
+`tcp_cubic_hystart_1`, `tcp_dctcp_cwnd_limited_1`, `tcp_dctcp_inferred_sack_1` and
+`tcp_dctcp_sack_recovery_1`.
+
+Items for later stages: `TcpCubic` calls `processTlpAck()` from S10 on. After S6, nothing calls
+`Rfc6675Recovery::sendDataDuringLossRecoveryPhase()` and `sendSegmentDuringLossRecoveryPhase()`;
+the source branch keeps them too, and S17, which removes the connection's copy (D-5), can remove
+them.
+
+Evidence, debug build against `omnetpp-6.x`: each commit builds alone with no undefined `inet::`
+symbol, and the TCP module tests pass at each commit (373 at the first code commit, 377 at the
+head); the TCP standards tests pass at each code commit (25 pass, 2 expected failures, the
+packetdrill tests skip without inet-gpl); unit 116 and serializer 4 pass at the head. The CI
+fingerprint job passes at each code commit, after the commit's own new values.
+
+### S8 — `topic/tcp-rack`: the steps
+
+| Step | Commit | B of D-6 | Source |
+| --- | --- | --- | --- |
+| 1 | fix: keep the lost mark when a retransmission splits a queue region | — | 49, 17 (part) |
+| 2 | add: the send times, the transmission counts and the original segment starts in the retransmission queue, and the minimum RTT | B17 | 17 (part), 13 (part) |
+| 3 | change: a retransmission stays inside the sent data and inside one original segment | — | 17 (part) |
+| 4 | change: count the bytes in flight with SACK as Linux does, with the DupThresh loss marks | B8 | 16 (part), 17 (part) |
+| 5 | add: RACK loss detection (RFC 8985), selected by `lossDetectionMode` | — | 17, 64 (part) |
+| 6 | add: the algorithm hears which segments an ACK acknowledges, before the queue discards them | — | 18 (part) |
+| 7 | add: learn the reordering degree of the path | — | 19 |
+| 8 | add: the STATUS counters | B17 | 18 (part), 16 (part) |
+| 9 | add: seed the RTT estimator from the handshake | — | 16 (part) |
+
+Master has the defect of step 1 since S5e, which brought the loss marks, so by rule 4 the fix
+stays its own commit. Steps 5, 7 and 9 add features that stay off (D-24). The tests come from
+commit 41 (`tcp_rack_1`, `tcp_info_fields_1` to `_3`, and the STATUS query of `TcpTestClient`),
+without the parameters of later stages (`initialWindow`, `tcp-legacy.ini`) and without the
+STATUS fields of later features (AccECN, Fast Open, the send buffer). The order can change when a
+step shows that it depends on a later one.
+
+### S8 — `topic/tcp-rack` — landed 2026-10-08
+
+The owner reviewed and approved S8 on 2026-10-08.
+
+S8 brings RACK loss detection (RFC 8985), the learning of the reordering degree, the STATUS counters
+and the handshake RTT seed, which all stay off (D-24), and the count of the bytes in flight with
+SACK (B8). The steps above changed in three places. The connection still read the SACK option in
+its own copy (D-5), and RACK and the loss marks run in the recovery's copy, so a refactor routes
+the option to `Rfc6675Recovery` first (from source commits 26 and 51). Step 6 joined step 7, its
+only user. Step 8 became two commits, because master's STATUS reply had no `SocketInd` tag, so an
+application that asked for STATUS stopped on an assertion.
+
+| Commit | B of D-6 | Source | Moved CI rows |
+| --- | --- | --- | --- |
+| `tcp: fix: keep the lost mark when a retransmission splits a queue region` | — | 49, 17 (part) | — |
+| `tcp: add: send times and segment starts in the retransmission queue` | B17 | 17 (part), 13 (part) | — |
+| `tcp: change: retransmit inside the sent data and the original segments` | — | 17 (part) | 2 |
+| `tcp: refactor: let the SACK recovery read the SACK option` | — | 26 (part), 51 (part) | — |
+| `tcp: change: count the bytes in flight with SACK as Linux does` | B8 | 16 (part), 17 (part) | 1 |
+| `tcp: add: RACK loss detection (RFC 8985), selected by lossDetectionMode` | — | 17, 64 (part) | — |
+| `tcp: add: learn the reordering degree of the path` | — | 19, 18 (part) | — |
+| `tcp: fix: tag the STATUS reply with the socket ID` | — | 18 (part) | — |
+| `tcp: add: the STATUS counters of TCP_INFO` | B17 | 18 (part), 16 (part), 19 (part) | — |
+| `tcp: add: seed the RTT estimator from the handshake` | — | 16 (part), 26 (part) | — |
+
+The commit messages explain each moved row and trace. In short: a retransmission keeps the
+original segments, as Linux does (the two `tcp_pmtud` rows, after PMTUD cut a segment); with
+SACK, the SACKed and lost bytes leave the count of the bytes in flight (`bulktransfer`
+`inet_inet_2b`). RACK, the learning and the seed change nothing until a test selects them.
+Decisions D-25 to D-27 give the differences from the source tree: a retransmission that ends at
+`snd_max` keeps its last whole segment, RACK does not enter a recovery by the duplicate-ACK
+count, and the parameter of the handshake seed controls both sides.
+
+New tests, each checked to fail on the commit before: the unit tests `TcpSackRexmitQueue_2` and
+`TcpSackRexmitQueue_1`, and the module tests `tcp_rexmit_boundaries_1`, `tcp_sack_inflight_1`,
+`tcp_rack_1` to `_3`, `tcp_reordering_1`, `tcp_status_1`, `tcp_info_fields_1` to `_3`, and
+`tcp_seed_rtt_1` and `_2`. `tcp_rexmit_boundaries_2` fails with the source form of D-25. The
+source tests come without `initialWindow` and `tcp-legacy.ini` (S19); `tcp_rack_1` and
+`tcp_info_fields_1` use `increasedIWEnabled` for the larger initial window, and
+`tcp_info_fields_2` asks for STATUS after this tree's probes, at t=6.5 and t=9.
+
+Items for later stages: S11 resets the full-segment counter at the SYN (commit 18) and answers
+STATUS before the open; S12 keeps the check of `seedRttFromHandshake` on the active side (D-27)
+and fills `synDataAccepted`; S13 fills the AccECN fields; S14 fills `skRcvbuf` and
+`sndbufLimited`; S15 fills `lastDataRecvTime`, and its persist timing re-times
+`tcp_info_fields_2`; S17 moves the reset of the duplicate-ACK counter from the connection to the
+algorithm (commit 18, B1 of D-6); S19 sets the source defaults of D-24 and brings the pins of
+`Rfc5681FastRetransmit`. In DupThresh mode, the learned reordering degree reaches only IsLost();
+the DupAcks trigger keeps DupThresh, as on the source branch, while Linux compares the count
+with the learned degree.
+
+Evidence, debug build against `omnetpp-6.x`: each commit builds alone with no undefined `inet::`
+symbol, and the TCP module tests pass at each commit (377 at the first code commit, 390 at the
+head); the TCP standards tests pass at each code commit (25 pass, 2 expected failures, the
+packetdrill tests skip without inet-gpl); unit 118 and serializer 4 pass at the head. The CI
+fingerprint job passes at each code commit, after the commit's own new values.
+
+### S9 — `topic/tcp-prr`: the steps
+
+| Step | Commit | B of D-6 | Source |
+| --- | --- | --- | --- |
+| 1 | fix: count the delivered bytes of a cumulative ACK once | — | 39 (part) |
+| 2 | add: Proportional Rate Reduction (RFC 6937), selected by `prrEnabled` | — | 20, 59 (part) |
+| 3 | comment: drop a test name from a comment of the SACK recovery | — | 64 (part) |
+
+Step 1 repairs the STATUS field `deliveredBytes` of S8, which PRR reads as DeliveredData (D-28).
+PRR lands off, as the features of S8 do (D-24): `prrEnabled = false` until S19. Source commit 59
+only removes `prrInitCwndReduction()`, which has no caller, so S9 never adds it; its comment in
+`Rfc6582Recovery` refers to a line that S5e already removed. NewReno without SACK keeps option (1)
+of RFC 6582 (D-16). Step 3 is the last part of commit 64 for code on master: a comment of
+`Rfc6675Recovery::stepC()` from S5d.
+
+### S9 — `topic/tcp-prr` — landed 2026-10-08
+
+The owner reviewed and approved S9 on 2026-10-08.
+
+S9 brings Proportional Rate Reduction (RFC 6937) to the SACK recovery, off by default (D-24), after
+a repair of the count of the delivered bytes, which PRR reads as DeliveredData (D-28).
+
+| Commit | B of D-6 | Source | Moved CI rows |
+| --- | --- | --- | --- |
+| `tcp: fix: count the delivered bytes of a cumulative ACK once` | — | 39 (part) | — |
+| `tcp: add: Proportional Rate Reduction (RFC 6937), selected by prrEnabled` | — | 20, 59 (part), 13 (part) | — |
+| `tcp: comment: drop a test name from a comment of the SACK recovery` | — | 64 (part) | — |
+
+The commit messages explain each trace. In short: a cumulative ACK now adds its bytes to the
+delivered count, but not the bytes that a SACK reported before (the source form counts them twice,
+79872 bytes for a transfer of 65536); PRR then paces the sending over the recovery. PRR needs the
+sent bytes of the recovery, so `TcpClassicAlgorithmBase` gives `dataSent()` and
+`segmentRetransmitted()` to the recovery too, as source commit 13 does. The source runs PRR only
+with SACK, so NewReno without SACK keeps option (1) of RFC 6582 (D-16).
+
+In the module test network, all ACKs of a flight arrive at the same time, so PRR and RFC 6675 send
+the same segments: PRR spreads the sending inside one instant. `tcp_prr_1` therefore spaces the
+duplicate ACKs 1 ms apart with the tester and delays the fast retransmission, and it checks the
+first segments of the recovery. Later in that run, the ACKs of the new segments overtake the
+delayed duplicate ACKs and SACK the whole flight at once, so both runs send a burst; the test does
+not check that part.
+
+New tests, each checked to fail on the commit before: `tcp_delivered_1` and `tcp_prr_1`. The
+source's `tcp_prr_1` uses `initialWindow` (S19); here `increasedIWEnabled` gives the larger
+initial window.
+
+Items for later stages: S10 adds to `step4()` and `segmentRetransmitted()` the parts of the tail
+loss probe and of the undo; S19 sets `prrEnabled` to true and brings the pins of
+`Rfc5681FastRetransmit`.
+
+Evidence, debug build against `omnetpp-6.x`: each commit builds alone with no undefined `inet::`
+symbol, and the TCP module tests pass at each commit (391 at the first code commit, 392 at the
+head); the TCP standards tests pass at each code commit (25 pass, 2 expected failures, the
+packetdrill tests skip without inet-gpl); unit 118 and serializer 4 pass at the head. The CI
+fingerprint job passes at each code commit, and no row moves.
+
+### S10 — `topic/tcp-undo-frto-tlp`: the steps
+
+| Step | Commit | B of D-6 | Source |
+| --- | --- | --- | --- |
+| 1 | fix: report every duplicate segment by D-SACK | — | 22 (part) |
+| 2 | change: report the duplicated part of a segment by D-SACK | — | 22 (part) |
+| 2b | fix: no SACK block for a segment that advanced the ACK | — | new |
+| 2c | fix: send nothing when no data is left after the forward of `snd_nxt` | — | 37 (D-33) |
+| 3 | add: undo a needless window reduction, selected by `lossUndoEnabled` | — | 22 (part) |
+| 4 | add: F-RTO (RFC 5682), selected by `frtoEnabled` | — | 24, 86 |
+| 5 | add: Tail Loss Probe (RFC 8985 section 7), selected by `tlpEnabled` | — | 25, 76, 85 |
+
+Master sends a D-SACK for a duplicate segment only when it ends below `rcv_nxt`, so the most common
+duplicate, a needless retransmission of the last received segment, gets none; by rule 4 the repair
+is its own commit. The new features stay off (D-24) until S19: `lossUndoEnabled`, `frtoEnabled`
+and `tlpEnabled` are false; `dsackEnabled` defaults to `sackSupport`, which keeps master's reports.
+Commits 76, 85 and 86 repair the probe and F-RTO before they landed, so by rule D-1 they fold into
+their steps; the plan's table had put 86 in S17. The D-SACK of a duplicate SYN-ACK in a
+simultaneous open goes to S11.
+
+Two repairs of master came up during the work. Step 2b: the receiver put the block of a segment
+that filled a gap first in the SACK option, below the new cumulative ACK (RFC 2018 section 4), and
+the sender read it as a D-SACK. Step 2c: after a timeout with SACK, the sender made a segment of
+zero bytes and stopped (D-33); the F-RTO tests meet it. The work also found D-34, which a later
+stage repairs. Step 5 processes each ACK in `TcpAlgorithmBase`, so `TcpCubic` needs no call of
+its own (D-35).
+
+### S10 — `topic/tcp-undo-frto-tlp` — landed 2026-10-08
+
+The owner reviewed and approved S10 on 2026-10-08.
+
+S10 brings the undo of a needless window reduction, F-RTO (RFC 5682) and the Tail Loss Probe
+(RFC 8985 section 7), all off by default (D-24). Three repairs of master come first, because the
+features need them: the D-SACK reports of the receiver, the order of the SACK blocks, and the send
+path after a timeout.
+
+| Commit | B of D-6 | Source | Moved CI rows |
+| --- | --- | --- | --- |
+| `tcp: fix: report every duplicate segment by D-SACK` | — | 22 (part) | 1 |
+| `tcp: change: report the duplicated part of a segment by D-SACK` | — | 22 (part) | — |
+| `tcp: fix: no SACK block for a segment that advanced the ACK` | — | new | 1 |
+| `tcp: fix: send nothing when no data is left after the forward of snd_nxt` | — | 37 | — |
+| `tcp: add: undo a needless window reduction, selected by lossUndoEnabled` | — | 22 (part) | — |
+| `tcp: add: F-RTO (RFC 5682), selected by frtoEnabled` | — | 24, 86 | — |
+| `tcp: add: Tail Loss Probe (RFC 8985 section 7), selected by tlpEnabled` | — | 25, 76, 85 | — |
+
+The commit messages explain each trace. In short: the one moved row, `bulktransfer inet_inet_2b`,
+moves two times. First the ACK of a needless retransmission gets a D-SACK block and is 12 bytes
+longer; then an ACK that fills a gap loses its block below the cumulative ACK and is 8 bytes
+shorter. The undo reads these reports: master sent no D-SACK for the most common duplicate, and a
+false one at each filled gap.
+
+S10 deviates from the source where the source is wrong, and a test fails with each source form.
+The undo counts as Linux counts (D-29) and starts a new context at each timeout (D-31). F-RTO
+takes no old SACK as evidence (D-30) and follows steps 1 and 2.b of RFC 5682 (D-32). The tail loss
+probe follows sections 7.2 and 7.4.2 of RFC 8985 (D-35). Source commit 37 comes forward from S16,
+with stops for the send loops (D-33). D-34 is a defect of master that `tcp_frto_4` shows; a later
+stage repairs it.
+
+In the module test network, all ACKs of a flight arrive at the same time. So the tests delay
+single segments or ACKs with the tester, and an original arrives after a retransmission or a
+probe.
+
+New tests: `tcp_dsack_1` to `tcp_dsack_3`, `tcp_sack_8`, `tcp_undo_1` to `tcp_undo_3`,
+`tcp_frto_1` to `tcp_frto_5`, and `tcp_tlp_1` to `tcp_tlp_6`. The repair of step 2b changes the
+expectations of `tcp_sack_3`, `tcp_sack_inflight_1`, `tcp_newreno_sack_1`, `tcp_dctcp_sack_1` and
+`tcp_dctcp_sack_recovery_1`: each of their ACKs that fills a gap loses the block below the ACK.
+
+Items for later stages: D-34 (the proposal is S15); the new data of step 2.b of F-RTO; S16 no
+longer has source commit 37; S19 sets `lossUndoEnabled`, `frtoEnabled` and `tlpEnabled` to true.
+
+Evidence, debug build against `omnetpp-6.x`: each commit builds alone with no undefined `inet::`
+symbol, and the TCP module tests pass at each commit (393 at the first code commit, 410 at the
+head); the TCP standards tests pass at each code commit (25 pass, 2 expected failures, the
+packetdrill tests skip without inet-gpl); unit 118 and serializer 4 pass at the head. Each repair
+fails one commit earlier: `tcp_dsack_1` before step 1, `tcp_dsack_2` and `tcp_dsack_3` before
+step 2, the new expectation of `tcp_sack_3` before step 2b, `tcp_sack_8` before step 2c. The CI
+fingerprint job passes at each code commit; only `bulktransfer inet_inet_2b` moves, at steps 1 and
+2b. The six gates pass.

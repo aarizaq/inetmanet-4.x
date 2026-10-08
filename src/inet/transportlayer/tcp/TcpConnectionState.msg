@@ -115,6 +115,8 @@ struct TcpStateVariables
     uint32_t snd_mss = 0;           // sender maximum segment size (without headers, i.e. only segment text); see RFC 2581, page 1.
                                     // This will be set to the minimum of the local smss parameter and the value specified in the
                                     // MSS option received during connection setup.
+    uint32_t advertisedMss = 0;     // the MSS that this side announces in its SYN or SYN-ACK: its own receive limit
+                                    // (RFC 9293 section 3.7.1), not clamped to the MSS of the peer as snd_mss is
 
     // send sequence number variables (see RFC 793, "3.2. Terminology")
     uint32_t snd_una = 0;           // send unacknowledged
@@ -240,7 +242,8 @@ struct TcpStateVariables
     simtime_t pmtudTimeout;                 // time after which the original MSS is restored to probe for increased path MTU
     simtime_t pmtudLastMssReduction;        // timestamp of last PMTUD-triggered MSS reduction (-1 = never reduced)
     // declared here for the code above that already uses it:
-    uint32_t maxPacketsOut = 0;    // peak segments in flight observed at send time (Linux max_packets_out); drives the RFC 5681 cwnd-limited slow-start gate
+    uint32_t maxPacketsOut = 0;    // peak segments in flight in the current window of data (Linux max_packets_out); drives the cwnd-limited slow-start gate
+    uint32_t cwndUsageSeq = 0;     // snd_nxt when the current window of data started (Linux cwnd_usage_seq)
     uint32_t snd_effmss = 0;        // effective sender maximum segment size without TCP/IP header options
     bool accEcnNegotiated = false; // set once 3WHS negotiation determines this connection uses AccECN, not classic ECN or no-ECN
     uint8_t accEcnOptMinFields = 0;
@@ -248,6 +251,56 @@ struct TcpStateVariables
     uint64_t deliveredBytes = 0;   // cumulative newly-delivered (cumulatively acked + selectively acked) bytes
     uint32_t lastRcvdTSecr = 0;    // most recent TSecr echoed back by the peer (Eifel input)
     simtime_t minRtt = 0;         // minimum RTT observed on the connection (0 = unset)
+    int lossDetectionMode = 0;    // 0 = classic DupThresh (RFC 6675), 1 = RACK time-based
+    simtime_t rackXmitTime = 0;   // send time of the most recently delivered (SACKed/ACKed) segment
+    uint32_t rackEndSeq = 0;      // end sequence number of that segment
+    simtime_t rackRtt = 0;        // RTT of the ACK that last advanced the RACK point
+    bool rackReordSeen = false;   // whether reordering has been observed (widens the reordering window)
+    bool adaptiveReorderingEnabled = false; // set from the adaptiveReorderingEnabled parameter
+    bool dsack_enabled = false;    // report duplicate segments by D-SACK blocks (RFC 2883), set from the dsackEnabled parameter
+    uint32_t reordering = 3;       // learned reordering degree in segments; initialized to dupthresh
+    uint32_t maxReordering = 300;  // upper bound (set from the maxReordering parameter)
+
+    // PRR - Proportional Rate Reduction (RFC 6937)
+    bool prrEnabled = false;       // use PRR during fast recovery (set from the prrEnabled parameter)
+    uint32_t prrDelivered = 0;     // bytes delivered during the current recovery episode
+    uint32_t prrOut = 0;           // bytes transmitted during the current recovery episode
+    uint32_t priorCwnd = 0;        // snd_cwnd snapshot at recovery entry (RFC 6937 RecoverFS proxy; also the undo target)
+
+    // loss undo (RFC 2883 D-SACK, RFC 3522 Eifel)
+    bool lossUndoEnabled = false;  // set from the lossUndoEnabled parameter
+    uint32_t undoMarker = 0;       // snd_una at recovery entry; 0 = no undo pending
+    int32_t undoRetrans = 0;       // retransmitted segments still to be confirmed spurious (-1 = unknown)
+    uint32_t priorSsthresh = 0;    // ssthresh before the reduction (restored on undo)
+    uint32_t retransStampTS = 0;   // TSval echoed on the first retransmit of the episode (Eifel); 0 = none
+    bool dsackSeen = false;        // a D-SACK was seen while processing the current segment (reset per segment)
+    uint32_t dsackBytes = 0;       // bytes covered by the D-SACK seen on the current segment
+    uint32_t dsackEndSeq = 0;      // end of the D-SACK block seen on the current segment
+
+    // F-RTO spurious-RTO detection (RFC 5682, SACK-enhanced; Linux tcp_frto=2)
+    bool frtoEnabled = false;      // set from the frtoEnabled parameter
+    bool frtoActive = false;       // an F-RTO episode is open (since the last RTO)
+    uint32_t rtoRecoveryPoint = 0; // snd_max at the last RTO (RFC 5682 RecoveryPoint); 0 = the recovery of the RTO is complete
+    bool frtoOrigAcked = false;    // never-retransmitted data was acked/SACKed during the episode
+
+    // Tail Loss Probe (RFC 8985 section 7, Linux tcp_send_loss_probe())
+    bool tlpEnabled = false;       // set from the tlpEnabled parameter
+    uint32_t tlpHighSeq = 0;       // snd_max after the probe (RFC 8985 TLP.end_seq); 0 = no probe outstanding
+    bool tlpRetrans = false;       // the outstanding probe retransmitted data (RFC 8985 TLP.is_retrans)
+
+    // TCP_INFO time counters (busy_time/rwnd_limited): cumulative time bookkeeping, read-only
+    // with respect to every send/receive decision -- consulted only by TcpStatusInfo.
+    // INET-native definitions (not a port of Linux's tcp_chrono_* state machine); see
+    // enqueueSendCommandData()/processAckInEstabEtc() (busy) and sendData() (rwnd).
+    // A *StartTime of -1 means "not currently in that state"; *Accumulated is the
+    // running total up to the last state exit.
+    simtime_t busyStartTime;          // set to -1 in configureStateVariables()
+    simtime_t busyTimeAccumulated = 0;
+    simtime_t rwndLimitedStartTime;   // set to -1 in configureStateVariables()
+    simtime_t rwndLimitedAccumulated = 0;
+
+    bool seedRttFromHandshake = false; // seed srtt/rttvar/RTO from the SYN<->SYN-ACK exchange, as Linux does
+    simtime_t handshakeSentTime = -1; // when our SYN (active) / SYN-ACK (passive) was last sent; seeds the RTT estimator from the handshake RTT on reaching ESTABLISHED (skipped per Karn if the handshake segment was retransmitted)
     uint64_t prrDeliveredMark = 0; // snapshot of deliveredBytes at the start of the current segment (per-ACK delta = newly acked+sacked)
     bool sawAccEcnOpt = false;
 };

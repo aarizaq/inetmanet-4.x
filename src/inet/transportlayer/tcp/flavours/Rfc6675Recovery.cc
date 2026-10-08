@@ -57,6 +57,8 @@ void Rfc6675Recovery::stepA()
     //"
     if (seqGE(state->snd_una, state->recoveryPoint)) {
         state->lossRecovery = false;
+        if (state->prrEnabled)
+            prrEndCwndReduction(); // RFC 6937: deflate to ssthresh on leaving recovery
         conn->getRexmitQueueForUpdate()->discardUpTo(state->snd_una);
     }
 }
@@ -92,8 +94,7 @@ void Rfc6675Recovery::stepC()
     // options-adjusted effective MSS): Linux's equivalent gate is in PACKETS
     // (tcp_packets_in_flight < snd_cwnd), so a PRR budget of exactly one
     // 1000-byte segment must not be swallowed by the 12-byte timestamp
-    // overhead (client-ack-dropped-then-recovery pins the second lost
-    // segment going out in the same recovery-entry burst).
+    // overhead, or the second lost segment misses the recovery-entry burst.
     while ((int32_t)state->snd_cwnd - (int32_t)state->pipe
            >= (int32_t)(state->snd_effmss > 0 ? state->snd_effmss : state->snd_mss)) {
         //"
@@ -113,7 +114,8 @@ void Rfc6675Recovery::stepC()
         //       retransmitted segment unless NextSeg () rule (4) was
         //       invoked for this retransmission.
         //"
-        if (seqLess(seqNum, state->snd_max))
+        bool retransmission = seqLess(seqNum, state->snd_max);
+        if (retransmission)
             state->highRxt = seqNum + state->snd_mss;
 
         //"
@@ -129,6 +131,21 @@ void Rfc6675Recovery::stepC()
         if (seqLE(seqNum + state->snd_mss, state->snd_una + state->snd_wnd)) {
             state->snd_nxt = seqNum;
             uint32_t sentBytes = conn->sendSegment(state->snd_mss);
+            if (sentBytes == 0) // no data left after the forward of snd_nxt
+                break;
+
+            // RFC 6937 accounting: sendSegment() is called here DIRECTLY (not via
+            // sendData()/retransmitOneSegment()), so the dataSent()/segmentRetransmitted()
+            // callbacks that feed prrOut never fire for these sends. Count them here, or
+            // prrOut stays 0 and PRR's sndcnt = prrDelivered - prrOut over-sends.
+            if (state->prrEnabled && state->lossRecovery)
+                state->prrOut += sentBytes;
+
+            // the loss undo counts every retransmission of the episode, also those
+            // of step (C), which do not pass segmentRetransmitted() (Linux counts
+            // each retransmitted skb in undo_retrans)
+            if (retransmission && sentBytes > 0)
+                countUndoRetransmission(seqNum, seqNum + sentBytes);
 
             //"
             // (C.4) The estimate of the amount of data outstanding in the
@@ -153,6 +170,12 @@ void Rfc6675Recovery::receivedAckForUnackedData(uint32_t numBytesAcked)
     // Once a TCP is in the loss recovery phase, the following procedure
     // MUST be used for each arriving ACK:
     //"
+    // RFC 6937: while in fast recovery PRR sizes cwnd from the bytes this ACK
+    // delivered, instead of the classic inflate-per-dupack / deflate-on-exit.
+    // Runs before stepA so a recovery-ending ACK still deflates to ssthresh there.
+    if (state->prrEnabled && state->lossRecovery)
+        prrCwndReduction((int)prrNewlyDelivered(), 0, true /* snd_una advanced */);
+
     stepA();
     stepB();
     stepC();
@@ -171,6 +194,10 @@ void Rfc6675Recovery::step4()
     // (4) Invoke fast retransmit and enter loss recovery as follows:
     //"
     state->lossRecovery = true;
+    // RFC 8985 section 7.1: "Reset TLP.is_retrans and TLP.end_seq when initiating a
+    // connection, fast recovery, or RTO recovery."
+    state->tlpHighSeq = 0;
+    state->tlpRetrans = false;
 
     //"
     // (4.1) RecoveryPoint = HighData
@@ -193,10 +220,38 @@ void Rfc6675Recovery::step4()
     // icsk_ca_ops->ssthresh): the default is RFC 5681/6675's max(FlightSize/2, 2*SMSS)
     // (TcpAlgorithmBase::calculateSsthreshForFastRecovery), but CUBIC applies its own
     // beta (cwnd*0.7) -- hardcoding FlightSize/2 here gave CUBIC connections the wrong
-    // post-recovery ssthresh (the fast_recovery/PRR scripts are all CUBIC).
+    // post-recovery ssthresh (the fast_recovery/PRR scripts are all CUBIC). Capture the
+    // pre-reduction cwnd first for PRR's priorCwnd (Linux tp->prior_cwnd = tp->snd_cwnd).
+    // RFC 2883/3522: capture the undo context BEFORE the reduction below, so a
+    // later D-SACK proving the retransmission spurious can restore cwnd/ssthresh.
+    if (state->lossUndoEnabled)
+        undoInit();
+    uint32_t priorCwnd = state->snd_cwnd;
     state->ssthresh = state->snd_cwnd = conn->getTcpAlgorithmForUpdate()->calculateSsthreshForFastRecovery();
     conn->emit(cwndSignal, state->snd_cwnd);
     conn->emit(ssthreshSignal, state->ssthresh);
+
+    // RFC 6937: from here on the sending rate is paced by PRR rather than by the
+    // reduced cwnd above; snapshot the pre-reduction cwnd and reset the counters.
+    if (state->prrEnabled) {
+        state->priorCwnd = priorCwnd;
+        state->prrDelivered = 0;
+        state->prrOut = 0;
+        EV_INFO << "PRR fast recovery: entering, priorCwnd=" << state->priorCwnd
+                << " ssthresh=" << state->ssthresh << "\n";
+        // Run PRR on the entry ACK itself, exactly as Linux tcp_fastretrans_alert
+        // calls tcp_cwnd_reduction() BEFORE tcp_xmit_retransmit_queue(). This
+        // clamps snd_cwnd to pipe+sndcnt (~1 segment on entry) so the
+        // retransmitOneSegment() + stepC() below send only sndcnt worth. Without
+        // it snd_cwnd stays at the full reduced ssthresh and stepC's cwnd-pipe
+        // loop floods every RACK-marked-lost segment at once -- a premature
+        // multi-segment retransmit burst (Linux sends just the first hole and
+        // paces the rest over later ACKs). step4() is only reached from the
+        // duplicate-ACK path, so snd_una has not advanced (sndUnaAdvanced=false);
+        // on the reo-timer entry there is no new delivery, prrNewlyDelivered()==0,
+        // and prrCwndReduction() is an early-return no-op (behavior unchanged).
+        prrCwndReduction((int)prrNewlyDelivered(), 0, false);
+    }
 
     //"
     // (4.3) Retransmit the first data segment presumed dropped -- the
@@ -243,7 +298,12 @@ void Rfc6675Recovery::receivedDuplicateAck()
         //     potentially prevent IsLost() (next step) from declaring a segment
         //     as lost.
         //"
-        if (state->dupacks >= state->dupthresh)
+        // RACK (RFC 8985, step 4 of the detection) replaces this count: it enters
+        // the recovery itself when DupThresh segments are SACKed and no reordering
+        // was seen, and not at all by DupThresh once reordering was seen (Linux
+        // tcp_time_to_recover() skips the duplicate-ACK heuristic with RACK).
+        // The RACK marks reach this function through IsLost() in step (2).
+        if (state->lossDetectionMode != 1 && state->dupacks >= state->dupthresh)
             step4();
         else {
             //"
@@ -284,11 +344,20 @@ void Rfc6675Recovery::receivedDuplicateAck()
                     if (!nextSeg(seqNum))
                         break;
                     // Limited Transmit (RFC 3042 / RFC 6675 step 3.3) transmits only
-                    // PREVIOUSLY UNSENT data (HighData+1), never a retransmission.
+                    // PREVIOUSLY UNSENT data (HighData+1), never a retransmission. In RACK
+                    // mode (lossDetectionMode==1) nextSeg()'s rule-3 "last resort" clause
+                    // would otherwise return an old unSACKed segment (== snd_una on the first
+                    // SACK) and retransmit the first hole a dupack early -- Linux only
+                    // retransmits once RACK's reordering timer enters recovery. Restrict this
+                    // pre-recovery path to new data there; classic recovery keeps its behavior.
+                    if (state->lossDetectionMode == 1 && seqLess(seqNum, state->snd_max))
+                        break;
                     if (seqLE(seqNum + state->snd_mss, state->snd_una + state->snd_wnd)) {
                         state->snd_nxt = seqNum;
                         uint32_t oldSndMax = state->snd_max;
                         uint32_t sentBytes = conn->sendSegment(state->snd_mss);
+                        if (sentBytes == 0) // no data left after the forward of snd_nxt
+                            break;
                         state->pipe += sentBytes;
                         state->limitedTransmitBytes += state->snd_max - oldSndMax;
                     }
@@ -303,6 +372,14 @@ void Rfc6675Recovery::receivedDuplicateAck()
         }
     }
     else {
+        // Already in loss recovery and this ACK is a (SACK-carrying) duplicate --
+        // snd_una did not advance. RFC 6937 PRR must still run here so cwnd tracks the
+        // bytes this ACK newly SACKed (Linux tcp_cwnd_reduction runs on EVERY ACK in
+        // recovery); without it a pure-SACK recovery leaves cwnd frozen below pipe after
+        // the entry retransmit and stalls into an RTO. sndUnaAdvanced=false.
+        if (state->prrEnabled)
+            prrCwndReduction((int)prrNewlyDelivered(), 0, false /* snd_una not advanced */);
+
         stepA();
         stepB();
         stepC();
@@ -358,6 +435,14 @@ bool Rfc6675Recovery::processSACKOption(const Ptr<const TcpHeader>& tcpHeader, c
                 //"
                 EV_DETAIL << "Received D-SACK below cumulative ACK=" << tcpHeader->getAckNo()
                           << " D-SACK: " << tmp.str() << endl;
+                // RFC 2883: the segment identified by this block was received more
+                // than once. Record it for the loss undo (the RFC deliberately leaves
+                // the action unspecified).
+                noteDsack(tmp.getStart(), tmp.getEnd());
+                // a D-SACK also reveals reordering of the (spuriously retransmitted)
+                // segment: grow the reordering degree so it stops recurring.
+                if (state->adaptiveReorderingEnabled)
+                    checkSackReordering(tmp.getStart());
                 // Note: RFC 2883 does not specify what should be done in this case.
                 // RFC 2883, page 9:
                 //"
@@ -383,6 +468,14 @@ bool Rfc6675Recovery::processSACKOption(const Ptr<const TcpHeader>& tcpHeader, c
                     EV_DETAIL << "Received D-SACK above cumulative ACK=" << tcpHeader->getAckNo()
                               << " D-SACK: " << tmp.str()
                               << ", SACK: " << tmp2.str() << endl;
+                    // RFC 2883: the segment identified by this block was received more
+                    // than once. Record it for the loss undo (the RFC deliberately leaves
+                    // the action unspecified).
+                    noteDsack(tmp.getStart(), tmp.getEnd());
+                    // a D-SACK also reveals reordering of the (spuriously retransmitted)
+                    // segment: grow the reordering degree so it stops recurring.
+                    if (state->adaptiveReorderingEnabled)
+                        checkSackReordering(tmp.getStart());
                     // Note: RFC 2883 does not specify what should be done in this case.
                     // RFC 2883, page 9:
                     //"
@@ -395,11 +488,35 @@ bool Rfc6675Recovery::processSACKOption(const Ptr<const TcpHeader>& tcpHeader, c
             }
 
             if (seqGreater(tmp.getEnd(), tcpHeader->getAckNo()) && seqGreater(tmp.getEnd(), state->snd_una)) {
-                conn->getRexmitQueueForUpdate()->setSackedBit(tmp.getStart(), tmp.getEnd());
+                // FACK before this block is applied: needed to recognize that the
+                // block NEWLY sacks data below the highest already-SACKed sequence.
+                uint32_t fackBefore = conn->getRexmitQueue()->getHighestSackedSeqNum();
+                uint32_t newlySackedLow = conn->getRexmitQueueForUpdate()->setSackedBit(tmp.getStart(), tmp.getEnd());
+                // Reordering detection (Linux tcp_sacktag_one/tcp_check_sack_reordering):
+                // a never-retransmitted range newly SACKed BELOW the prior FACK proves
+                // the network delivered it out of order -- data above it arrived first.
+                // A re-reported or merely grown block returns newlySackedLow at/above
+                // fackBefore and is ignored, as are SACKs of retransmissions.
+                // F-RTO (SACK side): newly SACKed data that was never retransmitted
+                // likewise proves the original flight arrived.
+                if (state->frtoActive && newlySackedLow != 0)
+                    state->frtoOrigAcked = true;
+                if (state->adaptiveReorderingEnabled && newlySackedLow != 0
+                        && fackBefore != 0 && seqLess(newlySackedLow, fackBefore))
+                    checkSackReordering(newlySackedLow);
             }
             else
                 EV_DETAIL << "Received SACK below total cumulative ACK snd_una=" << state->snd_una << "\n";
         }
+        // the loss marks that the count of the bytes in flight reads: the DupThresh
+        // rule of RFC 6675, by segments. Loss marking is exclusive per mode (Linux
+        // tcp_identify_packet_loss): under RACK only time-based marking below may set
+        // lost -- the DupThresh region rule would pre-mark burst holes on the first
+        // SACK, which both defeats the reordering-window timer (already-lost regions
+        // are skipped as candidates) and over-counts small (sub-MSS) SACKed regions
+        // against a segment threshold.
+        if (state->lossDetectionMode != 1)
+            conn->getRexmitQueueForUpdate()->updateLost();
 
         state->rcv_sacks += n; // total counter, no current number
 
@@ -421,6 +538,10 @@ bool Rfc6675Recovery::processSACKOption(const Ptr<const TcpHeader>& tcpHeader, c
             state->deliveredBytes += state->sackedBytes - state->sackedBytes_old;
             conn->emit(deliveredSignal, (unsigned long)state->deliveredBytes);
         }
+
+        // RACK time-based loss detection runs on every ACK carrying new SACK info
+        if (state->lossDetectionMode == 1)
+            rackDetectAndMarkLost();
     }
     return true;
 }
@@ -440,26 +561,471 @@ bool Rfc6675Recovery::isLost(uint32_t seqNum)
     //"
     ASSERT(seqGE(seqNum, state->snd_una)); // HighAck = snd_una - 1
 
-    bool isLost = (conn->getRexmitQueue()->getNumOfDiscontiguousSacks(seqNum) >= state->dupthresh
-                   || conn->getRexmitQueue()->getAmountOfSackedBytes(seqNum) > (state->dupthresh - 1) * state->snd_mss);
+    // RACK mode: a segment is lost iff RACK has marked its region lost (by time).
+    // A seqNum not tracked by the rexmit queue (below its start, or at/above its
+    // end) has no region and therefore cannot be marked lost -- guard getRegion,
+    // whose precondition is begin <= seqNum < end. This can happen for a segment
+    // whose range was already discarded, or before anything is queued.
+    if (state->lossDetectionMode == 1) {
+        auto rexmitQueue = conn->getRexmitQueue();
+        if (rexmitQueue->getQueueLength() == 0
+                || seqLess(seqNum, rexmitQueue->getBufferStartSeq())
+                || seqGE(seqNum, rexmitQueue->getBufferEndSeq()))
+            return false;
+        return rexmitQueue->getRegion(seqNum).lost;
+    }
+
+    // state->reordering equals state->dupthresh unless adaptive reordering has grown
+    // it (static DupThresh otherwise), so this is inert by default.
+    bool isLost = (conn->getRexmitQueue()->getNumOfDiscontiguousSacks(seqNum) >= state->reordering
+                   || conn->getRexmitQueue()->getAmountOfSackedBytes(seqNum) > (state->reordering - 1) * state->snd_mss);
 
     return isLost;
 }
 
+uint32_t Rfc6675Recovery::rackDetectAndMarkLost(bool fromReoTimer)
+{
+    if (conn->getRexmitQueue() == nullptr || !state->sack_enabled)
+        return 0;
+
+    // (1) advance the RACK reference: the most recently *sent* segment among those
+    // that have been delivered (SACKed). Skip retransmitted segments whose RTT is
+    // below the connection minimum RTT (ambiguous, Karn-style).
+    for (const auto& region : conn->getRexmitQueue()->rexmitQueue) {
+        if (!region.sacked)
+            continue;
+        // Skip a sub-MSS SACKed TAIL fragment: Linux's tcp_match_skb_to_sack
+        // fragments a partially-covered skb only at MSS boundaries, so a lone
+        // byte-range SACK of a bigger skb's tail never gets tagged and never
+        // advances the kernel's RACK reference -- TLP fires there instead of a
+        // RACK retransmit. A WHOLE small skb (e.g. a fully-SACKed 400B MSG_EOR
+        // chunk) IS tagged and DOES advance RACK, so only the buffer-tail
+        // fragment case is skipped.
+        // A region that STARTS at a genuine transmission boundary is a whole
+        // (small) segment, not a split-off fragment -- Linux tags it, so it
+        // must advance the reference.
+        if (state->snd_mss > 0 && region.endSeqNum - region.beginSeqNum < state->snd_mss
+            && region.endSeqNum == state->snd_max
+            && !conn->getRexmitQueue()->isTransmissionStart(region.beginSeqNum))
+            continue;
+        simtime_t xmit = region.lastSentTime;
+        simtime_t rtt = simTime() - xmit;
+        if (region.transmitCount > 1 && state->minRtt > 0 && rtt < state->minRtt)
+            continue;
+        if (xmit > state->rackXmitTime
+            || (xmit == state->rackXmitTime && seqGreater(region.endSeqNum, state->rackEndSeq)))
+        {
+            state->rackXmitTime = xmit;
+            state->rackEndSeq = region.endSeqNum;
+            state->rackRtt = rtt;
+        }
+    }
+
+    if (state->rackXmitTime == 0)
+        return 0;
+
+    // (2) reordering window (Linux tcp_rack_reo_wnd): the default is a min_rtt/4
+    // settling delay (capped at srtt/8) to tolerate mild reordering. Only when
+    // reordering has NEVER been observed on the connection may RACK be aggressive
+    // (reo_wnd = 0) -- and then only during recovery, or once DupThresh-worth of
+    // segments are already SACKed (the classic dupthresh entry point). The
+    // inverse rule (0 by default, min_rtt/4 after reordering) would let a single
+    // SACK mark same-burst segments lost and enter recovery on the FIRST dupack.
+    simtime_t reoWnd;
+    // Linux's tcp_rack_reo_wnd input is tp->sacked_out, a PACKET count: divide
+    // by the options-adjusted effective MSS, the size data segments are
+    // actually cut to -- dividing by snd_mss undercounts (3 sacked 1000-byte
+    // segments / mss 1012 = 2 < DupThresh) and misses the aggressive reo_wnd=0
+    // clause, deferring recovery entry to the quantized reo timer where Linux
+    // enters on the ACK itself.
+    uint32_t segSize = state->snd_effmss > 0 ? state->snd_effmss : state->snd_mss;
+    uint32_t sackedSegs = segSize > 0 ? state->sackedBytes / segSize : 0;
+    if (!state->rackReordSeen && (state->lossRecovery || sackedSegs >= state->reordering))
+        reoWnd = 0;
+    else {
+        // minRtt is only populated once a data RTT has been measured; on the very
+        // first flight (dupacks arriving before any cumulative ACK) it is still 0.
+        // Linux's min_rtt is seeded from the handshake, so it is never 0 by the
+        // time SACKs arrive -- approximate that with this ACK's own RACK RTT.
+        simtime_t minRtt = state->minRtt > 0 ? state->minRtt : state->rackRtt;
+        reoWnd = minRtt / 4;
+        if (state->srtt > 0 && state->srtt / 8 < reoWnd)
+            reoWnd = state->srtt / 8;
+    }
+
+    // (3) mark as lost any earlier-sent, still-unacked segment for which at least
+    // RACK.rtt + reo_wnd has elapsed since it was (last) sent. The comparison is
+    // INCLUSIVE (Linux tcp_rack_detect_loss marks on remaining <= 0, i.e.
+    // elapsed >= rtt + reo_wnd): with a whole flight transmitted in one burst --
+    // the norm in a discrete-event simulation, where every segment of a window
+    // carries the IDENTICAL send timestamp -- a lost head segment's elapsed time
+    // always exactly EQUALS the RACK RTT derived from its SACKed burst-mates
+    // (both measure simTime() - burstTime), so a strict > could never mark it,
+    // no matter how much time passed, and recovery stalled into an RTO.
+    std::vector<std::pair<uint32_t, uint32_t>> toMark;
+    std::vector<std::pair<uint32_t, uint32_t>> toClearRexmit;
+    simtime_t minRemaining = SIMTIME_MAX; // earliest not-yet-matured deadline
+    for (const auto& region : conn->getRexmitQueue()->rexmitQueue) {
+        if (region.sacked)
+            continue;
+        // A lost region whose RETRANSMISSION is still presumed in flight is a
+        // candidate too: its lastSentTime is the retransmit time, and if that
+        // matures against the reordering window (a SACK arrived for data sent
+        // AFTER the retransmission), the retransmission itself was lost --
+        // Linux tcp_mark_skb_lost then clears TCPCB_SACKED_RETRANS so the
+        // range is sent once more.
+        // A lost region already awaiting (re)transmission needs nothing.
+        if (region.lost && !region.rexmitted)
+            continue;
+        bool earlier = (region.lastSentTime < state->rackXmitTime)
+            || (region.lastSentTime == state->rackXmitTime && seqLE(region.endSeqNum, state->rackEndSeq));
+        if (!earlier)
+            continue;
+        simtime_t remaining = state->rackRtt + reoWnd - (simTime() - region.lastSentTime);
+        if (remaining <= 0) {
+            if (region.lost)
+                toClearRexmit.push_back(std::make_pair(region.beginSeqNum, region.endSeqNum));
+            else
+                toMark.push_back(std::make_pair(region.beginSeqNum, region.endSeqNum));
+        }
+        else if (remaining < minRemaining)
+            minRemaining = remaining;
+    }
+
+    uint32_t lostBytes = 0;
+    for (auto& r : toMark) {
+        conn->getRexmitQueueForUpdate()->markLost(r.first, r.second);
+        lostBytes += r.second - r.first;
+    }
+    for (auto& r : toClearRexmit) {
+        conn->getRexmitQueueForUpdate()->clearRexmitted(r.first, r.second);
+        lostBytes += r.second - r.first;
+        EV_INFO << "RACK: retransmission of [" << r.first << ", " << r.second << ") presumed lost, will re-send\n";
+    }
+    if (lostBytes > 0)
+        EV_INFO << "RACK: marked " << lostBytes << " bytes lost by time (RACK.rtt=" << state->rackRtt << ")\n";
+
+    // Arm the RACK reordering timer for the earliest deadline that has not matured
+    // yet (Linux ICSK_TIME_REO_TIMEOUT): dupacks stop arriving once the receiver has
+    // ACKed everything it got, so without this timer a deadline maturing between ACKs
+    // -- e.g. on a tail flight -- would only ever be noticed by the much later RTO.
+    // When the ACK path itself marks segments lost, arm at ZERO delay instead: the
+    // marking happens during SACK processing, BEFORE the cumulative ACK advances
+    // snd_una, so recovery entry must be deferred past the current event (Linux runs
+    // tcp_fastretrans_alert after tcp_clean_rtx_queue for the same reason). The
+    // timer handler re-runs detection and acts on the standing lost marks. From the
+    // timer handler itself the caller acts directly, so only the not-yet-matured
+    // deadline (if any) is re-armed there.
+    simtime_t armDelay = minRemaining != SIMTIME_MAX ? minRemaining : simtime_t(-1);
+    if (lostBytes > 0 && !fromReoTimer)
+        armDelay = SIMTIME_ZERO;
+    conn->rescheduleRackReoTimer(armDelay);
+
+    return lostBytes;
+}
+
+uint32_t Rfc6675Recovery::prrNewlyDelivered() const
+{
+    // bytes newly cumulatively-acked + selectively-acked by the ACK being processed
+    // (snapshot taken at the top of process_RCV_SEGMENT)
+    return (uint32_t)(state->deliveredBytes - state->prrDeliveredMark);
+}
+
+void Rfc6675Recovery::prrCwndReduction(int newlyAckedSacked, int newlyLost, bool sndUnaAdvanced)
+{
+    // RFC 6937 / Linux tcp_cwnd_reduction(): proportional rate reduction. All
+    // quantities are in bytes (Linux counts packets); 1 packet == snd_mss bytes.
+    if (newlyAckedSacked <= 0 || state->priorCwnd == 0)
+        return;
+
+    setPipe();
+    int pipeNow = (int)state->pipe;
+    int delta = (int)state->ssthresh - pipeNow;
+
+    state->prrDelivered += newlyAckedSacked;
+
+    int sndcnt;
+    if (delta < 0) {
+        // proportional phase: bound sending to the reduction slope
+        uint64_t dividend = (uint64_t)state->ssthresh * state->prrDelivered + state->priorCwnd - 1;
+        sndcnt = (int)(dividend / state->priorCwnd) - (int)state->prrOut;
+    }
+    else {
+        // slow-start-reduction-bound phase
+        sndcnt = std::max((int)state->prrDelivered - (int)state->prrOut, newlyAckedSacked);
+        if (sndUnaAdvanced && newlyLost == 0)
+            sndcnt += (int)state->snd_mss;
+        sndcnt = std::min(delta, sndcnt);
+    }
+    // force at least one segment out on entering fast recovery (prrOut == 0)
+    sndcnt = std::max(sndcnt, (int)(state->prrOut ? 0 : state->snd_mss));
+
+    state->snd_cwnd = (uint32_t)std::max(0, pipeNow + sndcnt);
+    conn->emit(cwndSignal, state->snd_cwnd);
+
+    EV_DETAIL << "PRR: pipe=" << pipeNow << " ssthresh=" << state->ssthresh
+              << " prrDelivered=" << state->prrDelivered << " prrOut=" << state->prrOut
+              << " sndcnt=" << sndcnt << " -> cwnd=" << state->snd_cwnd << "\n";
+}
+
+void Rfc6675Recovery::prrEndCwndReduction()
+{
+    // RFC 6937 / Linux tcp_end_cwnd_reduction(): set cwnd to ssthresh on leaving recovery.
+    state->snd_cwnd = state->ssthresh;
+    conn->emit(cwndSignal, state->snd_cwnd);
+    EV_INFO << "PRR: leaving fast recovery, cwnd=ssthresh=" << state->snd_cwnd << "\n";
+}
+
 void Rfc6675Recovery::onRexmitTimeout()
 {
+    // capture the undo context BEFORE the RTO's ssthresh/cwnd reduction
+    bool frto = state->frtoEnabled && state->sack_enabled;
+    if ((state->lossUndoEnabled || frto) && isNewLossEpisode())
+        undoInit();
+
+    // F-RTO (RFC 5682 section 3, SACK-enhanced): the timeout opens a detection
+    // episode, but not during a fast recovery or during the recovery of an earlier
+    // timeout (step 1: "If RecoveryPoint is larger than or equal to SND.UNA, do not
+    // enter step 2"). A repeated timeout with no new ACK since the last one keeps
+    // the episode open (step 2: "If the retransmission timeout expires again, go to
+    // step 1").
+    if (frto) {
+        bool recoveryOpen = state->lossRecovery
+                || (state->rtoRecoveryPoint != 0 && seqLess(state->snd_una, state->rtoRecoveryPoint));
+        state->frtoActive = state->frtoActive || !recoveryOpen;
+        if (!state->frtoActive)
+            EV_DETAIL << "F-RTO: no detection, the timeout comes during a loss recovery\n";
+        state->frtoOrigAcked = false;
+    }
+
+    // the recovery of this timeout ends when the ACK reaches the data sent before it
+    state->rtoRecoveryPoint = state->snd_max != 0 ? state->snd_max : 1; // nonzero marker
+}
+
+void Rfc6675Recovery::processFrtoEpisode()
+{
+    // called at each ACK of new data; the first one after the timeout decides
+    if (state->rtoRecoveryPoint != 0 && seqGE(state->snd_una, state->rtoRecoveryPoint))
+        state->rtoRecoveryPoint = 0; // the recovery of the timeout is complete
+    if (!state->frtoActive)
+        return;
+    state->frtoActive = false;
+    if (state->frtoOrigAcked) {
+        // RFC 5682 step 3.b, Linux FLAG_ORIG_SACK_ACKED: data that was sent only once
+        // was (s)acked, so the original flight arrived and the timeout was spurious.
+        // Restore the cwnd and ssthresh of before the timeout (Linux
+        // tcp_try_undo_loss(frto_undo=true)) and forget the loss marks.
+        EV_INFO << "F-RTO: spurious retransmission timeout detected, undoing the RTO response\n";
+        undoCwndReduction();
+        conn->getRexmitQueueForUpdate()->resetLostBit();
+        state->afterRto = false;
+        state->rexmit_count = 0; // Linux clears icsk_retransmits on the undo
+        state->frtoOrigAcked = false;
+    }
+    else {
+        // RFC 5682 step 2.b: the sender does not send new data here, so the episode
+        // ends at the first ACK of new data, as RFC 5682 and Linux tcp_process_loss()
+        // end it when no new data can go. The loss was real. The undo context stays
+        // only for the D-SACK and Eifel undo.
+        EV_DETAIL << "F-RTO: the first new ACK after the timeout acknowledges no data that was sent once, the loss is real\n";
+        if (!state->lossUndoEnabled)
+            state->undoMarker = 0;
+    }
+}
+
+bool Rfc6675Recovery::isNewLossEpisode() const
+{
+    // Linux tcp_enter_loss(): a timeout starts a new undo context, except during a
+    // fast recovery and at a repeated timeout with no new ACK since the last one
+    // (TcpAlgorithmBase increments rexmit_count before this call, and an ACK of new
+    // data resets it). These keep the context of the episode in progress. An older
+    // context that no undo ended must not stay: its counts and its cwnd are stale.
+    if (state->undoMarker == 0)
+        return true;
+    return !state->lossRecovery && state->rexmit_count == 1;
+}
+
+void Rfc6675Recovery::undoInit()
+{
+    // Linux tcp_init_undo(): remember the pre-reduction cwnd/ssthresh so a later
+    // D-SACK (or Eifel timestamp) can restore them. Must be called BEFORE the
+    // ssthresh/cwnd reduction. undoRetrans starts at -1 ("no retransmit yet"),
+    // becomes >0 as retransmissions go out, and returns to 0 once every one of
+    // them is confirmed spurious by a D-SACK.
+    state->undoMarker = state->snd_una ? state->snd_una : 1; // nonzero marker
+    state->priorSsthresh = state->ssthresh;
+    state->priorCwnd = state->snd_cwnd;
+    state->undoRetrans = -1;
+    state->retransStampTS = 0;
+}
+
+void Rfc6675Recovery::countUndoRetransmission(uint32_t fromSeq, uint32_t toSeq)
+{
+    // Eifel (RFC 3522 / Linux retrans_stamp): stamp the FIRST retransmission of the
+    // episode with our TS clock. An ACK later echoing a TSecr OLDER than this was
+    // generated by the ORIGINAL transmission, proving the retransmission spurious.
+    if (state->ts_enabled && state->retransStampTS == 0)
+        state->retransStampTS = TcpConnection::convertSimtimeToTS(simTime());
+
+    // Loss undo: count the retransmissions of this episode that still have to be
+    // proven spurious (Linux increments undo_retrans per retransmitted skb).
+    if (state->lossUndoEnabled && state->undoMarker != 0) {
+        if (state->undoRetrans < 0)
+            state->undoRetrans = 0;
+        uint32_t segs = seqGreater(toSeq, fromSeq)
+            ? (toSeq - fromSeq + state->snd_mss - 1) / state->snd_mss : 1;
+        state->undoRetrans += (int32_t)segs;
+    }
+}
+
+void Rfc6675Recovery::noteDsack(uint32_t fromSeq, uint32_t toSeq)
+{
+    state->dsackSeen = true;
+    state->dsackBytes = toSeq - fromSeq;
+    state->dsackEndSeq = toSeq;
+    // Linux tcp_check_dsack()/tcp_sacktag_one(): each D-SACK of data above the undo
+    // marker confirms that many retransmitted segments as spurious, on whatever ACK
+    // it arrives -- usually a duplicate ACK, because the original arrived first.
+    if (state->lossUndoEnabled && state->undoMarker != 0 && state->undoRetrans > 0
+            && seqGreater(toSeq, state->undoMarker))
+    {
+        uint32_t segs = (state->dsackBytes + state->snd_mss - 1) / state->snd_mss;
+        state->undoRetrans -= (int32_t)segs;
+        if (state->undoRetrans < 0)
+            state->undoRetrans = 0;
+    }
+}
+
+bool Rfc6675Recovery::packetDelayed() const
+{
+    // Eifel (RFC 3522 / Linux tcp_packet_delayed): the most recent ACK echoed a
+    // timestamp OLDER than our first retransmission's send time, so the receiver
+    // generated it from the ORIGINAL transmission -- the retransmission (and the
+    // congestion response that came with it) was spurious.
+    return state->ts_enabled && state->retransStampTS != 0
+        && state->lastRcvdTSecr != 0
+        && seqLess(state->lastRcvdTSecr, state->retransStampTS);
+}
+
+bool Rfc6675Recovery::mayUndo() const
+{
+    // Linux tcp_may_undo(): undo when every retransmission of the episode has been
+    // D-SACKed (undoRetrans == 0), or when the Eifel timestamp test proves the
+    // retransmission was answered from the original transmission.
+    return state->undoMarker != 0 && (state->undoRetrans == 0 || packetDelayed());
+}
+
+void Rfc6675Recovery::undoCwndReduction()
+{
+    // Linux tcp_undo_cwnd_reduction(): restore cwnd and ssthresh.
+    state->snd_cwnd = std::max(state->snd_cwnd, state->priorCwnd); // tcp_reno_undo_cwnd
+    if (state->priorSsthresh > state->ssthresh)
+        state->ssthresh = state->priorSsthresh;
+    state->undoMarker = 0;
+    conn->emit(cwndSignal, state->snd_cwnd);
+    conn->emit(ssthreshSignal, state->ssthresh);
+    EV_INFO << "Undoing spurious cwnd reduction (D-SACK): cwnd=" << state->snd_cwnd
+            << ", ssthresh=" << state->ssthresh << "\n";
+}
+
+void Rfc6675Recovery::checkSackReordering(uint32_t lowSeq)
+{
+    // Linux tcp_check_sack_reordering(): reordering is proven when data at lowSeq
+    // was delivered while a higher sequence number (fack) had already been SACKed.
+    auto rexmitQueue = conn->getRexmitQueue();
+    if (rexmitQueue == nullptr || !state->sack_enabled)
+        return;
+    uint32_t fack = rexmitQueue->getHighestSackedSeqNum();
+    if (fack == 0 || seqGE(lowSeq, fack))
+        return;
+    uint32_t metric = fack - lowSeq;
+    if (state->snd_mss != 0 && metric > state->reordering * state->snd_mss) {
+        uint32_t newReordering = (metric + state->snd_mss - 1) / state->snd_mss;
+        state->reordering = std::min(newReordering, state->maxReordering);
+        EV_DETAIL << "reordering degree updated to " << state->reordering << "\n";
+    }
+    state->rackReordSeen = true; // activate RACK's reordering window as well
+}
+
+void Rfc6675Recovery::reoTimeout()
+{
+    // RACK marked further bytes lost while no ACK was arriving. If we are not yet
+    // recovering, this is the fast-retransmit trigger RACK exists to provide;
+    // otherwise just push out whatever the scoreboard now says is missing.
+    if (!state->lossRecovery)
+        step4();
+    else
+        stepC();
 }
 
 void Rfc6675Recovery::segmentsAcked(uint32_t fromSeq, uint32_t toSeq)
 {
+    // F-RTO (RFC 5682 sec 3.1 step 3.b, cumulative side): the scoreboard for
+    // [fromSeq, toSeq) is still intact here. If any part of the newly
+    // cumulatively-acked range was transmitted exactly once -- i.e. is NOT one of
+    // the post-RTO retransmissions -- and was not SACKed before, then the original
+    // flight (or part of it) reached the receiver after the RTO, so the timeout was
+    // spurious. Data SACKed before the RTO is no new evidence (Linux
+    // FLAG_ORIG_SACK_ACKED skips TCPCB_SACKED_ACKED segments).
+    if (state->frtoActive && state->sack_enabled) {
+        auto frq = conn->getRexmitQueue();
+        if (frq != nullptr && frq->getQueueLength() > 0) {
+            for (uint32_t seq = std::max(fromSeq, frq->getBufferStartSeq());
+                 seqLess(seq, std::min(toSeq, frq->getBufferEndSeq())); )
+            {
+                const auto& region = frq->getRegion(seq);
+                if (region.transmitCount <= 1 && !region.everSacked) {
+                    state->frtoOrigAcked = true;
+                    break;
+                }
+                seq = region.endSeqNum;
+            }
+        }
+    }
+    processFrtoEpisode();
+
+    // Adaptive reordering: if this cumulatively-acked segment was never retransmitted
+    // yet sits below already-SACKed data, it was merely reordered (not lost) -- grow the
+    // learned reordering degree so it stops causing spurious fast retransmits.
+    if (state->adaptiveReorderingEnabled && state->sack_enabled) {
+        auto rq = conn->getRexmitQueue();
+        if (rq != nullptr && rq->getQueueLength() > 0
+            && seqLE(rq->getBufferStartSeq(), fromSeq) && seqLess(fromSeq, rq->getBufferEndSeq())
+            && rq->getRegion(fromSeq).transmitCount <= 1)
+        {
+            checkSackReordering(fromSeq);
+        }
+    }
+
+    if (!state->lossUndoEnabled)
+        return;
+
+    // RFC 2883 loss undo. This runs on every ACK that advances snd_una, in or out of
+    // loss recovery -- deliberately not only while recovering, because the D-SACK that
+    // proves a retransmission spurious usually arrives only after the delayed original
+    // has been delivered, by which time the recovery episode has already ended. Linux
+    // likewise checks undo from the ACK path independently of the congestion state.
+    if (mayUndo()) {
+        // every retransmission of this episode was D-SACKed: the reduction was
+        // needless, so restore cwnd/ssthresh (and leave recovery if still in it).
+        undoCwndReduction();
+        state->lossRecovery = false;
+    }
 }
 
 void Rfc6675Recovery::dataSent(uint32_t fromSeq)
 {
+    // RFC 6937 accounting: bytes transmitted during the current recovery episode.
+    if (state->prrEnabled && state->lossRecovery && seqGreater(state->snd_nxt, fromSeq))
+        state->prrOut += state->snd_nxt - fromSeq;
 }
 
 void Rfc6675Recovery::segmentRetransmitted(uint32_t fromSeq, uint32_t toSeq)
 {
+    if (state->prrEnabled && state->lossRecovery && seqGreater(toSeq, fromSeq))
+        state->prrOut += toSeq - fromSeq;
+
+    countUndoRetransmission(fromSeq, toSeq);
 }
 
 void Rfc6675Recovery::setPipe()
@@ -596,6 +1162,23 @@ bool Rfc6675Recovery::nextSeg(uint32_t& seqNum)
     // (1.c) IsLost (S2) returns true.
     //"
 
+    // RACK mode: Linux tcp_xmit_retransmit_queue walks the whole rtx queue by
+    // sequence with no HighRxt floor -- it skips SACKED_RETRANS entries and
+    // (re)transmits anything marked LOST. That reaches a lost region BELOW the
+    // highest retransmission whose rexmitted flag RACK just cleared (its first
+    // retransmit died).
+    // Rule (1.a)'s "S2 greater than HighRxt" would hide it forever.
+    if (state->lossDetectionMode == 1) {
+        for (const auto& region : conn->getRexmitQueue()->rexmitQueue) {
+            if (!seqLess(region.beginSeqNum, highestSackedSeqNum))
+                break;
+            if (!region.sacked && region.lost && !region.rexmitted) {
+                seqNum = region.beginSeqNum;
+                return true;
+            }
+        }
+    }
+    else
     // Note: state->highRxt == RFC.HighRxt + 1
     for (uint32_t s2 = state->highRxt;
          seqLess(s2, state->snd_max) && seqLess(s2, highestSackedSeqNum);
@@ -728,6 +1311,8 @@ void Rfc6675Recovery::sendDataDuringLossRecoveryPhase(uint32_t congestionWindow)
             break;
 
         uint32_t sentBytes = sendSegmentDuringLossRecoveryPhase(seqNum);
+        if (sentBytes == 0) // no data left after the forward of snd_nxt
+            break;
         // RFC 6675, page 9:
         //"
         // (C.4) The estimate of the amount of data outstanding in the
@@ -750,6 +1335,8 @@ uint32_t Rfc6675Recovery::sendSegmentDuringLossRecoveryPhase(uint32_t seqNum)
     // no need to check cwnd and rwnd - has already be done before
     // no need to check nagle - sending mss bytes
     uint32_t sentBytes = conn->sendSegment(state->snd_mss);
+    if (sentBytes == 0)
+        return 0;
 
     uint32_t sentSeqNum = seqNum + sentBytes;
 
@@ -860,7 +1447,7 @@ TcpHeader Rfc6675Recovery::addSacks(const Ptr<TcpHeader>& tcpHeader)
     }
 
     if (start != end) {
-        if (state->snd_dsack) { // SequenceNo < rcv_nxt
+        if (state->dsack_enabled && state->snd_dsack) { // SequenceNo < rcv_nxt
             // RFC 2883, page 3:
             //"
             // (3) The left edge of the D-SACK block specifies the first sequence

@@ -12,6 +12,7 @@
 
 #include "inet/common/packet/Packet.h"
 #include "inet/common/packet/chunk/ByteCountChunk.h"
+#include "inet/transportlayer/contract/tcp/TcpCommand_m.h"
 #include "inet/transportlayer/contract/tcp/TcpSocket.h"
 
 namespace inet {
@@ -30,7 +31,7 @@ class INET_API TcpTestClient : public cSimpleModule
     typedef std::list<Command> Commands;
     Commands commands;
 
-    enum { TEST_OPEN, TEST_SEND, TEST_CLOSE };
+    enum { TEST_OPEN, TEST_SEND, TEST_CLOSE, TEST_STATUS };
 
     int ctr;
 
@@ -42,6 +43,8 @@ class INET_API TcpTestClient : public cSimpleModule
 
   protected:
     void parseScript(const char *script);
+    void parseStatusRequestScript(const char *script);
+    void printStatus(TcpStatusInfo *status);
     std::string makeMsgName();
     void handleSelfMessage(cMessage *msg);
     void scheduleNextSend();
@@ -97,6 +100,38 @@ std::string TcpTestClient::makeMsgName()
     return std::string(buf);
 }
 
+void TcpTestClient::parseStatusRequestScript(const char *script)
+{
+    const char *s = script;
+    while (*s) {
+        while (isspace(*s)) s++;
+        if (!*s) break;
+        const char *s0 = s;
+        simtime_t t = strtod(s, &const_cast<char *&>(s));
+        if (s == s0)
+            throw cRuntimeError("syntax error in statusRequestScript: simulation time expected");
+        scheduleAt(t, new cMessage("StatusRequest", TEST_STATUS));
+        while (isspace(*s)) s++;
+        if (!*s) break;
+        if (*s != ',')
+            throw cRuntimeError("syntax error in statusRequestScript: separator ',' missing");
+        s++;
+    }
+}
+
+void TcpTestClient::printStatus(TcpStatusInfo *status)
+{
+    EV_INFO << "STATUS: caState=" << status->getCaState()
+            << " backoff=" << status->getBackoff()
+            << " lost=" << status->getLost()
+            << " probes=" << status->getProbes()
+            << " bytesReceived=" << status->getBytesReceived()
+            << " busyTime=" << status->getBusyTime()
+            << " rwndLimited=" << status->getRwndLimited()
+            << " deliveredBytes=" << status->getDeliveredBytes()
+            << "\n";
+}
+
 void TcpTestClient::initialize()
 {
     rcvdBytes = 0;
@@ -122,6 +157,7 @@ void TcpTestClient::initialize()
     ctr = 0;
 
     scheduleAt(tOpen, new cMessage("Open", TEST_OPEN));
+    parseStatusRequestScript(par("statusRequestScript"));
     if (tClose > 0)
         scheduleAt(tClose, new cMessage("Close", TEST_CLOSE));
 }
@@ -140,6 +176,10 @@ void TcpTestClient::handleMessage(cMessage *msg)
         rcvdPackets++;
         rcvdBytes += PK(msg)->getByteLength();
     }
+    else if (msg->getKind()==TCP_I_STATUS)
+    {
+        printStatus(check_and_cast<TcpStatusInfo *>(msg->getControlInfo()));
+    }
     socket.processMessage(msg);
 }
 
@@ -156,6 +196,8 @@ void TcpTestClient::handleSelfMessage(cMessage *msg)
 
             socket.bind(*localAddress ? L3Address(localAddress) : L3Address(), localPort);
 
+            socket.setAutoRead(par("autoRead"));
+
             if (par("active"))
                 socket.connect(L3Address(connectAddress), connectPort);
             else
@@ -170,6 +212,10 @@ void TcpTestClient::handleSelfMessage(cMessage *msg)
             break;
         case TEST_CLOSE:
             socket.close();
+            delete msg;
+            break;
+        case TEST_STATUS:
+            socket.requestStatus();
             delete msg;
             break;
         default:
