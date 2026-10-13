@@ -9,6 +9,10 @@
 #ifndef __INET_TCPCONNECTION_H
 #define __INET_TCPCONNECTION_H
 
+#include <climits>
+#include <deque>
+#include <map>
+
 #include "inet/common/SimpleModule.h"
 #include "inet/networklayer/common/IcmpType_m.h"
 #include "inet/networklayer/common/Icmpv6Type_m.h"
@@ -31,11 +35,15 @@ class TcpAlgorithm;
 //@{
 #define TCP_TIMEOUT_CONN_ESTAB        75  // 75 seconds
 #define TCP_TIMEOUT_FIN_WAIT_2        600  // 10 minutes
-#define TCP_TIMEOUT_SYN_REXMIT        3  // initially 3 seconds
-#define TCP_TIMEOUT_SYN_REXMIT_MAX    240  // 4 mins (will only be used with SYN+ACK: with SYN CONN_ESTAB occurs sooner)
 //@}
 
-#define MAX_SYN_REXMIT_COUNT          12  // will only be used with SYN+ACK: with SYN CONN_ESTAB occurs sooner
+// the values of state->ecnMode, from the tcpEcnMode parameter
+#define TCP_ECN_MODE_OFF              0
+#define TCP_ECN_MODE_PASSIVE          1
+#define TCP_ECN_MODE_RFC3168          2
+#define TCP_ECN_MODE_ACCECN           3
+#define TCP_ECN_MODE_ACCECN_PASSIVE   4
+#define TFO_BLACKHOLE_REXMIT_COUNT    2   // TCP Fast Open: the retransmission of a Fast Open SYN that suggests a blackhole (the third transmission, as Linux)
 #define TCP_MAX_WIN                   65535lu  // 65535 bytes, largest value (16 bit) for (unscaled) window size
 #define TCP_MAX_WIN_SCALED            0x3fffffffL // 2^30-1 bytes, largest value for scaled window size
 #define MAX_SACK_BLOCKS               60  // will only be used with SACK
@@ -135,11 +143,53 @@ class INET_API TcpConnection : public SimpleModule
     cMessage *synRexmitTimer = nullptr; // for retransmitting SYN and SYN+ACK
     cMessage *rackReoTimer = nullptr; // RACK reordering timer (Linux ICSK_TIME_REO_TIMEOUT): fires when a not-yet-lost segment's RACK.rtt+reo_wnd deadline matures between ACKs
 
+    bool sendingWindowProbe = false; // sendProbe() sends a window probe, which gets no ECT and no CWR (RFC 3168 section 6.1.6)
+
     // statistics
     long rcvdSegments = 0;
     long sentSegments = 0;
     uint32_t lastRcvdSeqNo = 0;
     uint32_t lastSentAck = 0;
+
+    // The receive buffer in the accounting of Linux, for windowShrinkAllowed: each
+    // received data segment costs the truesize of its skb (sk_rmem_alloc), until the
+    // application reads all of it, and the window counts the free buffer at the ratio
+    // of payload to truesize (scaling_ratio of tcp_measure_rcv_mss())
+    std::deque<std::pair<uint32_t, uint32_t>> rcvSkbChain; // the unread received segments: payload bytes and truesize
+    uint64_t rcvBufOccupancy = 0; // the sum of the truesizes in rcvSkbChain
+    uint8_t rcvScalingRatio = 128; // payload / truesize, in units of 1/256 (Linux TCP_DEFAULT_SCALING_RATIO)
+    uint32_t rcvMssEstimate = 536; // the estimate of the received MSS that gates the ratio (Linux icsk_ack.rcv_mss)
+    // the advertised window and the receive buffer of this connection from its open
+    // command (TcpSocket::setAdvertisedWindow(), setReceiveBufferSize()); -1: the
+    // parameters of the Tcp module (D-4 of the staged landing: a socket option is
+    // not a module parameter)
+    int socketAdvertisedWindow = -1;
+    int socketReceiveBufferSize = -1;
+    int socketSynRetries = -1; // the SYN retries of this connection (TcpSocket::setSynRetries()); -1: the parameter
+    // MSG_ZEROCOPY: the pending completions, by the sequence number that ends the data
+    // of each zero-copy SEND, and the id of the next one (per connection from 0, as the
+    // ids of Linux SO_ZEROCOPY)
+    std::map<uint32_t, uint32_t> zerocopySeqNums;
+    uint32_t nextZerocopyId = 0;
+    // SO_TIMESTAMPING: the delivered data carries the time of its delivery
+    // (TcpRxTimestampInd), as TcpSetTimestampingCommand asks; a member, because the
+    // command can come before the open
+    bool rxTimestampingEnabled = false;
+    // TCP_NOTSENT_LOWAT from TcpSetNotsentLowatCommand, which can come before the open;
+    // INT_MIN: no command, so the notsentLowat parameter
+    int notsentLowatSockopt = INT_MIN;
+    // the application writer waits for space in the send buffer (Linux SOCK_NOSPACE), as
+    // TcpSetWriterBlockedCommand tells; it drives the send buffer limited time
+    bool writerBlocked = false;
+    // the application owns the connection (Linux sk->sk_socket): false for a connection
+    // that the application did not accept yet, as TcpSetOwnedCommand tells
+    bool appOwned = true;
+    // an accepted segment ends beyond the right edge of the last offered window
+    // (acceptBeyondBufferAtEmptyQueue); adaptiveDelayedAcks then sends no ACK at once
+    bool overWindowAcceptPending = false;
+    // SO_KEEPALIVE of this connection (TcpSocket::setKeepAlive()), also from before the
+    // open; -1: the keepAliveEnabled parameter
+    int keepAliveSockopt = -1;
 
   protected:
     /** @name FSM transitions: analysing events and executing state transitions */
@@ -190,10 +240,17 @@ class INET_API TcpConnection : public SimpleModule
     /** @name Processing of TCP options. Invoked from readHeaderOptions(). Return value indicates whether the option was valid. */
     //@{
     virtual bool processMSSOption(const Ptr<const TcpHeader>& tcpHeader, const TcpOptionMaxSegmentSize& option);
+    /** RFC 9293 MUST-15: without an MSS option in the SYN of the peer, use the default send MSS of its address family. */
+    virtual void applyDefaultSendMss(const Ptr<const TcpHeader>& tcpHeader, const L3Address& peerAddr);
     virtual bool processWSOption(const Ptr<const TcpHeader>& tcpHeader, const TcpOptionWindowScale& option);
     virtual bool processSACKPermittedOption(const Ptr<const TcpHeader>& tcpHeader, const TcpOptionSackPermitted& option);
     virtual bool processTSOption(const Ptr<const TcpHeader>& tcpHeader, const TcpOptionTimestamp& option);
+    virtual bool processFastOpenOption(const Ptr<const TcpHeader>& tcpHeader, const TcpOptionTcpFastOpen& option);
+    virtual bool processFastOpenExpOption(const Ptr<const TcpHeader>& tcpHeader, const TcpOptionTcpFastOpenExp& option);
     //@}
+
+    /** TCP Fast Open (RFC 7413): processes the cookie of a Fast Open option of a SYN or a SYN-ACK. */
+    virtual bool processFastOpenCookieBytes(const std::vector<uint8_t>& cookie);
 
     /** @name Processing timeouts. Invoked from processTimer(). */
     //@{
@@ -223,6 +280,22 @@ class INET_API TcpConnection : public SimpleModule
      * TcpStatusInfo::caState.
      */
     virtual int deriveLinuxCaState() const;
+
+    /**
+     * The sequence number from which the advertised window and the bytes in flight
+     * count the data: snd_una, but the first data byte while a TCP Fast Open
+     * server sends data in SYN_RCVD. Its SYN-ACK is then not acknowledged, and
+     * snd_una stays at the ISS, but the SYN-ACK is not data (Linux starts the
+     * child socket at snd_una = ISS+1).
+     */
+    virtual uint32_t getDataSndUna() const;
+
+    /**
+     * Returns whether the last accepted segment ended beyond the right edge of the
+     * last offered window, and clears that mark. Linux sends no immediate ACK for
+     * such a segment (rcv_neg_window).
+     */
+    bool takeOverWindowAccept() { bool b = overWindowAcceptPending; overWindowAcceptPending = false; return b; }
 
   protected:
 
@@ -279,6 +352,20 @@ class INET_API TcpConnection : public SimpleModule
     /** Utility: sends 1 bytes as "probe", called by the "persist" mechanism */
     virtual bool sendProbe();
 
+    /**
+     * Makes the octet of a zero-window probe that the receiver did not accept unsent
+     * data again: snd_max and snd_nxt go back to snd_una, and the retransmission queue
+     * forgets the octet. Only in the persist state, where the probe octet alone is in
+     * flight.
+     */
+    virtual void unsendWindowProbe();
+
+    /** Utility: sends a keepalive probe, a segment without data with SEG.SEQ = SND.UNA - 1, which the peer answers with an ACK (RFC 9293 section 3.8.4) */
+    virtual void sendKeepAliveProbe();
+
+    /** Utility: sends a segment without data with SEG.SEQ = SND.UNA - 1, which the peer answers with an ACK (Linux tcp_xmit_probe_skb()): the keepalive probe, and the zero-window probe of Linux */
+    virtual void sendSegmentBelowWindow(const char *name);
+
     /** Utility: retransmit one segment from snd_una */
     virtual void retransmitOneSegment(bool called_at_rto);
 
@@ -322,6 +409,34 @@ class INET_API TcpConnection : public SimpleModule
     /** Utility: adds control info to segment and sends it to IP */
     virtual void sendToIP(Packet *tcpSegment, const Ptr<TcpHeader>& tcpHeader);
 
+    /** AccECN: the ACE value that feeds back an IP ECN codepoint in the handshake (RFC 9768 Tables 2 and 3) */
+    static uint8_t accEcnReflectedAce(int ipEcnCodepoint);
+
+    /** Utility: the IP ECN codepoint of a received segment, IP_ECN_NOT_ECT without one */
+    static int receivedEcnCodepoint(Packet *tcpSegment);
+
+    /** AccECN: reads the ACE field of an ACK that makes progress, and counts the CE marks that it reports (RFC 9768 section 3.2.2.5) */
+    virtual void processAccEcnAce(const Ptr<const TcpHeader>& tcpHeader);
+    /** AccECN receiver: counts the CE mark and the payload bytes of a received segment (RFC 9768 section 3.2). */
+    virtual void countAccEcnReceived(Packet *tcpSegment, int payloadLength);
+    /**
+     * AccECN (RFC 9768 section 3.2.3): whether the next segment after the handshake
+     * carries the AccECN option, and with which fields. order: 0 (kind 172) or 1
+     * (kind 174); wanted: the number of fields to send if they fit; required: the
+     * fewest fields to send, those that changed since the last option.
+     */
+    virtual bool getAccEcnOptionFields(int& order, int& wanted, int& required) const;
+    /** Appends the AccECN option with the fields that fit in the free option space. */
+    virtual void appendAccEcnOption(const Ptr<TcpHeader>& tcpHeader, int order, int wanted, int required);
+    /**
+     * AccECN: the option bytes in use, for the fit of the AccECN option: the real
+     * length, or with accEcnOptionPolicy="linux" the length of the Linux layout
+     * (NOP, NOP, TS and NOP, NOP, SACK).
+     */
+    virtual unsigned int getAccEcnOptionSpaceUsed(const Ptr<TcpHeader>& tcpHeader) const;
+    /** AccECN: whether an option of the given number of fields fits after the used option bytes. */
+    virtual bool accEcnOptionFits(unsigned int used, int numFields, bool sack) const;
+
     /** Utility: start SYN-REXMIT timer */
     virtual void startSynRexmitTimer();
 
@@ -362,6 +477,23 @@ class INET_API TcpConnection : public SimpleModule
     static const char *optionName(int option);
     /** Utility: update receiver queue related variables and statistics - called before setting rcv_wnd */
     virtual void updateRcvQueueVars();
+
+    /**
+     * The truesize of the skb of a received TCP segment in Linux, from a tun device as
+     * packetdrill uses: the payload, the IP and TCP headers and skb_shared_info (320
+     * bytes) in a page-sized or power-of-two allocation, and struct sk_buff (232 bytes).
+     */
+    static uint32_t linuxSkbTruesize(uint32_t payloadBytes);
+    /**
+     * The time that the send buffer limits the sender (Linux TCP_CHRONO_SNDBUF_LIMITED):
+     * it runs while the application writer is blocked, no unsent data waits, and data
+     * is in flight. Called at each event that can change this condition.
+     */
+    virtual void updateSndbufLimitedChrono();
+    /** Charges the receive buffer with a received data segment (rcvSkbChain). */
+    virtual void chargeRcvBuffer(uint32_t payloadBytes);
+    /** Releases the receive buffer for the data that the application read. */
+    virtual void releaseRcvBuffer(uint64_t readBytes);
 
     /** Utility: returns true when receive queue has enough space for store the tcpHeader */
     virtual bool hasEnoughSpaceForSegmentInReceiveQueue(Packet *tcpSegment, const Ptr<const TcpHeader>& tcpHeader);

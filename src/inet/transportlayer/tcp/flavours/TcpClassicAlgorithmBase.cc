@@ -128,8 +128,10 @@ void TcpClassicAlgorithmBase::receivedAckForUnackedData(uint32_t firstSeqAcked)
 
     uint32_t numBytesAcked = state->snd_una - firstSeqAcked;
     bool inFastRecovery = isInFastRecovery();
-    if (inFastRecovery)
+    if (inFastRecovery) {
         recovery->receivedAckForUnackedData(numBytesAcked);
+        ackedInFastRecovery(numBytesAcked);
+    }
     else if (!processEce(numBytesAcked))
         congestionControl->receivedAckForUnackedData(numBytesAcked);
 
@@ -253,7 +255,7 @@ uint32_t TcpClassicAlgorithmBase::getBytesInFlight() const
     // Linux tcp_packets_in_flight(): packets_out - (sacked_out + lost_out) + retrans_out.
     // Without SACK, the duplicate ACKs set the SACKed marks (addInferredSack()).
     auto rexmitQueue = conn->getRexmitQueue();
-    int64_t inFlight = (int64_t)(state->snd_max - state->snd_una) - rexmitQueue->getSacked() - rexmitQueue->getLost() + rexmitQueue->getRetrans();
+    int64_t inFlight = (int64_t)(state->snd_max - conn->getDataSndUna()) - rexmitQueue->getSacked() - rexmitQueue->getLost() + rexmitQueue->getRetrans();
     return inFlight < 0 ? 0 : inFlight;
 }
 

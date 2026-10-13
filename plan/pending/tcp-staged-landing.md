@@ -59,13 +59,14 @@ neighbour or split, when its cherry-picks or its builds show a reason.
 | S8 ✅ | `topic/tcp-rack` | 13 (part), 16 (part), 17, 18, 19, 26 (part), 49, 51 (part), 64 (part) | +768 −47 | RACK loss detection (RFC 8985), STATUS counters, the reordering window; the Linux count of the bytes in flight with SACK (B8) |
 | S9 ✅ | `topic/tcp-prr` | 13 (part), 20, 39 (part), 59, 64 (part) | +143 −14 | Proportional Rate Reduction (RFC 6937) |
 | S10 ✅ | `topic/tcp-undo-frto-tlp` | 22, 24, 25, 37, 76, 85, 86, new | +1807 −25 | spurious-loss undo, F-RTO (RFC 5682), the tail loss probe (D-29 to D-35) |
-| S11 | `topic/tcp-connection-lifecycle` | 15 (part), 16 (part), 23, 30, 38, 73 | +179 −45 | reset after a full close, SYN-ACK re-send, FIN read clamp, STATUS before open |
-| S12 | `topic/tcp-fast-open` | 15 (part), 16 (part), 26, 43, 44, 51 | +1187 −104 | TCP Fast Open (RFC 7413) |
-| S13 | `topic/tcp-accecn` | 27 | +864 −61 | Accurate ECN; DCTCP counts its bytes also in a fast recovery (D-23) |
-| S14 | `topic/tcp-receive-buffer` | 28, 29, 35, new work | +400 −3 | the receive buffer apart from the advertised window, zero-copy, `TCP_NOTSENT_LOWAT`, the receive buffer of a socket before open (D-4) |
-| S15 | `topic/tcp-timers` | 31, 32, 33, 34 (part), 77 | +441 −94 | adaptive delayed ACK, timer parameters, keepalive, loss marking at a timeout, no new fast recovery before the recovery point of a timeout (D-34, proposed) |
+| S11 ✅ | `topic/tcp-connection-lifecycle` | 15 (part), 16 (part), 22 (part), 23 (part), 26 (part), 30, 38, 39 (part), 73, 74 | +198 −36 | reset after a full close, SYN-ACK re-send, FIN read clamp, STATUS before open, the simultaneous open, a forked connection, the SYN-ACK TSecr check, `syncookiesAlways` |
+| S12 ✅ | `topic/tcp-fast-open` | 15 (part), 16 (part), 23 (part), 26 (part), 27 (part), 39 (part), 43, 44, new | +868 −72 | TCP Fast Open (RFC 7413), and the option writing and the MSS rules that it needs (D-42 to D-50) |
+| S13 ✅ | `topic/tcp-accecn` | 13 (part), 23 (part), 27, 48 (part), 64 (part), 65 (part), new | +877 −122 | Accurate ECN (RFC 9768), the ECN repairs that it needs, `ecnMarkAll`; DCTCP counts its bytes also in a fast recovery (D-51 to D-60) |
+| S14 ✅ | `topic/tcp-receive-buffer` | 28, 29, 35, new | +353 −9 | the receive buffer apart from the advertised window, the Linux receive memory behind parameters, the window and the buffer of one socket (D-4), MSG_ZEROCOPY, the send buffer chrono, SO_TIMESTAMPING, `TCP_NOTSENT_LOWAT` (D-61 to D-64) |
+| S15 ✅ | `topic/tcp-timers` | 18 (part), 26 (part), 28 (part), 31, 32 (part), 33, 68 (part), 77, new | +483 −64 | the timer parameters, the RTO of Linux, the SYN retries, a FIN that keeps a running retransmission timer, adaptive delayed ACK, keepalive, no new fast recovery before the recovery point of a timeout (D-34) |
+| S15b ✅ | `topic/tcp-zero-window` | 13 (part), 32 (part), 34 (part), 84, new | +186 −56 | the zero window: the persist timing (B15), the probe, the window update that reopens the window (B14) |
 | S16 | `topic/tcp-write-boundaries` | 15 (part), 16 (part), 36, 69 | +355 −9 | PSH at write boundaries, `TCP_CORK`, a window smaller than one MSS |
-| S17 | `topic/tcp-connection-leftovers` | 39, 61, 74 | +445 −185 | the remaining connection work, the SACK scoreboard scan, two repairs |
+| S17 | `topic/tcp-connection-leftovers` | 39, 61 | +445 −185 | the remaining connection work, the SACK scoreboard scan, two repairs |
 | S18 | `topic/tcp-pmtud-rcvbuf` | 46, 47, 42, 58 | +556 −65 | RFC 4821 path MTU discovery, receive buffer memory, the applications |
 | S19 | `topic/tcp-modern-defaults` | 15 (part), 16 (part), 40, 53, 63, 68, 70, 71, 72, 78, 79, 80 (part), 81, 82, 87 | +863 −488 | the modern defaults, the RFC 6298 and RFC 5681 corrections, the tests under the new defaults |
 | S20 | `topic/tcp-modernization-docs` | 48, 66, and the source plan | +700 −200 (about) | the RFC list of the module, the release note, the source plan to `plan/done/` |
@@ -177,7 +178,8 @@ plan gives a reason for.
   open command, as `tcpAlgorithmClass` does. S14 adds this, because S14 also brings
   `receiveBufferSize`, which has the same problem. inet-gpl's `PacketDrillApp` then changes. A
   `@mutable` `timestampSupport` for the host-wide sysctl `net.ipv4.tcp_timestamps` is decided at
-  S14 too; nothing in INET needs it before then. Commit 3 does not land.
+  S14 too; nothing in INET needs it before then. Commit 3 does not land. S14 adds the open
+  command and the `@mutable` `timestampSupport` (D-63).
 - **D-5 — The connection keeps its SACK recovery until its last caller goes.** Source commit 10
   deleted `TcpConnectionSackUtil.cc`, but `TcpConnection` kept the declarations of its seven
   virtual functions, and the flavours and the connection kept calling them. `make` still passes,
@@ -411,7 +413,9 @@ plan gives a reason for.
   new value of RecoveryPoint". Master and the source start a new fast recovery at the next
   duplicate ACK, because the duplicate-ACK count or `IsLost()` is still above the limit;
   `tcp_frto_4` shows it at t=4.002. The repair changes master's behavior with SACK, so it is not
-  part of S10. The proposal is S15, which changes the loss marking at a timeout.
+  part of S10. The proposal is S15, which changes the loss marking at a timeout. S15 repairs it
+  for an RTO during a loss recovery, the scope of section 5.1, at a duplicate ACK and at the RACK
+  timer; Linux blocks a new recovery after each RTO (its Loss state), which S15 does not model.
 - **D-35 — The tail loss probe follows RFC 8985 sections 7.2 and 7.4.2.** Four deviations from
   source commits 25, 76 and 85. (1) An ACK of new data also arms the probe timeout (section 7.2,
   Linux `tcp_set_xmit_timer()`). In the source only a send armed it, and the RTO restart at each
@@ -425,6 +429,261 @@ plan gives a reason for.
   RTO recovery (section 7.2); the recovery point of the timeout, which F-RTO keeps, shows it. The
   processing runs in `TcpAlgorithmBase` for each ACK, so `TcpCubic` needs no call of its own
   (source commit 14, part).
+- **D-36 — An explicit read stops at a received FIN in both read paths.** A FIN occupies a
+  sequence number but puts no byte in the receive queue. Source commit 30 stops the delivery of
+  waiting data at the FIN, but it reads `rcv_fin_seq`, which only a FIN that came out of order
+  set; and a READ command after the FIN took the other path, which had no stop. So the stop never
+  worked for the usual close. S11 records the FIN position also for an in-order FIN and stops
+  both paths there; `tcp_read_fin_1` fails with the source form.
+- **D-37 — A forked connection closes also on the timeout of the connection setup.** The source
+  (commit 26) closes a forked connection in SYN_RCVD on an RST, but the timeout still sent it
+  back to LISTEN, which gives the same second listener. S11 closes it on both; `tcp_syn_12` fails
+  with the source form.
+- **D-38 — The reset after a full close gives the application CLOSED.** The source ends the
+  connection with `TCP_E_ABORT`, which sends no indication. The application asked for the close,
+  and its socket waits in LOCALLY_CLOSED for CLOSED, for example to start its next session or to
+  end the stop of its node. S11 sends CLOSED.
+- **D-39 — The TSecr check of a SYN-ACK comes before the SYN-ACK changes any state.** The source
+  checks after the SYN-ACK has set `rcv_nxt`, `irs` and `snd_una`, discarded the queues and queued
+  its data, so a rejected SYN-ACK left the connection in SYN_SENT with that changed state. Linux
+  checks first. S11 reads the TSecr from the option and checks before the SYN processing.
+- **D-40 — Only a passive open re-sends its SYN-ACK for a repeated SYN.** Linux re-sends it in
+  `tcp_check_req()`, which handles a request socket, that is, a passive open; after a
+  simultaneous open, the socket in SYN_RECV answers a repeated SYN with a duplicate ACK. The
+  source (commit 23) re-sends it in any SYN_RCVD. `tcp_syn_15` fails with the source rule.
+- **D-41 — The reset on data after a close is a parameter, off by default.** The CLOSE of RFC
+  9293, which `TcpSocket::close()` sends, means "no more to send", and the application may still
+  receive; RFC 1122 section 4.2.2.13 asks for the RST only from a host that implements a
+  "half-duplex" close, which is a MAY. Linux `close()` is such a close. The source resets after
+  every CLOSE without `halfClose`, so INET's applications that read after their close lost their
+  data: the clients of `ethernet/arptest` and `arptest2` reset the echo of their server, and two
+  CI rows moved. S11 adds `abortOnDataAfterClose` (default false), which the packetdrill
+  configuration of inet-gpl can select, as the owner's rule for the Linux behaviors says.
+- **D-42 — The default send MSS applies to a SYN without an MSS option.** RFC 9293 MUST-15: "If
+  an MSS Option is not received at connection setup, TCP implementations MUST assume a default
+  send MSS of 536 (576 - 40) for IPv4 or 1220 (1280 - 60) for IPv6". Source commit 15 uses 536
+  only for an MSS option of value 0, which the RFC does not name; without the option, the
+  connection kept its own MSS. S12 applies the default of the address family when the SYN or the
+  SYN-ACK of the peer has no MSS option; `tcp_mss_default_1` and `_2` fail with the source form.
+- **D-43 — The order of the SYN options stays.** Source commit 16 writes the timestamp option
+  before the window scale option of a SYN (and wrote it two times, until commit 27). No RFC sets
+  the order, the packetdrill comparison of inet-gpl ignores it, and with SACK the master order
+  keeps TSval on a 4-byte boundary, which the source order does not. S12 keeps the master order;
+  the Fast Open option goes last, as in Linux.
+- **D-44 — A Fast Open server checks the cookie by default.** RFC 7413 section 4.2.2: with a
+  cookie that is not valid, the SYN-ACK acknowledges only the SYN. The source accepted each cookie
+  of a valid length by default (`fastopenLenientCookieValidation = true`). S12 makes the check
+  the default (the packetdrill configuration of inet-gpl already sets it), and the server also
+  ignores a cookie of a length that RFC 7413 section 4.1.1 does not allow (odd, or not 4 to 16
+  bytes); the source checked the length only on the client.
+- **D-45 — The cookie function is SipHash-2-4 for each cookie.** The source used SipHash only with
+  `fastopenKey` and IPv4, and otherwise a mix of `std::hash`, which gives other cookies with
+  another C++ library, so a fingerprint with Fast Open differs between platforms. S12 uses the
+  SipHash-2-4 MAC of the two addresses (IPv4 or IPv6, as Linux) under a key from the RNG or from
+  `fastopenKey`; `tcp_fastopen_key_1` checks the reference vector and the Linux cookie of the
+  packetdrill suite.
+- **D-46 — The application gets a Fast Open connection at its SYN, and the algorithm starts
+  there.** RFC 7413 section 4.2.2 ("Buffer the data and notify the application"; step 6, the
+  initial window) and appendix A.2 ("accept() returns upon receiving a SYN with a valid Fast Open
+  cookie"); Linux starts the transfer of the child socket (`tcp_init_transfer()`). The source
+  delivered the data with the socket ID of a forked connection before TCP_I_AVAILABLE, which the
+  application did not know; with `listenOnce()`, the socket stayed LISTENING and could not send;
+  and the algorithm started at the ACK of the SYN-ACK, so the congestion window was 0 in
+  SYN_RCVD. S12 sends TCP_I_AVAILABLE (forked) or TCP_I_ESTABLISHED at the SYN, starts the
+  algorithm there, and sends no second indication at the ACK of the SYN-ACK; an RST in SYN_RCVD
+  gives such a connection TCP_I_CONNECTION_RESET (`tcp_fastopen_fork_1`, `_srvdata_1`).
+- **D-47 — Smaller deviations in the Fast Open core.** (1) A retransmitted SYN-ACK carries no
+  cookie (RFC 7413 section 4.2.2, SHOULD); the source sent it again
+  (`tcp_fastopen_synack_rexmit_1`). (2) Only an MSS option of the SYN-ACK updates the cached MSS
+  (RFC 7413 section 4.2.2, client step 1); the source cached `snd_mss` without one. (3) Nagle does
+  not hold the SYN data that the SYN-ACK did not acknowledge, so the first ACK carries it; the
+  source relies on the Minshall form of Nagle (S16), and with the Nagle of master the data waited
+  for ever (`tcp_fastopen_rexmit_1`). (4) The NOPs before a Fast Open option follow
+  `alignOptions`. (5) The ACK of the SYN-ACK runs the ACK processing of the
+  algorithm for each Fast Open connection that sent in SYN_RCVD; the source asked for SYN data.
+  By D-1, the data on the SYN (commit 39; commit 26 recorded the data but sent the SYN without
+  it) and the SYN-ACK that keeps `snd_max` over the data (commit 27) fold into the core.
+- **D-48 — Fast Open blackhole detection is on by default, and follows Linux.** RFC 7413 section
+  4.1.3.1: "The client MUST cache negative responses". The source default was 0 s (off, as Linux
+  since 5.14). S12 uses 3600 s, the former Linux default; a SYN with only a cookie request counts
+  too, as in Linux; an RST with a wrong acknowledgment number is no trigger, because neither the
+  RFC nor Linux has one; a stopped connection sends no Fast Open option, as Linux (the source
+  sent an empty request); and a SYN-ACK that acknowledges the SYN data resets the count.
+- **D-49 — `fastopenExpOptionEnabled` selects both directions of the experimental option.** The
+  client of the source fell back to kind 254 without the parameter, but ignored a kind 254 answer
+  without it. S12 makes the parameter select the fallback too (default off: RFC 7413 section 9
+  says implementations SHOULD use kind 34).
+- **D-50 — A limit of pending Fast Open connections.** RFC 7413 section 4.2: over a preset limit
+  of PendingFastOpenRequests, "the server MUST disable TFO for all new connection requests". The
+  source has no limit. S12 adds `fastopenMaxPendingRequests` for each local port; its default of
+  16 is an assumption, because Linux takes the limit from the TCP_FASTOPEN socket option, which
+  INET's socket API does not have.
+- **D-51 — ECT(0), and ECT only on new data unless `ecnMarkAll`.** RFC 8311 section 3: "A
+  network node MUST NOT originate traffic marked with ECT(1) unless ... participating in a
+  Congestion Marking Differences experiment"; master used ECT(1). RFC 3168 sections 6.1.1 to
+  6.1.6 forbid ECT on a SYN, a SYN-ACK, a pure ACK, a retransmission and a window probe, and RFC
+  9768 section 4 keeps that; master marked a SYN-ACK, a FIN without data and a window probe. S13
+  follows the RFCs by default. `ecnMarkAll` (default false) sets ECT on the control segments of an
+  AccECN or DCTCP connection, as Linux does (`tcp_ecn_send()`), and RFC 8257 section 4.1
+  recommends such a knob for DCTCP. DCTCP sets ECT on its SYN, SYN-ACK and RST by default (RFC 8257
+  section 3.6: SHOULD; Linux), through `needsEcn()` of the flavour (Linux TCP_CONG_NEEDS_ECN). The
+  source set ECT on each segment of AccECN without a knob, and on each DCTCP segment, also on the
+  SYN of each mode.
+- **D-52 — A retransmission timeout with nothing in flight sends new data.** An ECN-Echo at a cwnd
+  of one segment restarts the retransmission timer (RFC 3168 section 6.1.2). With nothing in
+  flight, master then retransmitted nothing and failed an assertion. S13 sends new data at such a
+  timeout. RFC 3168 section 6.1.2 also says that the sender "will then be able to send a new packet
+  only when the retransmit timer expires"; master, the source and Linux send at once, and S13
+  keeps that.
+- **D-53 — `tcpEcnMode` replaces `ecnWillingness`.** Linux has five modes (`tcp_ecn`), and a
+  passive one is its default. `tcpEcnMode` is "off", "passive", "rfc3168", "accecn" or
+  "accecn-passive"; it is @mutable, as a harness can change the sysctl between connections.
+  `ecnWillingness` stays, deprecated, and a run that sets both stops with an error.
+- **D-54 — Each flavour responds to the AccECN feedback.** RFC 9768 section 3.1.5 obliges a host in
+  AccECN mode "to respond appropriately to AccECN feedback", and section 4 maps the response to an
+  increase of s.cep, without CWR. In the source only DCTCP read the counts. S13 decodes the ACE
+  field before the algorithm processes the ACK, and an increase acts as an ECN-Echo in each
+  flavour. CE feedback in the handshake also gets a response (section 3.2.2.2); Linux only counts
+  it, and no Linux script sees the difference, so S13 has no parameter for it.
+- **D-55 — The AccECN handshake and counters follow RFC 9768 where the source did not.** An unknown
+  combination of the SYN flags negotiates AccECN (section 3.1.3; the source: no ECN). A passive
+  or classic server answers an AccECN SYN with classic ECN (Table 2, as Linux; the source needed
+  AE=0 for a passive server). The handshake encoding of the ACE field goes only on a pure ACK
+  without SACK blocks (section 3.2.2.1; the source: also on data). Only acceptable packets count
+  (section 4; the source counted at the input of the module). `accEcnBareTimeWaitAck` selects the
+  Linux ACK of TIME_WAIT without the ACE field (section 3.2.2.2 asks for it; the source always
+  left it out).
+- **D-56 — The AccECN option of the receiver has two policies.** `accEcnOptionEnabled` (default
+  true; RFC 9768 section 3.2.3: RECOMMENDED). `accEcnOptionPolicy="rfc"` (default) follows the
+  recommended scheme of section 3.2.3.3: the option after a byte count changed, with the fields
+  that ever changed, in the order that needs fewer fields, and with each field on the first
+  SYN-ACK and the first segments of the client (section 3.2.3.2.1). "linux" follows
+  `tcp_ecn_option=2`: each segment, kind 174, each field that fits in the Linux layout of the
+  options, only after the peer sent an option (section 3.2.3.2.3 asks to send it also then), and
+  the counts of a duplicate that ends at RCV.NXT (Linux `tcp_sequence()`). Both policies cut the
+  option to the fields that changed and give up SACK blocks down to two (section 3.2.3.3). The
+  source sent the option on each fourth ACK and alternated the kinds, which neither the RFC nor
+  Linux does. inet-gpl needs "linux".
+- **D-57 — The AccECN option of the sender follows Linux.** A stretch ACK is decoded as
+  `__tcp_accecn_process()` does, which holds the rule of Appendix A.2.2; the first option is
+  checked for zeroed fields (section 3.2.3.2.4, a MAY); the option stops after an ACK with the
+  option and a D-SACK block got lost (section 3.2.3.2.2, a MAY). DCTCP counts the CE bytes of the
+  option. The source chose the marks of a large ACK by the nearest byte estimate. S13 does not
+  detect CE bytes without CE marks (section 3.2.3.2.5 asks for the reaction only after a
+  detection, and Linux has none), and it does not estimate the bytes of an ACK without the option
+  (Linux `est_ecnfield`).
+- **D-58 — The AccECN fallback of a retransmitted SYN and SYN-ACK.** An AccECN SYN sets (1,1,1)
+  on its first retransmission and (0,0,0) on the later ones (RFC 9768 section 3.1.4.1). A
+  retransmitted AccECN SYN-ACK has no option, from the second retransmission (0,0,0), and after
+  that the server sets no ECT (sections 3.2.3.2.2 and 3.1.5). As Linux. Classic ECN keeps its
+  flags: RFC 3168 section 6.1.1.1 lets a client clear them on a retransmitted SYN (a MAY), and
+  Linux does, but a SYN lost to congestion then costs the connection its ECN; with it, the DCTCP
+  incast example ran some connections without ECN, and both of its CI rows moved. The source
+  cleared the flags of a classic SYN and SYN-ACK too, and it kept ECT after its own (0,0,0)
+  SYN-ACK.
+- **D-59 — The ECN state before the first segment after the SYN-ACK.** Master set the classic ECN
+  state of the client after `established()`, which already sends the ACK of the SYN-ACK or waiting
+  data, so that data went out Not-ECT. S13 sets it before, as the source does since commit 27.
+- **D-60 — What S13 does not do.** RFC 9768 section 3.1.5: a server MUST reset a connection whose
+  handshake has both a classic ECN-setup SYN and an AccECN SYN. Section 3.2.2.1: the client SHOULD
+  send a pure ACK before data on the ACK of the SYN-ACK. Section 3.2.2.5.1: an ACK at once when a
+  CE mark follows a packet without one (SHOULD), and an ACK of ACKs after n CE marks on pure ACKs
+  (MUST; only ECT pure ACKs can carry them, which needs `ecnMarkAll`). Section 3.1.4.1: a cache of
+  failed AccECN attempts (SHOULD). DCTCP requests ECN only by `tcpEcnMode`, while Linux requests it
+  for DCTCP by itself.
+- **D-61 — The receive buffer keeps the default offer of master.** Commit 28 separates the receive
+  buffer (`receiveBufferSize`, Linux `sk_rcvbuf`) from the advertised window. It also changed the
+  default offer to the window less the unread in-order data, so that out-of-order data no longer
+  made the offer smaller. RFC 9293 section 3.8.6.2.2 counts the data that waits in the buffer, and
+  Linux counts the out-of-order queue (`sk_rmem_alloc`), so S14 keeps the offer of master. With
+  `receiveBufferSize`, the buffer limits the acceptance and the offer. The source took the larger
+  of the buffer and the window as the limit, so a smaller buffer had no effect. The parameter is
+  not `@mutable` (the source: `@mutable`): a socket sets its own buffer in its open command (D-63).
+- **D-62 — The Linux receive memory is off by default.** Each Linux behavior of commit 28 has a
+  parameter, default off, which inet-gpl turns on: `acceptBeyondBufferAtEmptyQueue`
+  (`tcp_data_queue()`; the source accepted such a segment always, and master drops it),
+  `windowAutoTuning` (`tcp_grow_window()`) and `windowShrinkAllowed` (`tcp_shrink_window=1`). The
+  growth of the buffer of an owned connection (`tcp_clamp_window()`) comes with
+  `windowAutoTuning`, as in Linux; the source grew the buffer in each mode, so
+  `receiveBufferSize` did not limit a plain connection. The automatic window scale covers the
+  clamp of the auto-tuning; the source used the advertised window, so the offer stopped at 65535
+  bytes. The charge of the buffer at the Linux skb truesize runs in each mode, as in the source;
+  only `windowShrinkAllowed` and the growth read it. Later stages bring the rest of commit 28: the
+  flag of a segment beyond the offered edge (`overWindowAcceptPending`) comes with its reader, the
+  adaptive delayed ACK of commit 31 (S15); the acceptance up to the highest edge ever offered
+  (`rcv_mwnd_seq`, commit 47), the upper limit of the growth (`tcp_rmem[2]`) and the lock by
+  SO_RCVBUF come with the receive buffer memory (S18).
+- **D-63 — The window and the buffer of one socket travel in its open command (D-4).**
+  `TcpSocket::setAdvertisedWindow()` and `setReceiveBufferSize()` set them for the next
+  `connect()` or `listen()`, as `setTCPAlgorithmClass()` does; -1 takes the module parameters. A
+  connection with its own window takes an automatic window scale, because Linux sets the scale
+  from the buffer of the socket. A connection that a listening socket forks takes the values of
+  that socket. A change of the buffer of an open connection waits for S18. `timestampSupport` is
+  `@mutable` for the host-wide sysctl `net.ipv4.tcp_timestamps`, and each connection reads it at
+  its open, as `tcpEcnMode` (D-53). The source made the window and the scale `@mutable` too.
+- **D-64 — The socket options of commits 29 and 35 follow Linux on a tun device.** A zero-copy
+  completion goes to the application when its last byte goes out, not at its ACK: the tun device
+  of packetdrill copies the data (`SO_EE_CODE_ZEROCOPY_COPIED`), and INET has no pages to keep.
+  The receive timestamp is the time of the delivery to the application, as the contract of S3
+  says. The send buffer chrono also stops at the ACK of all data, as Linux stops each chrono when
+  its queues are empty (`tcp_chrono_stop()`); the source stopped it only at a send or a command, so the time ran on. The
+  mark of `TCP_NOTSENT_LOWAT` comes from the socket option, else from the parameter
+  `notsentLowat`, as in the source.
+- **D-65 — The timer parameters keep the values of master.** Commit 32 turned the timer constants
+  into parameters and changed three defaults to those of Linux: a minimum RTO of 200 ms, a maximum
+  of 120 s, and the RTO formula of Linux; commit 68 put the formula of RFC 6298 back, behind
+  `rtoVarianceFloor`, and the minimum of 1 s. S15 keeps the values of master (`initialRto` 3 s,
+  `minRexmitTimeout` 1 s, `maxRexmitTimeout` 240 s), and S19 changes the defaults: the initial RTO
+  of 1 s of RFC 6298 section 2.1 (the source: 1 s) and the maximum (the source: 120 s, which RFC
+  6298 section 2.5 allows). `synLinearTimeouts` is 0 by default, as RFC 6298 section 5.5 doubles
+  the timer at each expiry (the source: 4, as Linux). `synRetries` has the plain default 12 and is
+  not `@mutable` (the source: -1 for 12, and `@mutable` for TCP_SYNCNT). `maxRexmitTimeout` also
+  limits the SYN timeout. The rule of RFC 6298 section 5.7 (commit 77) acts only below an initial
+  RTO of 3 s.
+- **D-66 — TCP_SYNCNT and SO_KEEPALIVE are socket calls (D-4).** inet-gpl changed the parameter
+  `synRetries` at run time for TCP_SYNCNT. `TcpSocket::setSynRetries()` puts the value in the open
+  command, as `setReceiveBufferSize()` does (D-63). RFC 9293 MUST-24 asks for keepalive on or off
+  for each connection, which the source did not have: `TcpSocket::setKeepAlive()` sends a command
+  that acts before and after the open, as SO_KEEPALIVE. A listening socket gives both values to
+  the connections that it forks, as in Linux.
+- **D-67 — Keepalive as RFC 9293 section 3.8.4 and Linux `tcp_keepalive_timer()`.** The defaults are
+  those of Linux (7200 s, 75 s, 9 probes; MUST-28: at least two hours). TIME_WAIT sends no probe,
+  as Linux keeps only a time-wait socket there; the source could send one. At the end of the
+  probes the connection aborts as after too many retransmissions, without a RST, as the source
+  does; Linux sends a RST.
+- **D-68 — The delayed ACK of Linux is the model of the source.** The source tuned
+  `adaptiveDelayedAcks` against the packetdrill scripts of inet-gpl. It simplifies Linux in five
+  places: each ACK uses one ACK of the quickack budget, where `tcp_dec_quickack_mode()` counts only
+  an ACK of new data and resets the ATO at the end of the budget; `__tcp_ack_snd_check()` also asks
+  that the right edge of the window advances; the send MSS stands for the received MSS; a FIN
+  without data updates the ATO; a retransmission is not a reply. S15 changes only that a FIN
+  without data is not a reply, as in Linux (`tcp_event_data_sent()`); the other places can change
+  when a run of the scripts against master shows a reason, after S18.
+- **D-69 — STATUS reports the last in-order data.** `lastDataRecvTime` is the arrival of the last
+  in-order data, and before any data the end of the handshake, as Linux `icsk_ack.lrcvtime`, which
+  `tcpi_last_data_recv` reports. The source reported the last segment of any kind.
+- **D-70 — The zero-window probe of RFC 9293 by default, the probe of Linux by parameter.** RFC 9293
+  section 3.8.6.1 asks for "at least one octet of new data (if available), or retransmit". The
+  probe of S15b is the first unacknowledged octet, the same octet at each probe, as BSD sends it in
+  its persist state; it starts no retransmission timer, and its ACK is no duplicate ACK, so the
+  connection stays open while the peer answers (MUST-37). `zeroWindowProbe = "linux"` selects the
+  probe of Linux without data at SND.UNA − 1, which the source has as its only probe. The source
+  also keeps `minPersistTimeout`, which nothing reads; S15b does not add it.
+- **D-71 — The persist timer runs only while data waits for a zero window.** Master started it at
+  each zero-window ACK, also without waiting data, and then it never stopped; it did not start when
+  a zero window stopped a later send. S15b starts it at a zero window only when data waits, and
+  after a send that the zero window stopped, and an expiry without data stops it, as Linux
+  `tcp_check_probe_timer()` and `tcp_probe_timer()`. The source has the same defects.
+- **D-72 — A pure ACK with SEG.ACK = SND.UNA updates the send window.** RFC 9293 section 3.10.7.4:
+  "If SND.UNA =< SEG.ACK =< SND.NXT, the send window should be updated". Master updated it only from
+  a pure ACK with data in flight; S15b, as the source, also with nothing in flight. A window update
+  ends the persist state, also with the probe octet in flight, which goes again as unsent data
+  (`TcpSackRexmitQueue::discardFrom()`), and it is no duplicate ACK (RFC 5681 section 2, condition
+  (e)). The rule of RFC 9293 also covers a data segment of the peer, but a first version that took
+  it moved six CI rows: a pure ACK of INET carries `snd_nxt`, which goes back during a
+  retransmission (BSD and Linux put the highest sequence number sent), so after a data segment of
+  the peer the window of its later pure ACKs looked old (SND.WL1), condition (e) failed, and a fast
+  retransmit did not come. Both repairs go together to a later stage.
 - **D-3 — The socket contract lands alone (S3).** Commit 2 is contract surface only, and the
   features of S7 to S18 use it. A split of commit 2 into one part for each feature is possible,
   but it costs more than it gives.
@@ -1125,3 +1384,512 @@ fails one commit earlier: `tcp_dsack_1` before step 1, `tcp_dsack_2` and `tcp_ds
 step 2, the new expectation of `tcp_sack_3` before step 2b, `tcp_sack_8` before step 2c. The CI
 fingerprint job passes at each code commit; only `bulktransfer inet_inet_2b` moves, at steps 1 and
 2b. The six gates pass.
+
+### S11 — `topic/tcp-connection-lifecycle`: the steps
+
+| Step | Commit | B of D-6 | Source |
+| --- | --- | --- | --- |
+| 1 | fix: clamp an explicit read at a received FIN | — | 30 |
+| 2 | change: answer STATUS on a connection that never opened | — | 38 |
+| 3 | fix: read and send the handshake options in a simultaneous open | — | 16 (part), 26 (part) |
+| 4 | change: re-send the SYN-ACK for a retransmitted SYN | — | 23 (part) |
+| 5 | change: report the duplicate SYN of a simultaneous open by D-SACK | — | 22 (part), 23 (part) |
+| 6 | fix: close a forked connection on an RST or a timeout in SYN_RCVD | — | 16 (part), 26 (part), 39 (part), 73 |
+| 7 | add: reset on data after a close, selected by `abortOnDataAfterClose` | — | 23 (part), 39 (part) |
+| 8 | change: reset a SYN-ACK whose TSecr the connection did not send | — | 16 (part), 74 |
+| 9 | add: the SYN cookie MSS of Linux, selected by `syncookiesAlways` | — | 15 (part) |
+| 10 | comment: cite the current RFCs in the receive path and the state | — | 23 (part) |
+
+S11 gathers the parts of seven source commits that change the life of a connection: its setup,
+its close and the commands around them. D-19 sends here the `forked` flag, the options of the
+crossing SYN-ACK, the TSecr check of the SYN-ACK and `syncookiesAlways`; S10 sends the D-SACK of
+the duplicate SYN of a simultaneous open. Step 6 takes from the Fast Open commit (26) only the
+rule for a forked connection, without `fastopenAccelerated` (S12), and commit 73, which repairs
+that rule before it landed (D-1). Step 7 takes from commit 39 the line that sets `rcvShutdown` at
+a full close. Commit 74 repairs the TSecr check of step 8 before it landed, so it moves from S17
+to S11 (D-1).
+
+Commit 23 also holds parts of other stages: the alignment of the options with NOPs only when
+configured and the padding of the option area (`alignOptions`, S12), the SACK option from the
+recovery's copy of `addSacks()` (S17, D-5), and the end of the reset of the duplicate-ACK counter
+in the data path (B1 of D-6, S17). Its AccECN comments go to S13. The reset of the full-sized
+segment counter at the SYN (commit 18) and at the SYN-ACK (commit 39) has no effect: the counter
+is 0 when the SYN goes out, and `ackSent()` resets it at the SYN-ACK. S11 leaves both lines out.
+
+Three more items came up during the work. Step 3 also reads the options of the crossing SYN,
+which the source does in the Fast Open commit (26): without that, a simultaneous open used no
+option of the peer. The tests need three additions to the test library: `readScript` (timed READ
+commands) and `fork` (a listener that forks) in `TcpTestClient`, and the command `tsecr` of the
+scripted tester. Master's SYN-ACK echoes TSecr 0, because the connection takes `ts_recent` only
+from data (commit 39 repairs this in S17); so the TSecr check of step 8 never fires on master's
+own SYN-ACKs, and its tests set the TSecr with the tester.
+
+### S11 — `topic/tcp-connection-lifecycle` — landed 2026-10-09
+
+The owner reviewed and approved S11 on 2026-10-09.
+
+S11 brings ten changes to the setup and the close of a connection: three repairs of master, four
+changes, two features that are off by default, and a comment. Where the source is wrong, S11
+deviates from it, and a test fails with each source form (D-36 to D-41).
+
+| Commit | B of D-6 | Source | Moved CI rows |
+| --- | --- | --- | --- |
+| `tcp: fix: clamp an explicit read at a received FIN` | — | 30 | — |
+| `tcp: change: answer STATUS on a connection that never opened` | — | 38 | — |
+| `tcp: fix: read and send the handshake options in a simultaneous open` | — | 16 (part), 26 (part) | — |
+| `tcp: change: re-send the SYN-ACK for a retransmitted SYN` | — | 23 (part) | 2 |
+| `tcp: change: report the duplicate SYN of a simultaneous open by D-SACK` | — | 22 (part), 23 (part) | — |
+| `tcp: fix: close a forked connection on an RST or a timeout in SYN_RCVD` | — | 16 (part), 26 (part), 39 (part), 73 | — |
+| `tcp: add: reset on data after a close, selected by abortOnDataAfterClose` | — | 23 (part), 39 (part) | — |
+| `tcp: change: reset a SYN-ACK whose TSecr the connection did not send` | — | 16 (part), 74 | — |
+| `tcp: add: the SYN cookie MSS of Linux, selected by syncookiesAlways` | — | 15 (part) | — |
+| `tcp: comment: cite the current RFCs in the receive path and the state` | — | 23 (part) | — |
+
+The commit messages explain each trace. In short: only the SYN-ACK resend moves CI rows. In
+`bgpv4/BgpAndOspfv3` (t=11 s) and `manetrouting/multiradio` (t=4 s), a passive open in SYN_RCVD
+gets a repeated SYN and re-sends its SYN-ACK at once, where it sent an ACK. The source form of
+step 7 moved two more rows, `ethernet/arptest` and `arptest2` (D-41).
+
+New tests: `tcp_read_fin_1`, `tcp_status_2`, `tcp_syn_10` to `tcp_syn_15`, `tcp_close_data_1` and
+`_2`, and `tcp_syncookies_1`. Step 3 changes the expectations of `tcp_syn_2`, and step 4 those of
+`tcp_syn_5`, `tcp_syn_6` and `tcp_syn_9`, from the source test commit 41 without its
+`synLinearTimeouts` lines (S15).
+
+Items for later stages: S12 takes from commit 23 the alignment and the padding of the options
+(`alignOptions`), and from commit 26 the rest of the rules of a forked or a Fast Open connection
+(`fastopenAccelerated`, the data on a crossing SYN); S13 the AccECN comments of commit 23; S17 the
+SACK option from the recovery's `addSacks()`, the end of the reset of the duplicate-ACK counter in
+the data path, and `ts_recent` from the handshake segment (commit 39).
+
+Evidence, debug build against `omnetpp-6.x`: each commit builds alone with no undefined `inet::`
+symbol, and the TCP module tests pass at each commit (411 at the first code commit, 421 at the
+head); the TCP standards tests pass at each code commit (25 pass, 2 expected failures, the
+packetdrill tests skip without inet-gpl); unit 118 and serializer 4 pass at the head. The tests of
+steps 2 to 5, 7 and 9 fail one commit earlier; the tests that need the test library additions of
+their own commit (steps 1, 6 and 8) were checked by hand against the code of the commit before,
+and the tests of D-36 to D-41 against the source forms. The CI fingerprint job passes at each code
+commit with the two rows of step 4. The TCP fingerprint rows run in debug at the head with no
+runtime error (the `tyf` ingredient differs, as on master; the lwIP rows need a build with lwIP).
+The six gates pass.
+
+### S12 — `topic/tcp-fast-open`: the steps
+
+| Step | Commit | B of D-6 | Source |
+| --- | --- | --- | --- |
+| 1 | fix: send nothing for a SEND of zero bytes | — | 43 (part) |
+| 2 | fix: pad the option area to a multiple of 4 bytes | — | 23 (part) |
+| 3 | add: options without NOP alignment, selected by `alignOptions` | — | 15, 16, 23 (parts) |
+| 4 | add: a SYN without the MSS option, selected by `sendMssOption` | — | 15 (part) |
+| 5 | fix: the default send MSS when the SYN has no MSS option (RFC 9293 MUST-15) | — | 15 (part) |
+| 6 | fix: the text and the FIN on a SYN-ACK | — | 26 (part) |
+| 7 | add: TCP Fast Open (RFC 7413), selected by two parameters | — | 26 (part), 27 (part), 39 (part), 43, 44, 15, 16 (parts) |
+| 8 | add: Fast Open blackhole detection, selected by `fastopenBlackholeTimeout` | — | 26 (part) |
+| 9 | add: the Fast Open option kind 254, selected by `fastopenExpOptionEnabled` | — | 26 (part), 43, 44 (parts) |
+| 10 | add: the Linux Fast Open cookie key, selected by `fastopenKey` | — | 26 (part) |
+| 11 | add: Fast Open without a cookie, selected by two parameters | — | 26 (part) |
+| 12 | add: the limit of pending Fast Open connections (RFC 7413) | — | new (D-50) |
+| 13 | comment: the connection states in the words of RFC 9293 | — | 26 (part) |
+
+Commit 26 is the Fast Open feature, but it also holds changes that do not belong to Fast Open.
+S12 divides the feature: the core (step 7) has both roles, because each role needs the other for
+a test in INET, and the server that sends in SYN_RCVD, because its application gets the
+connection at the SYN (D-46); blackhole detection, the experimental option, the Linux key and the
+modes without a cookie follow in their own steps. The core takes from commits 15 and 16
+`peerAdvertisedMss`, the Nagle exemption of the SYN-ACK slot and the data retransmission in
+SYN_RCVD (D-19). Commits 43 and 44 repair Fast Open before it landed, so by D-1 they fold into
+steps 7 and 9, except the zero-length SEND of commit 43 (step 1). By D-1, the core also takes the
+data on the SYN from commit 39 and the SYN-ACK that keeps `snd_max` from commit 27 (D-47). The
+core keeps the check of `seedRttFromHandshake` on the active side (D-27). Step 6 repairs the text
+and the FIN of a SYN-ACK, which only another stack sends; the scripted tester gets the command
+`data` for its test. The planned step for the order of the SYN options (commit 16) is dropped
+(D-43).
+
+The other parts of commit 26 go to the stages of their topics: the FIN of a close that arms the
+retransmission timer only when it does not run and arms the loss probe (S15, timers); the check
+of the sequence number that an ICMP error quotes (RFC 5927) and the hard ICMP errors in SYN_RCVD
+(S17); the immediate SYN retransmission after an ICMP fragmentation-needed error in SYN_SENT (S18,
+path MTU); the `ts_recent` update only from a segment that acknowledges no unsent data (S17, with
+commit 39). Commit 51 needs nothing here: master already drops an unusable SACK option on receive
+(S8), and its guard of the send path goes with S17, which moves the SACK option to the recovery's
+`addSacks()`.
+
+Items for later stages: (S17) master puts the text of a SYN without Fast Open into the receive
+queue one byte early and does not move `rcv_nxt` over it; a peer that sends the bytes again
+overwrites them, so INET's own peers see no effect. (S17) A passive connection does not send the
+data that a SEND queued in SYN_RCVD when it reaches ESTABLISHED (RFC 9293: "Queue the data for
+transmission after entering ESTABLISHED state"); only an application that sends raw commands can
+reach it, because the socket of INET is not CONNECTED in SYN_RCVD. (inet-gpl) Its packetdrill
+configuration maps no sysctl to `fastopenBlackholeTimeout` (D-48), and its application gets the
+indications of D-46.
+
+### S12 — `topic/tcp-fast-open` — landed 2026-10-09
+
+The owner reviewed and approved S12 on 2026-10-09.
+
+S12 brings TCP Fast Open (RFC 7413) and the option and MSS rules that it needs: four repairs of
+master, eight features that are off by default, and a comment. Where the source is wrong or
+incomplete, S12 deviates from it (D-42 to D-50).
+
+| Commit | B of D-6 | Source | Moved CI rows |
+| --- | --- | --- | --- |
+| `tcp: fix: send nothing for a SEND of zero bytes` | — | 43 (part) | — |
+| `tcp: fix: pad the option area to a multiple of 4 bytes` | — | 23 (part) | — |
+| `tcp: add: options without NOP alignment, selected by alignOptions` | — | 15, 16, 23 (parts) | — |
+| `tcp: add: a SYN without the MSS option, selected by sendMssOption` | — | 15 (part) | — |
+| `tcp: fix: the default send MSS when the SYN has no MSS option` | — | 15 (part) | — |
+| `tcp: fix: the text and the FIN on a SYN-ACK` | — | 26 (part) | — |
+| `tcp: add: TCP Fast Open (RFC 7413), selected by two parameters` | — | 26 (part), 27 (part), 39 (part), 43, 44, 15, 16 (parts) | — |
+| `tcp: add: Fast Open blackhole detection, selected by fastopenBlackholeTimeout` | — | 26 (part) | — |
+| `tcp: add: the Fast Open option kind 254, selected by fastopenExpOptionEnabled` | — | 26 (part), 43, 44 (parts) | — |
+| `tcp: add: the Linux Fast Open cookie key, selected by fastopenKey` | — | 26 (part) | — |
+| `tcp: add: Fast Open without a cookie, selected by two parameters` | — | 26 (part) | — |
+| `tcp: add: the limit of pending Fast Open connections (RFC 7413)` | — | new (D-50) | — |
+| `tcp: comment: the connection states in the words of RFC 9293` | — | 26 (part) | — |
+
+No commit moves a CI row: the features are off by default, and the paths of master that the
+repairs and the core change give the same results in the CI scenarios.
+
+New tests: `tcp_send_empty_1`, `tcp_options_pad_1`, `tcp_options_align_1`, `tcp_mss_option_2`,
+`tcp_mss_default_1` and `_2`, `tcp_synack_data_1` and `_2`, and 16 tests `tcp_fastopen_*` (`_1`,
+`optin_1`, `nosend_1`, `fork_1`, `srvdata_1` and `_2`, `rexmit_1`, `mss_1`, `synack_rexmit_1`,
+`blackhole_1` and `_2`, `exp_1` and `_2`, `nocookie_1` and `_2`, `pending_1`); the unit tests
+`tcp_fastopen_cookie_1`, `_cache_1` and `_key_1`. The test library gets an empty SEND, a second
+and a third connection, `fastOpen` and `logIndications` in `TcpTestClient`, the commands `data`
+and `strip` of the scripted tester, and the Fast Open options in the packet dump.
+
+Evidence, debug build against `omnetpp-6.x`: each commit builds alone with no undefined `inet::`
+symbol, and the TCP module tests pass at each commit (422 at the first code commit, 445 at the
+head); the TCP standards tests pass at each code commit (25 pass, 2 expected failures, the
+packetdrill tests skip without inet-gpl); unit 121 and serializer 4 pass at the head. The new
+tests of steps 2 to 5, 8, 11 and 12 fail one commit earlier (`tcp_fastopen_blackhole_2`, the
+control with the detection off, passes there too); the tests that need test library additions
+of their own commit (steps 1, 6, 7 and 9) fail with the source of the commit before, and so do
+the unit tests of steps 7 and 10. The CI fingerprint job passes at each code commit with no moved
+row. The TCP fingerprint rows run in debug at the head with no runtime error (the `tyf` ingredient
+differs, as on master; the lwIP rows need a build with lwIP). The six gates pass.
+
+### S13 — `topic/tcp-accecn`: the steps
+
+| Step | Commit | B of D-6 | Source |
+| --- | --- | --- | --- |
+| 1 | fix: originate ECT(0), not ECT(1) | — | 27 (part) |
+| 2 | fix: no retransmission at a timeout with nothing in flight | — | new (D-52) |
+| 3 | fix: no ECT on a SYN-ACK, a segment without data or a window probe | — | 27 (part) |
+| 4 | fix: an ECN-setup SYN-ACK only for an ECN-setup SYN | — | 27 (part) |
+| 5 | add: `tcpEcnMode`, which replaces `ecnWillingness` | — | 27 (part) |
+| 6 | add: AccECN negotiation and the ACE field (RFC 9768) | B16 (part) | 27 (part), 65 (part) |
+| 7 | add: `accEcnBareTimeWaitAck`, the Linux ACK in TIME_WAIT | — | 27 (part) |
+| 8 | fix: read an AccECN option of any length | — | new |
+| 9 | add: the AccECN option of the data receiver (RFC 9768) | — | 27 (part) |
+| 10 | add: the AccECN option of the data sender (RFC 9768) | — | 27 (part) |
+| 11 | add: no AccECN option after its ACKs got lost twice | — | 27 (part) |
+| 12 | add: the Linux counts of a duplicate for `accEcnOptionPolicy` | — | 27 (part) |
+| 13 | add: the AccECN fallback of a retransmitted SYN and SYN-ACK | — | 27 (part) |
+| 14 | fix: ECN in force before the first segment after the SYN-ACK | — | 27 (part) |
+| 15 | add: `ecnMarkAll`, and ECT on the SYN, SYN-ACK and RST of DCTCP | B16 (part) | 13 (part), 27 (part) |
+| 16 | change: DCTCP counts its bytes also in a fast recovery (D-23) | — | new |
+| 17 | comment: Accurate ECN in the module and header comments | — | 23, 48, 64 (parts) |
+
+Commit 27 is the AccECN feature, but it also repairs classic ECN (D-51, D-59). Each repair is its
+own step before the feature; step 2 (D-52) repairs a crash that the test of step 3 found. The
+feature divides into the negotiation with the ACE field (step 6), the Linux ACK of TIME_WAIT
+(step 7), the option of the receiver and of the sender (steps 9 and 10), the end of the option
+after lost ACKs (step 11), the Linux counts of a duplicate (step 12) and the fallback (step 13).
+Step 8 repairs the option parser of master for the lengths of RFC 9768 before the option uses it.
+Step 15 adds `ecnMarkAll` of B16 and the ECT of DCTCP, and step 16 repairs D-23. The checks of
+S13 against RFC 9768, RFC 8311, RFC 3168 and RFC 8257 found the differences of the source that
+D-51 to D-60 record.
+
+The non-AccECN parts of commit 27 that belong to other stages: the counts of `sendData()`
+(`allowedToSend`, S16), and the second TS block of a SYN, which master never had (D-43).
+
+Items for later stages: (S15, S16) the zero window probe of master sends new bytes beyond a zero
+window, so `snd_max` grows, and the probes continue after the window opens. (S17) The option
+writer skips CLOSING, LAST_ACK and TIME_WAIT, and `sendFin()` writes no options, so these
+segments carry no TS option. (S17) Of the two `addSacks()` of master, only that of
+`TcpConnection` runs; that of `Rfc6675Recovery` has no caller. (inet-gpl) Its packetdrill
+configuration follows S13 with `accEcnOptionPolicy = "linux"` in place of `accEcnOptionBeaconAcks`
+and `accEcnOptionKindAlternates`, `accEcnBareTimeWaitAck = true` and `ecnMarkAll = true`; a run
+can check it only after S18.
+
+### S13 — `topic/tcp-accecn` — landed 2026-10-12
+
+The owner reviewed and approved S13 on 2026-10-12.
+
+S13 brings Accurate ECN (RFC 9768) and the ECN repairs that it needs: six repairs of master,
+nine additions, a change of DCTCP and a comment. The additions change nothing until a run selects
+AccECN or a new parameter, except the ECT on the SYN, SYN-ACK and RST of DCTCP. Where the source
+is wrong or incomplete, S13 deviates from it (D-51 to D-60).
+
+| Commit | B of D-6 | Source | Moved CI rows |
+| --- | --- | --- | --- |
+| `tcp: fix: originate ECT(0), not ECT(1)` | — | 27 (part) | `dctcp` DcTcpIncast, TcpRenoIncast; `redmarker` TcpSender1 (~tND) |
+| `tcp: fix: no retransmission at a timeout with nothing in flight` | — | new (D-52) | — |
+| `tcp: fix: no ECT on a SYN-ACK, a segment without data or a window probe` | — | 27 (part) | the same three rows (~tND) |
+| `tcp: fix: an ECN-setup SYN-ACK only for an ECN-setup SYN` | — | 27 (part) | — |
+| `tcp: add: tcpEcnMode, which replaces ecnWillingness` | — | 27 (part) | — |
+| `tcp: add: AccECN negotiation and the ACE field (RFC 9768)` | B16 (part) | 27 (part), 65 (part) | — |
+| `tcp: add: accEcnBareTimeWaitAck, the Linux ACK in TIME_WAIT` | — | 27 (part) | — |
+| `tcp_common: fix: read an AccECN option of any length` | — | new | — |
+| `tcp: add: the AccECN option of the data receiver (RFC 9768)` | — | 27 (part) | — |
+| `tcp: add: the AccECN option of the data sender (RFC 9768)` | — | 27 (part) | — |
+| `tcp: add: no AccECN option after its ACKs got lost twice` | — | 27 (part) | — |
+| `tcp: add: the Linux counts of a duplicate for accEcnOptionPolicy` | — | 27 (part) | — |
+| `tcp: add: the AccECN fallback of a retransmitted SYN and SYN-ACK` | — | 27 (part) | — |
+| `tcp: fix: ECN in force before the first segment after the SYN-ACK` | — | 27 (part) | — |
+| `tcp: add: ecnMarkAll, and ECT on the SYN, SYN-ACK and RST of DCTCP` | B16 (part) | 13 (part), 27 (part) | `dctcp` DcTcpIncast (tplx, ~tNl, ~tND) |
+| `tcp: change: DCTCP counts its bytes also in a fast recovery (D-23)` | — | new | — |
+| `tcp: comment: Accurate ECN in the module and header comments` | — | 23, 48, 64 (parts) | — |
+
+Three commits move CI rows. ECT(0) in place of ECT(1), and no ECT on the control segments,
+change only the packet data (~tND) of the two DCTCP incast rows and the RED marker row: the same
+packets go out with another ECN field. ECT on the DCTCP SYN and SYN-ACK changes the DCTCP incast
+row in each ingredient: the congested switch marks these segments where it dropped them before
+(RFC 8257 section 3.6). A first version of the fallback also cleared the flags of a classic ECN
+SYN, and both incast rows moved; S13 keeps classic ECN as master (D-58).
+
+New tests: `tcp_ecn_ect_1` to `_3`, `tcp_ecn_cwnd_1`, `tcp_ecn_synack_1`, `tcp_ecnmode_1` and
+`_2`, 14 tests `tcp_accecn_*` (the negotiation, the ACE field, the time-wait ACK), 14 tests
+`tcp_accecn_option_*`, 4 tests `tcp_accecn_fallback_*`, `tcp_ecn_estab_1`, 5 tests
+`tcp_ecn_markall_*` and `tcp_dctcp_recovery_count_1`; the unit test
+`tcp_accecn_option_wire_2`. The scripted tester gets the commands `ace`, `ect1`, `ect0` and
+`zeroaccecn`, and it delivers the ECN codepoint of a segment; the packet dump shows the ECN
+codepoint, the AE, CWR and ECE flags, and the AccECN options.
+
+Evidence, debug build against `omnetpp-6.x`: each commit builds alone with no undefined `inet::`
+symbol, and the TCP module tests pass at each commit (446 at the first code commit, 490 at the
+head); the TCP standards tests pass at each code commit (25 pass, 2 expected failures, the
+packetdrill tests skip without inet-gpl); unit 122 and serializer 4 pass at the head. The new
+tests of each code commit fail with the source of the commit before (`tcp_ecnmode_2`, the control
+of a passive client, passes there too). The CI fingerprint job runs at each code commit, and only
+the rows above move. The TCP fingerprint rows run in debug at the head with no runtime error (the
+`tyf` ingredient differs in 52 rows, as on master; the lwIP rows need a build with lwIP). The six
+gates pass.
+
+### S14 — `topic/tcp-receive-buffer`: the steps
+
+| Step | Commit | B of D-6 | Source |
+| --- | --- | --- | --- |
+| 1 | add: `receiveBufferSize`, a receive buffer apart from the window | — | 28 (part) |
+| 2 | add: the Linux acceptance of a segment beyond the buffer | — | 28 (part) |
+| 3 | add: receive window auto-tuning, selected by `windowAutoTuning` | — | 28 (part) |
+| 4 | add: `windowShrinkAllowed`, an offer that follows the free buffer | — | 28 (part) |
+| 5 | add: the growth of the receive buffer of an owned connection | — | 28 (part) |
+| 6 | add: the window and the receive buffer of one socket | — | new (D-4, D-63) |
+| 7 | add: MSG_ZEROCOPY completions | — | 29 (part) |
+| 8 | add: the time that the send buffer limits the sender | — | 29 (part) |
+| 9 | add: the delivery time of received data (SO_TIMESTAMPING) | — | 29 (part) |
+| 10 | add: TCP_NOTSENT_LOWAT, a low-water mark on unsent bytes | — | 35 |
+| 11 | change: `timestampSupport` is `@mutable`, as the host-wide sysctl | — | new (D-4, D-63) |
+
+Commit 28 separates the receive buffer from the advertised window, but it also changes the
+default offer, so that out-of-order data no longer makes it smaller. S14 keeps the default of
+master (D-61). The acceptance of an in-order segment beyond the buffer at an empty queue (Linux
+`tcp_data_queue()`) is a Linux behavior; master drops such a segment, and step 2 adds the Linux
+behavior with a parameter. Steps 3 to 5 model the receive memory of Linux (`tcp_grow_window()`,
+`tcp_shrink_window=1` with the skb truesize, `tcp_clamp_window()`), each off by default (D-62).
+Step 6 is the open command of D-4, and step 11 is the sysctl of D-4 (D-63). Commits 29 and 35 give
+the socket options whose contract S3 landed (D-64); STATUS gets `skRcvbuf` (step 5) and
+`sndbufLimited` (step 8).
+
+Items for later stages: (S15, S16) The persist timer of master runs on when the send buffer is
+empty, so a run with a zero window does not end; the tests of S14 with a zero window set
+`sim-time-limit`. (S15) The flag of a segment beyond the offered edge comes with the adaptive
+delayed ACK (D-62). (S18) The acceptance up to the highest edge ever offered, the upper limit of
+the growth of the buffer, the lock by SO_RCVBUF, and a change of the buffer of an open connection
+(D-62, D-63); the source sends that change with `TcpSocket::setReceiveBufferSize()`, and S18 adds
+it to the function of S14, which sets the buffer of the next open, as Linux SO_RCVBUF acts before
+and after the open. (inet-gpl) Its configuration sets `acceptBeyondBufferAtEmptyQueue = true`.
+`PacketDrillApp` changes the module parameters for SO_RCVBUF before the open; it can use
+`setAdvertisedWindow()` and `setReceiveBufferSize()` of its socket only when it builds against
+master after S18, because the source has no such calls. A run can check both only after S18.
+
+### S14 — `topic/tcp-receive-buffer` — landed 2026-10-12
+
+The owner reviewed and approved S14 on 2026-10-12.
+
+S14 brings the receive buffer apart from the advertised window, the Linux receive memory behind
+parameters, the window and the buffer of one socket (D-4), and the socket options of commits 29
+and 35, whose contract S3 landed. Each addition is off by default or waits for a call of the
+application, so no CI row moves. Where the source is wrong or incomplete, S14 deviates from it
+(D-61 to D-64).
+
+| Commit | B of D-6 | Source | Moved CI rows |
+| --- | --- | --- | --- |
+| `tcp: add: receiveBufferSize, a receive buffer apart from the window` | — | 28 (part) | — |
+| `tcp: add: the Linux acceptance of a segment beyond the buffer` | — | 28 (part) | — |
+| `tcp: add: receive window auto-tuning, selected by windowAutoTuning` | — | 28 (part) | — |
+| `tcp: add: windowShrinkAllowed, an offer that follows the free buffer` | — | 28 (part) | — |
+| `tcp: add: the growth of the receive buffer of an owned connection` | — | 28 (part) | — |
+| `tcp: add: the window and the receive buffer of one socket` | — | new (D-63) | — |
+| `tcp: add: MSG_ZEROCOPY completions` | — | 29 (part) | — |
+| `tcp: add: the time that the send buffer limits the sender` | — | 29 (part) | — |
+| `tcp: add: the delivery time of received data (SO_TIMESTAMPING)` | — | 29 (part) | — |
+| `tcp: add: TCP_NOTSENT_LOWAT, a low-water mark on unsent bytes` | — | 35 | — |
+| `tcp: change: timestampSupport is @mutable, as the host-wide sysctl` | — | new (D-63) | — |
+
+New tests: `tcp_rcvbuf_1` and `_2`, `tcp_rcvbuf_accept_1`, `tcp_rcvbuf_autotune_1`,
+`tcp_rcvbuf_shrink_1`, `tcp_rcvbuf_grow_1` and `_2`, `tcp_socket_rcvbuf_1` and `_2`,
+`tcp_zerocopy_1`, `tcp_sndbuf_limited_1`, `tcp_rx_timestamp_1` and `_2`, `tcp_notsent_lowat_1`
+and `_2`, and `tcp_timestamp_sysctl_1`. The test client gets the parameters `owned`,
+`socketAdvertisedWindow`, `socketReceiveBufferSize`, `zerocopy`, `writerBlockedScript`,
+`timestamping`, `notsentLowat` and `tcpParScript`, and a second status line with `skRcvbuf` and
+`sndbufLimited`.
+
+Evidence, debug build against `omnetpp-6.x`: each commit builds alone with no undefined `inet::`
+symbol, and the TCP module tests pass at each commit (492 at the first code commit, 506 at the
+head); the TCP standards tests pass at each code commit (25 pass, 2 expected failures, the
+packetdrill tests skip without inet-gpl); unit 122 and serializer 4 pass at the head. The new
+tests of each code commit fail with the source of the commit before; there, the test library of
+`tcp_socket_rcvbuf_1` and `_2` does not compile, because it calls the new socket functions. The
+CI fingerprint job runs at each code commit, and no row moves. The TCP fingerprint rows run in
+debug at the head with no runtime error (the `tyf` ingredient differs in 52 rows, as on master;
+the lwIP rows need a build with lwIP). The six gates pass.
+
+### S15 — `topic/tcp-timers`: the steps
+
+| Step | Commit | B of D-6 | Source |
+| --- | --- | --- | --- |
+| 1 | add: the timer constants as parameters, with the values of master | — | 31 (part), 32 (part) |
+| 2 | add: `rtoVarianceFloor`, the RTO of Linux | — | 68 (part) |
+| 3 | add: `synRetries` and `synLinearTimeouts`, and the SYN timer limit | — | 32 (part) |
+| 4 | add: the SYN retries of one socket (TCP_SYNCNT) | — | new (D-66) |
+| 5 | add: an RTO of 3 s after a SYN timeout (RFC 6298 section 5.7) | — | 77 |
+| 6 | add: `sendDataWithFirstAck` | — | 32 (part) |
+| 7 | change: a FIN starts the retransmission timer only when it does not run | — | 26 (part) |
+| 8 | add: adaptive delayed ACKs, selected by `adaptiveDelayedAcks` | — | 28 (part), 31 (part) |
+| 9 | add: the time of the last received data in STATUS | — | 18 (part) |
+| 10 | add: keepalive (RFC 9293 section 3.8.4) | — | 33 |
+| 11 | add: keepalive for each connection (MUST-24) | — | new (D-66) |
+| 12 | fix: no new fast recovery before the recovery point of a timeout | — | new (D-34) |
+
+S15 had commits 31 to 34 and 77. The loss marking of commit 34 landed with S5e, and its zero-window
+probe goes to S15b with the persist timing of commit 32 and the window update of commit 84 (B14,
+B15). The timing parameters keep the values of master, and S19 changes the defaults (D-65). Commit
+32 changed the RTO to the formula of Linux, and commit 68 put the formula of RFC 6298 back as the
+default with `rtoVarianceFloor`; S15 brings only the parameter. The source changes the module
+parameter `synRetries` at run time for the socket option TCP_SYNCNT, and it has no switch of
+keepalive for one connection, which RFC 9293 MUST-24 requires; steps 4 and 11 add them as socket
+calls (D-66). Step 7 follows RFC 6298 section 5.1: master restarted the timer at each FIN, also with
+data in flight. Step 12 repairs D-34.
+
+Items for later stages: (S15b) the zero window: the persist timing, the probe, and the window update
+that reopens the window. (S19) the defaults of D-65. (inet-gpl) Its configuration sets the values of
+Linux that the source has as defaults: `initialRto = 1s`, `maxRexmitTimeout = 120s` and
+`synLinearTimeouts = 4`. `PacketDrillApp` changes the parameter `synRetries` for TCP_SYNCNT; when it
+builds against master after S18, it uses `setSynRetries()`, because the parameter is not `@mutable`
+on master. A run can check both only after S18.
+
+### S15 — `topic/tcp-timers` — landed 2026-10-12
+
+The owner reviewed and approved S15 on 2026-10-12.
+
+S15 brings the timer parameters, the RTO of Linux, the SYN retries, an RTO of 3 s after a SYN
+timeout, a FIN that keeps a running retransmission timer, the delayed ACK of Linux, keepalive, the
+time of the last received data in STATUS, and the repair of D-34. Each addition is off by default or
+keeps the value of master. Where the source is wrong or incomplete, S15 deviates from it (D-65 to
+D-69).
+
+| Commit | B of D-6 | Source | Moved CI rows |
+| --- | --- | --- | --- |
+| `tcp: add: the timer constants as parameters, with the values of master` | — | 31 (part), 32 (part) | — |
+| `tcp: add: rtoVarianceFloor, the RTO of Linux` | — | 68 (part) | — |
+| `tcp: add: synRetries and synLinearTimeouts, and the SYN timer limit` | — | 32 (part) | — |
+| `tcp: add: the SYN retries of one socket (TCP_SYNCNT)` | — | new (D-66) | — |
+| `tcp: add: an RTO of 3 s after a SYN timeout (RFC 6298 section 5.7)` | — | 77 | — |
+| `tcp: add: sendDataWithFirstAck` | — | 32 (part) | — |
+| `tcp: change: a FIN starts the retransmission timer only when it does not run` | — | 26 (part) | — |
+| `tcp: add: adaptive delayed ACKs, selected by adaptiveDelayedAcks` | — | 28 (part), 31 (part) | — |
+| `tcp: add: the time of the last received data in STATUS` | — | 18 (part) | — |
+| `tcp: add: keepalive (RFC 9293 section 3.8.4)` | — | 33 | — |
+| `tcp: add: keepalive for each connection (MUST-24)` | — | new (D-66) | — |
+| `tcp: fix: no new fast recovery before the recovery point of a timeout` | — | new (D-34) | `bulktransfer` inet_inet_2b (tplx, ~tNl, ~tND) |
+
+One commit moves a CI row. In the bulk transfer example, a server connection gets an RTO during a
+SACK recovery at t=2.987, and a duplicate ACK at t=3.122 started a new recovery there; with the
+repair of D-34 it does not. Each connection still sends up to the end of the run, with two
+retransmissions fewer.
+
+New tests: `tcp_rto_params_1` to `_3`, `tcp_delack_params_1`, `tcp_rto_variance_floor_1`,
+`tcp_syn_retries_1`, `tcp_syn_linear_1`, `tcp_socket_synretries_1`, `tcp_rto_syn_fallback_1`,
+`tcp_first_ack_1`, `tcp_fin_rexmit_timer_1`, `tcp_adaptive_delack_1` to `_3`,
+`tcp_info_last_data_recv_1`, `tcp_keepalive_1` to `_4`, and `tcp_sack_rto_recovery_1`;
+`tcp_frto_4` checks the repair of D-34. The test client gets the parameters `socketSynRetries` and
+`keepAliveScript`, and a third status line with `lastDataRecvTime`.
+
+Evidence, debug build against `omnetpp-6.x`: each commit builds alone with no undefined `inet::`
+symbol, and the TCP module tests pass at each commit (510 at the first code commit, 526 at the
+head); the TCP standards tests pass at each code commit (25 pass, 2 expected failures, the
+packetdrill tests skip without inet-gpl); unit 122 and serializer 4 pass at the head. The new and
+changed tests of each code commit fail with the source of the commit before; there, the test
+library of `tcp_socket_synretries_1` and of `tcp_keepalive_3` and `_4` does not compile, because it
+calls the new socket functions. The CI fingerprint job runs at each code commit, and only the row
+above moves. The TCP fingerprint rows run in debug at the head with no runtime error (the `tyf`
+ingredient differs in 52 rows, as on master; the lwIP rows need a build with lwIP). The six gates
+pass.
+
+### S15b — `topic/tcp-zero-window`: the steps
+
+| Step | Commit | B of D-6 | Source |
+| --- | --- | --- | --- |
+| 1 | fix: the persist timer no longer changes the RTO | — | 32 (part) |
+| 2 | fix: a zero-window probe sends the first unacknowledged octet again | — | new (D-70) |
+| 3 | change: the first zero-window probe after one RTO, then doubled | B15 | 32 (part), 34 (part) |
+| 4 | fix: a window update that opens the window ends the persist state | B14 | 13 (part), 84 (D-72) |
+| 5 | fix: the persist timer runs only while data waits for a zero window | — | new (D-71) |
+| 6 | add: the zero-window probe of Linux, selected by `zeroWindowProbe` | — | 34 (part) |
+
+A test of master shows how its zero-window probing fails. Each probe is one new octet beyond the
+closed window, so `snd_max` grows with each probe. The probe starts the retransmission timer, which
+then sends the probe octets again with a doubled RTO, the ACKs of the probes count as duplicate
+ACKs, and the persist timer writes its own interval into the RTO (5 s). The first probe comes after
+5 s, not after one RTO. A window update that opens the window is ignored, so the persist timer keeps
+probing after the window is open, and the data that waits is never sent. RFC 9293 section 3.8.6.1
+asks for one octet of new data as the probe, or a retransmission, the first probe after one RTO and
+exponential intervals (SHLD-29, SHLD-30), and that the connection stays open while the peer answers
+the probes (MUST-37). Steps 1 to 5 repair master to that (D-70 to D-72); the probe without data of
+the source (Linux `tcp_xmit_probe_skb()`) comes with a parameter (step 6). The plan had the start
+and the stop of the persist timer as two steps; they are one rule, so step 5 has both.
+
+Items for later stages: (S16) a sender that has a window smaller than one segment sends one octet,
+as the tests of S15b show after the window closes again; commit 69 brings the rules of a small
+window. (any stage) The receiver sends no window update when the application reads; Linux does
+(`tcp_cleanup_rbuf()`), which RFC 9293 does not require, and neither master nor the source has it.
+(any stage) The ACK processing of a segment sends data before the text of the same segment is
+processed, so that data acknowledges the text later; Linux sends after the text. (S17) A pure ACK
+carries `snd_nxt`, which goes back during a retransmission; BSD and Linux use the highest sequence
+number sent. With that repair, a data segment of the peer can also update the send window (RFC 9293
+section 3.10.7.4, D-72). (inet-gpl) Its
+configuration sets `zeroWindowProbe = "linux"`; a run can check it only after S18.
+
+### S15b — `topic/tcp-zero-window` — landed 2026-10-13
+
+The owner reviewed and approved S15b on 2026-10-13.
+
+S15b repairs the zero-window probing of master: the persist timer no longer changes the RTO, the
+probe repeats one octet without the retransmission timer, the first probe comes after one RTO with
+doubled intervals, a window update ends the persist state, and the persist timer runs only while
+data waits. It adds the probe of Linux behind a parameter. No CI row moves. Where the source is
+wrong or incomplete, S15b deviates from it (D-70 to D-72).
+
+| Commit | B of D-6 | Source | Moved CI rows |
+| --- | --- | --- | --- |
+| `tcp: fix: the persist timer no longer changes the RTO` | — | 32 (part) | — |
+| `tcp: fix: a zero-window probe sends the first unacknowledged octet again` | — | new (D-70) | — |
+| `tcp: change: the first zero-window probe after one RTO, then doubled` | B15 | 32 (part), 34 (part) | — |
+| `tcp: fix: a window update that opens the window ends the persist state` | B14 | 13 (part), 84 (D-72) | — |
+| `tcp: fix: the persist timer runs only while data waits for a zero window` | — | new (D-71) | — |
+| `tcp: add: the zero-window probe of Linux, selected by zeroWindowProbe` | — | 34 (part) | — |
+
+New tests: `tcp_persist_1` to `_4` and `tcp_persist_linux_1`, which also checks a window update
+with nothing in flight. `tcp_info_fields_2`, `tcp_ecn_ect_3`
+and `tcp_ecn_cwnd_1` follow the new probe times and the probe octet that no longer goes again.
+
+Evidence, debug build against `omnetpp-6.x`: each commit builds alone with no undefined `inet::`
+symbol, and the TCP module tests pass at each commit (527 at the first code commit, 531 at the
+head); the TCP standards tests pass at each code commit (25 pass, 2 expected failures, the
+packetdrill tests skip without inet-gpl); unit 122 and serializer 4 pass at the head. The new and
+changed tests of each code commit fail with the source of the commit before. The CI fingerprint job
+runs at each code commit, and no row moves. The TCP fingerprint rows run in debug at the head with
+no runtime error (the `tyf` ingredient differs in 52 rows, as on master; the lwIP rows need a build
+with lwIP). The six gates pass.

@@ -217,6 +217,9 @@ class INET_API TcpSocket : public ISocket
     void *userData = nullptr;
     cGate *gateToTcp = nullptr;
     std::string tcpAlgorithmClass;
+    int advertisedWindow = -1;
+    int receiveBufferSize = -1;
+    int synRetries = -1;
 
     ChunkQueue *receiveQueue = nullptr;
 
@@ -342,6 +345,29 @@ class INET_API TcpSocket : public ISocket
      * Sets the tcpAlgorithmClass parameter of the next connect() or listen() call.
      */
     void setTCPAlgorithmClass(const char *tcpAlgorithmClass) { this->tcpAlgorithmClass = tcpAlgorithmClass; }
+
+    /**
+     * Sets the advertised window of the next connect() or listen() call, in bytes, in
+     * place of the advertisedWindow parameter of the Tcp module; the window scale then
+     * follows this window, as Linux sets it from the buffer of the socket. -1: the
+     * parameters of the Tcp module.
+     */
+    void setAdvertisedWindow(int advertisedWindow) { this->advertisedWindow = advertisedWindow; }
+
+    /**
+     * Sets the receive buffer of the next connect() or listen() call, in bytes, in place
+     * of the receiveBufferSize parameter of the Tcp module (as SO_RCVBUF before connect()
+     * or listen()). -1: the parameter of the Tcp module.
+     */
+    void setReceiveBufferSize(int receiveBufferSize) { this->receiveBufferSize = receiveBufferSize; }
+
+    /**
+     * Sets the retransmissions of the SYN of the next connect(), or of the SYN-ACKs of
+     * the connections of the next listen(), after which the open fails, in place of the
+     * synRetries parameter of the Tcp module (as the Linux socket option TCP_SYNCNT).
+     * -1: the parameter of the Tcp module.
+     */
+    void setSynRetries(int synRetries) { this->synRetries = synRetries; }
 
     /**
      * Initiates passive OPEN, creating a "forking" connection that will listen
@@ -505,6 +531,14 @@ class INET_API TcpSocket : public ISocket
      * kernel behaviors like OOO-pressure rcvbuf growth are gated on it.
      */
     void setOwned(bool owned);
+
+    /**
+     * Turns keepalive on or off for this connection (SO_KEEPALIVE; RFC 9293 MUST-24:
+     * "the application MUST be able to turn them on or off for each TCP connection"),
+     * before or after the open, in place of the keepAliveEnabled parameter of the Tcp
+     * module. A listening socket gives the value to the connections that it forks.
+     */
+    void setKeepAlive(bool enabled);
 
     /**
      * Application-writer blocked-on-send-buffer marker (Linux SOCK_NOSPACE

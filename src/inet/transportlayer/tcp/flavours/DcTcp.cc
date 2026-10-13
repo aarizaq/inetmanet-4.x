@@ -39,11 +39,61 @@ bool DcTcp::processEce(uint32_t numBytesAcked)
     if (!state || !state->ect)
         return false;
 
+    countBytes(numBytesAcked);
+
+    // Applying DcTcp style cwnd update only if there was congestion and the window has not yet been reduced during current interval
+    if (state->dctcp_bytesMarked && !state->sndCwr) {
+        state->sndCwr = true;
+
+        // RFC 8257 3.3.9
+        state->snd_cwnd = state->snd_cwnd * (1 - state->dctcp_alpha / 2);
+
+        conn->emit(cwndSignal, state->snd_cwnd);
+
+        uint32_t flight_size = std::min(state->snd_cwnd, state->snd_wnd); // FIXME - Does this formula computes the amount of outstanding data?
+        state->ssthresh = std::max(3 * flight_size / 4, 2 * state->snd_mss);
+
+        conn->emit(ssthreshSignal, state->ssthresh);
+        return true;
+    }
+
+    return false;
+}
+
+void DcTcp::ackedInFastRecovery(uint32_t numBytesAcked)
+{
+    // RFC 8257 section 3.3 counts the acknowledged and the marked bytes at each ACK,
+    // and Linux updates alpha at each ACK (dctcp_update_alpha()); only the cut of
+    // cwnd waits until no recovery runs
+    if (state->ect) {
+        EV_INFO << "DCTCP: counting the " << numBytesAcked << " acknowledged bytes in a fast recovery\n";
+        countBytes(numBytesAcked);
+    }
+}
+
+void DcTcp::countBytes(uint32_t numBytesAcked)
+{
     // RFC 8257 3.3.2
     state->dctcp_bytesAcked += numBytesAcked;
 
-    // RFC 8257 3.3.3
-    if (state->gotEce) {
+    // RFC 8257 3.3.3. With AccECN (RFC 9768), the AccECN option gives the marked bytes;
+    // before an option with the ECEB field arrives, the new CE marks of this ACK times
+    // the MSS do. With classic ECN, each byte that an ACK with ECE acknowledges counts
+    // as marked.
+    if (state->accEcnNegotiated) {
+        uint32_t cePkts = state->deliveredCePkts - state->dctcp_deliveredCePktsMark;
+        uint32_t ceBytes = state->deliveredCeBytes - state->dctcp_deliveredCeBytesMark;
+        state->dctcp_deliveredCePktsMark = state->deliveredCePkts;
+        state->dctcp_deliveredCeBytesMark = state->deliveredCeBytes;
+        state->gotEce = false;
+        uint32_t marked = state->accEcnCebSeen ? ceBytes : cePkts * state->snd_mss;
+        state->dctcp_bytesMarked += marked;
+        if (marked > 0)
+            EV_INFO << "DCTCP: " << marked << " bytes newly marked (AccECN " << (state->accEcnCebSeen ? "option" : "ACE field")
+                    << "), " << state->dctcp_bytesMarked << " bytes marked in this window\n";
+        conn->emit(markingProbSignal, marked > 0 ? 1 : 0);
+    }
+    else if (state->gotEce) {
         state->dctcp_bytesMarked += numBytesAcked;
         conn->emit(markingProbSignal, 1);
     }
@@ -63,6 +113,8 @@ bool DcTcp::processEce(uint32_t numBytesAcked)
         // DCTCP.Alpha = DCTCP.Alpha * (1 - g) + g * M
         state->dctcp_alpha = state->dctcp_alpha * (1 - state->dctcp_gamma) + state->dctcp_gamma * ratio;
         conn->emit(calcLoadSignal, state->dctcp_alpha);
+        EV_INFO << "DCTCP: end of a window of data: " << state->dctcp_bytesMarked << " of " << state->dctcp_bytesAcked
+                << " bytes marked, alpha=" << state->dctcp_alpha << "\n";
 
         // RFC 8257 3.3.7
         state->dctcp_windEnd = state->snd_nxt;
@@ -71,24 +123,6 @@ bool DcTcp::processEce(uint32_t numBytesAcked)
         state->dctcp_bytesAcked = state->dctcp_bytesMarked = 0;
         state->sndCwr = false;
     }
-
-    // Applying DcTcp style cwnd update only if there was congestion and the window has not yet been reduced during current interval
-    if (state->dctcp_bytesMarked && !state->sndCwr) {
-        state->sndCwr = true;
-
-        // RFC 8257 3.3.9
-        state->snd_cwnd = state->snd_cwnd * (1 - state->dctcp_alpha / 2);
-
-        conn->emit(cwndSignal, state->snd_cwnd);
-
-        uint32_t flight_size = std::min(state->snd_cwnd, state->snd_wnd); // FIXME - Does this formula computes the amount of outstanding data?
-        state->ssthresh = std::max(3 * flight_size / 4, 2 * state->snd_mss);
-
-        conn->emit(ssthreshSignal, state->ssthresh);
-        return true;
-    }
-
-    return false;
 }
 
 bool DcTcp::shouldMarkAck()

@@ -28,6 +28,14 @@ class INET_API TcpAlgorithm : public cObject
   protected:
     TcpConnection *conn; // we belong to this connection
     TcpStateVariables *state; // our state variables
+    simtime_t initialRto; // the RTO before the first RTT measurement (initialRto parameter)
+    simtime_t minRexmitTimeout; // the lower limit of the RTO
+    simtime_t maxRexmitTimeout; // the upper limit of the RTO
+    bool rtoVarianceFloor = false; // the RTO of Linux: the minimum limits the variance term
+    int maxRexmitCount = 0; // the retransmissions of one segment, after which the connection aborts
+    simtime_t maxPersistTimeout; // the upper limit of the interval of the zero-window probes
+    simtime_t delayedAckTimeout; // the longest delay of an ACK
+    bool sendDataWithFirstAck = true; // the data that waits at the end of an active open goes with the ACK of the SYN-ACK
 
     /**
      * Create state block (TCB) used by this TCP variant. It is expected
@@ -68,9 +76,21 @@ class INET_API TcpAlgorithm : public cObject
     /**
      * Should be redefined to initialize the object: create timers, etc.
      * This method is necessary because the TcpConnection ptr is not
-     * available in the constructor yet.
+     * available in the constructor yet. Subclasses call it first: it reads the
+     * timer parameters of the Tcp module.
      */
-    virtual void initialize() {}
+    virtual void initialize()
+    {
+        cModule *tcpMain = conn->getTcpMain();
+        initialRto = tcpMain->par("initialRto");
+        minRexmitTimeout = tcpMain->par("minRexmitTimeout");
+        maxRexmitTimeout = tcpMain->par("maxRexmitTimeout");
+        rtoVarianceFloor = tcpMain->par("rtoVarianceFloor");
+        maxRexmitCount = tcpMain->par("maxRexmitCount");
+        maxPersistTimeout = tcpMain->par("maxPersistTimeout");
+        delayedAckTimeout = tcpMain->par("delayedAckTimeout");
+        sendDataWithFirstAck = tcpMain->par("sendDataWithFirstAck");
+    }
 
     /**
      * Called when the connection is going to ESTABLISHED from SYN_SENT or
@@ -85,6 +105,12 @@ class INET_API TcpAlgorithm : public cObject
      * Called when the connection closes, it should cancel all running timers.
      */
     virtual void connectionClosed() = 0;
+
+    /**
+     * Turns keepalive on or off for this connection (TcpSocket::setKeepAlive()).
+     * A flavour without keepalive ignores it.
+     */
+    virtual void setKeepAlive(bool enabled) {}
 
     /**
      * Place to process timers specific to this TcpAlgorithm class.
@@ -141,6 +167,13 @@ class INET_API TcpAlgorithm : public cObject
      * turning sackSupport on by default does not break non-SACK flavours.
      */
     virtual bool supportsSackRecovery() const { return false; }
+
+    /**
+     * Whether this flavour relies on ECN, as DCTCP (Linux TCP_CONG_NEEDS_ECN): its
+     * SYN, SYN-ACK and RST carry ECT (RFC 8257 section 3.6), and the ecnMarkAll
+     * parameter applies to its connections.
+     */
+    virtual bool needsEcn() const { return false; }
 
     /**
      * Called after we received an ACK for data not yet sent.

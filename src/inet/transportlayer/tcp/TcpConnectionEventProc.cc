@@ -9,6 +9,7 @@
 
 #include "inet/common/socket/SocketTag_m.h"
 #include "inet/transportlayer/contract/tcp/TcpCommand_m.h"
+#include "inet/transportlayer/contract/tcp/TcpTimestampingTag_m.h"
 #include "inet/transportlayer/tcp/Tcp.h"
 #include "inet/transportlayer/tcp/TcpAlgorithm.h"
 #include "inet/transportlayer/tcp/TcpConnection.h"
@@ -56,6 +57,28 @@ void TcpConnection::process_OPEN_ACTIVE(TcpEventCode& event, TcpCommand *tcpComm
             EV_DETAIL << "OPEN: " << localAddr << ":" << localPort << " --> " << remoteAddr << ":" << remotePort << "\n";
 
             tcpMain->addSockPair(this, localAddr, remoteAddr, localPort, remotePort);
+
+            // TCP Fast Open (RFC 7413 section 4.2): with a cached cookie for the
+            // server, the SYN waits for the first SEND, and carries its data
+            // (process_SEND()); without a cookie, the SYN goes out now and requests
+            // one. After a suspected blackhole, the connection does not use Fast Open
+            // (RFC 7413 section 4.1.3.1; Linux sends no Fast Open option then).
+            if (openCmd->getFastOpen() && state->fastopenClientEnabled && tcpMain->isActiveFastOpenDisabled())
+                EV_DETAIL << "Fast Open: stopped after a suspected blackhole\n";
+            else if (openCmd->getFastOpen() && state->fastopenClientEnabled) {
+                state->fastopenRequested = true;
+                // without a cookie, as Linux can (fastopenClientNoCookieRequired), the SYN
+                // waits for the first SEND too, and carries no option
+                std::vector<uint8_t> cookie;
+                if (tcpMain->getFastOpenCookie(remoteAddr, cookie) || state->fastopenClientNoCookieRequired) {
+                    selectInitialSeqNum();
+                    state->fastopenSynDeferred = true;
+                    scheduleAfter(TCP_TIMEOUT_CONN_ESTAB, connEstabTimer);
+                    EV_DETAIL << "Fast Open: the SYN waits for the first SEND\n";
+                    break;
+                }
+                state->fastopenCookieRequestPending = true;
+            }
 
             // send initial SYN
             selectInitialSeqNum();
@@ -136,9 +159,36 @@ void TcpConnection::process_SEND(TcpEventCode& event, TcpCommand *tcpCommand, cM
             break;
 
         case TCP_S_SYN_RCVD:
+            enqueueSendCommandData(packet);
+            if (state->fastopenAccelerated) {
+                // TCP Fast Open (RFC 7413 section 4.2.2): the server of a Fast Open
+                // connection can send before the ACK of its SYN-ACK arrives
+                EV_DETAIL << "Fast Open: sending data in SYN_RCVD\n";
+                tcpAlgorithm->sendCommandInvoked();
+            }
+            else {
+                EV_DETAIL << "Queueing up data for sending later.\n";
+                EV_DETAIL << sendQueue->getBytesAvailable(state->snd_una) << " bytes in queue\n";
+            }
+            break;
+
         case TCP_S_SYN_SENT:
-            EV_DETAIL << "Queueing up data for sending later.\n";
             enqueueSendCommandData(packet); // queue up for later
+            if (state->fastopenSynDeferred) {
+                // TCP Fast Open (RFC 7413 section 4.2.2): the SEND that the SYN waits
+                // for. The SYN carries as much of the data as the cached MSS of the
+                // server allows, less the largest option space (as Linux does); a
+                // SEND of zero bytes sends the SYN without data.
+                uint32_t cachedMss = tcpMain->getFastOpenCachedMss(remoteAddr);
+                uint32_t mss = cachedMss > 0 ? cachedMss : state->snd_mss;
+                uint32_t maxSynData = mss > 40 ? mss - 40 : mss;
+                state->fastopenSynDataLen = std::min(sendQueue->getBytesAvailable(state->iss + 1), maxSynData);
+                sendSyn(); // with fastopenSynDeferred, writeHeaderOptions() writes the options of a first SYN
+                state->fastopenSynDeferred = false;
+                startSynRexmitTimer();
+                break;
+            }
+            EV_DETAIL << "Queueing up data for sending later.\n";
             EV_DETAIL << sendQueue->getBytesAvailable(state->snd_una) << " bytes in queue\n";
             break;
 
@@ -160,6 +210,11 @@ void TcpConnection::process_SEND(TcpEventCode& event, TcpCommand *tcpCommand, cM
 
     if ((state->sendQueueLimit > 0) && (sendQueue->getBytesAvailable(state->snd_una) > state->sendQueueLimit))
         state->queueUpdate = false;
+
+    // TCP_NOTSENT_LOWAT: the unsent bytes (from snd_nxt) exceed the mark, so the next
+    // TCP_I_SEND_MSG waits until the sending brings them to the mark
+    if (state->notsentLowat != (uint32_t)-1 && sendQueue->getBytesAvailable(state->snd_nxt) > state->notsentLowat)
+        state->notsentLowatUpdate = false;
 }
 
 void TcpConnection::process_READ_REQUEST(TcpEventCode& event, TcpCommand *tcpCommand, cMessage *msg)
@@ -178,10 +233,17 @@ void TcpConnection::process_READ_REQUEST(TcpEventCode& event, TcpCommand *tcpCom
 
     if (receiveQueue->getQueueLength() > 0) {
         uint32_t endSeqNo = state->rcv_nxt;
+        // as in sendAvailableDataToApp(): a received FIN occupies a sequence
+        // number but puts no byte in the queue, so the read stops at the FIN
+        if (state->fin_rcvd && seqLess(state->rcv_fin_seq, endSeqNo))
+            endSeqNo = state->rcv_fin_seq;
         uint32_t requestedEndPos = receiveQueue->getFirstSeqNo() + maxByteCountRequested;
         if (seqLess(requestedEndPos, endSeqNo))
             endSeqNo = requestedEndPos;
         if (Packet *dataMsg = receiveQueue->extractBytesUpTo(endSeqNo)) {
+            releaseRcvBuffer(dataMsg->getByteLength());
+            if (rxTimestampingEnabled)
+                dataMsg->addTag<TcpRxTimestampInd>(); // the time of the delivery
             dataMsg->setKind(TCP_I_DATA);
             dataMsg->addTag<SocketInd>()->setSocketId(socketId);
             sendToApp(dataMsg);
@@ -207,6 +269,30 @@ void TcpConnection::process_OPTIONS(TcpEventCode& event, TcpCommand *tcpCommand,
     else if (auto cmd = dynamic_cast<TcpSetDscpCommand *>(tcpCommand)) {
         dscp = cmd->getDscp();
     }
+    else if (auto cmd = dynamic_cast<TcpSetNotsentLowatCommand *>(tcpCommand)) {
+        // the command can come before the open: configureStateVariables() takes it then
+        notsentLowatSockopt = cmd->getValue();
+        if (state != nullptr)
+            state->notsentLowat = notsentLowatSockopt < 0 ? (uint32_t)-1 : (uint32_t)notsentLowatSockopt;
+    }
+    else if (auto cmd = dynamic_cast<TcpSetTimestampingCommand *>(tcpCommand)) {
+        rxTimestampingEnabled = cmd->getEnabled();
+    }
+    else if (auto cmd = dynamic_cast<TcpSetWriterBlockedCommand *>(tcpCommand)) {
+        writerBlocked = cmd->getBlocked();
+        EV_DETAIL << "The application writer is " << (writerBlocked ? "blocked on the send buffer" : "not blocked") << "\n";
+        updateSndbufLimitedChrono();
+    }
+    else if (auto cmd = dynamic_cast<TcpSetKeepAliveCommand *>(tcpCommand)) {
+        // the command can come before the open: initConnection() takes it then
+        keepAliveSockopt = cmd->getEnabled() ? 1 : 0;
+        if (tcpAlgorithm != nullptr)
+            tcpAlgorithm->setKeepAlive(cmd->getEnabled());
+    }
+    else if (auto cmd = dynamic_cast<TcpSetOwnedCommand *>(tcpCommand)) {
+        appOwned = cmd->getOwned();
+        EV_DETAIL << "The application " << (appOwned ? "owns" : "does not own") << " the connection\n";
+    }
     else
         throw cRuntimeError("Unknown subclass of TcpSetOptionCommand received from app: %s", tcpCommand->getClassName());
     delete tcpCommand;
@@ -215,6 +301,14 @@ void TcpConnection::process_OPTIONS(TcpEventCode& event, TcpCommand *tcpCommand,
 
 void TcpConnection::process_CLOSE(TcpEventCode& event, TcpCommand *tcpCommand, cMessage *msg)
 {
+    // RFC 9293: a CLOSE means "I have no more to send", and the application may still
+    // receive. With abortOnDataAfterClose, a CLOSE without halfClose is the full close
+    // of Linux close(), which also shuts the receive side down (RFC 1122 section
+    // 4.2.2.13 lets a host implement such a "half-duplex" close). state is still null
+    // for a CLOSE that reaches a new connection in INIT.
+    if (state != nullptr && tcpMain->par("abortOnDataAfterClose").boolValue()
+            && (tcpCommand == nullptr || !tcpCommand->getHalfClose()))
+        state->rcvShutdown = true;
     delete tcpCommand;
     delete msg;
 
@@ -243,8 +337,12 @@ void TcpConnection::process_CLOSE(TcpEventCode& event, TcpCommand *tcpCommand, c
                 EV_DETAIL << "No outstanding SENDs, sending FIN right away, advancing snd_nxt over the FIN\n";
                 state->snd_nxt = state->snd_max;
                 sendFin();
-                tcpAlgorithm->restartRexmitTimer();
                 state->snd_max = ++state->snd_nxt;
+                // the FIN is new data on the wire: RFC 6298 section 5.1 starts the
+                // retransmission timer only when it does not run, and RFC 8985 section
+                // 7.2 arms the loss probe for the new tail (Linux
+                // tcp_event_new_data_sent()); this needs snd_max over the FIN
+                tcpAlgorithm->dataSent(state->snd_max - 1);
 
                 emit(unackedSignal, state->snd_max - state->snd_una);
 
@@ -310,8 +408,35 @@ void TcpConnection::process_STATUS(TcpEventCode& event, TcpCommand *tcpCommand, 
 {
     delete tcpCommand; // but reuse msg for reply
 
-    if (fsm.getState() == TCP_S_INIT)
-        throw cRuntimeError("Error processing command STATUS: connection not open");
+    if (fsm.getState() == TCP_S_INIT) {
+        // Linux parity: getsockopt(TCP_INFO) works on ANY socket fd, including
+        // one whose connection attempt was refused/reset/timed out and whose
+        // PCB is already gone -- the fd simply reports TCP_CLOSE. An app
+        // STATUS landing here means Tcp created this fresh connection for the
+        // command because the original was torn down: report a closed socket
+        // (default/zeroed fields are the honest values) instead of crashing.
+        TcpStatusInfo *closedInfo = new TcpStatusInfo();
+        closedInfo->setState(TCP_S_CLOSED);
+        closedInfo->setStateName(stateName(TCP_S_CLOSED));
+        closedInfo->setLocalAddr(localAddr);
+        closedInfo->setRemoteAddr(remoteAddr);
+        closedInfo->setLocalPort(localPort);
+        closedInfo->setRemotePort(remotePort);
+        closedInfo->setCwnd(UINT_MAX);
+        closedInfo->setSrtt(-1);
+        closedInfo->setRexmitCount(UINT_MAX);
+        closedInfo->setNumRtos(UINT_MAX);
+        closedInfo->setSsthresh(UINT_MAX);
+        closedInfo->setLost(UINT_MAX);
+        closedInfo->setRetrans(UINT_MAX);
+        closedInfo->setBackoff(UINT_MAX);
+        closedInfo->setProbes(UINT_MAX);
+        msg->setControlInfo(closedInfo);
+        msg->setKind(TCP_I_STATUS);
+        check_and_cast<Message *>(msg)->addTag<SocketInd>()->setSocketId(socketId);
+        sendToApp(msg);
+        return;
+    }
 
     TcpStatusInfo *statusInfo = new TcpStatusInfo();
 
@@ -353,7 +478,14 @@ void TcpConnection::process_STATUS(TcpEventCode& event, TcpCommand *tcpCommand, 
     statusInfo->setSackEnabled(state->sack_enabled);
     statusInfo->setWsEnabled(state->ws_enabled);
     statusInfo->setEctEnabled(state->ect);
+    statusInfo->setDeliveredCePkts(state->deliveredCePkts);
+    statusInfo->setDeliveredCeBytes(state->deliveredCeBytes);
+    statusInfo->setDeliveredE0Bytes(state->deliveredEct0Bytes);
+    statusInfo->setDeliveredE1Bytes(state->deliveredEct1Bytes);
+    statusInfo->setSkRcvbuf(state->rcvBufferSize); // the receive buffer, which windowAutoTuning can grow (Linux SK_MEMINFO_RCVBUF)
+    statusInfo->setSynDataAccepted(state->fastopenSynDataAccepted);
     statusInfo->setSndWndScale(state->snd_wnd_scale);
+    statusInfo->setLastDataRecvTime(state->lastDataRecvTime); // the last in-order data, or the end of the handshake (Linux tcpi_last_data_recv)
 
     // Congestion-window/RTO/RTT fields live on flavour-specific state variable
     // subclasses, one or two levels below the base TcpStateVariables* held as
@@ -391,6 +523,8 @@ void TcpConnection::process_STATUS(TcpEventCode& event, TcpCommand *tcpCommand, 
         + (state->busyStartTime >= SIMTIME_ZERO ? simTime() - state->busyStartTime : SIMTIME_ZERO)).dbl());
     statusInfo->setRwndLimited((state->rwndLimitedAccumulated
         + (state->rwndLimitedStartTime >= SIMTIME_ZERO ? simTime() - state->rwndLimitedStartTime : SIMTIME_ZERO)).dbl());
+    statusInfo->setSndbufLimited((state->sndbufLimitedAccumulated
+        + (state->sndbufLimitedStartTime >= SIMTIME_ZERO ? simTime() - state->sndbufLimitedStartTime : SIMTIME_ZERO)).dbl());
 
     // Segment counts are approximated from byte totals by rounding UP: Linux
     // counts skbs, and a single retransmitted/lost sub-MSS segment must report 1,

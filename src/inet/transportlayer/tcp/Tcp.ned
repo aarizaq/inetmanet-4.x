@@ -69,9 +69,15 @@ import inet.transportlayer.contract.ITcp;
 //   -# The `timestampSupport` parameter enables the Timestamps option
 //      (RFC 1323). Like SACK, it is only used if both endpoints support it.
 //
-//   -# The `ecnWillingness` parameter enables Explicit Congestion Notification
+//   -# The `tcpEcnMode` parameter enables Explicit Congestion Notification
 //      (RFC 3168). ECN is negotiated during the three-way handshake and is
-//      only active if both endpoints are willing.  When using the `DcTcp`
+//      only active if one endpoint requests it ("rfc3168") and the other one
+//      answers ("rfc3168" or "passive"). The modes "accecn" and
+//      "accecn-passive" add Accurate ECN (RFC 9768), which feeds back the
+//      number of CE marks instead of one bit for each round trip. The AccECN
+//      option (`accEcnOptionEnabled`, `accEcnOptionPolicy`) gives the bytes of
+//      each ECN codepoint. `ecnMarkAll` sets ECT also on the control segments
+//      of an AccECN or DCTCP connection, as Linux does. When using the `DcTcp`
 //      algorithm, the `dctcpGamma` parameter controls the EWMA gain for
 //      estimating the congestion level (RFC 8257).
 //
@@ -107,6 +113,10 @@ import inet.transportlayer.contract.ITcp;
 //   - RFC 1981 - Path MTU Discovery for IP version 6
 //   - RFC 3168 - The Addition of Explicit Congestion Notification (ECN) to IP
 //   - RFC 8257 - Data Center TCP (DCTCP): ECN Marking at the Data Sender
+//   - RFC 8311 - Relaxing Restrictions on Explicit Congestion Notification (ECN)
+//                Experimentation
+//   - RFC 9768 - More Accurate Explicit Congestion Notification (AccECN) Feedback
+//                in TCP
 //
 // Implemented features include the following:
 //  - all RFC 793 TCP states and state transitions
@@ -134,6 +144,7 @@ import inet.transportlayer.contract.ITcp;
 //        PERMITTED during connection startup.
 //      - SACK: SACK option, based on RFC 2018, RFC 2883, and RFC 3517.
 //      - TS: Timestamps option, based on RFC 1323.
+//      - AccECN0, AccECN1: the AccECN option, based on RFC 9768.
 //  - flow control: finite receive buffer size (initiated by the parameter
 //    `advertisedWindow`). If the receive buffer is exhausted (by out-of-order
 //    segments) and the payload length of a newly received segment
@@ -146,6 +157,9 @@ import inet.transportlayer.contract.ITcp;
 //    the original MSS is restored to probe for an increased path MTU.
 //  - Explicit Congestion Notification (RFC 3168): ECN-setup during the
 //    three-way handshake, ECE/CWR flag handling, and CE codepoint processing.
+//  - Accurate ECN (RFC 9768): the AccECN handshake, the ACE field, which counts
+//    the CE-marked packets, and the AccECN option, which counts the bytes of
+//    each codepoint; with the fallback of a retransmitted SYN and SYN-ACK.
 //  - Data Center TCP (RFC 8257): DCTCP congestion control based on ECN
 //    feedback, implemented in the `DcTcp` algorithm class.
 //
@@ -188,6 +202,11 @@ simple Tcp extends SimpleModule like ITcp
         @class(Tcp);
         string checksumMode @enum("declared", "computed") = default("declared");
         int advertisedWindow = default(14 * this.mss); // In bytes, corresponds with the maximal receiver buffer capacity (Note: normally, NIC queues should be at least this size)
+        double receiveBufferSize @unit(B) = default(-1B); // the receive buffer, apart from the advertised window (Linux sk_rcvbuf): the unread data and the out-of-order data use it, and the offered window is the smaller of its free space and the advertised window less the unread data; -1B: the buffer is the advertised window, as before
+        bool acceptBeyondBufferAtEmptyQueue = default(false); // accept a whole in-order segment that reaches beyond the receive buffer when the receive queue is empty, as Linux does (tcp_data_queue()); the window is then zero until the application reads. false: drop such a segment
+        bool windowAutoTuning = default(false); // receive window auto-tuning, as Linux (tcp_grow_window()): the offered window starts at advertisedWindow and grows with each received data segment toward a clamp of half the receive buffer; needs receiveBufferSize
+        bool windowShrinkAllowed = default(false); // the offered window follows the free receive buffer and may move its right edge back, as Linux with tcp_shrink_window=1: the buffer is charged with the truesize of the skb of each segment, and the free buffer counts at the measured ratio of payload to truesize; the first offer is half the buffer. RFC 9293 says that a receiver SHOULD NOT shrink the window (SHLD-14)
+        int notsentLowat @unit(B) = default(-1B); // TCP_NOTSENT_LOWAT (a Linux socket option, no RFC): a low-water mark on the unsent bytes: when they exceed it, TCP sends no TCP_I_SEND_MSG until they are at or below it again, and then it sends one; TcpSocket::setNotsentLowat() sets it for one connection; -1B: off
         bool delayedAcksEnabled = default(false); // Delayed ACK algorithm (RFC 1122) enabled/disabled
         bool nagleEnabled = default(true); // Nagle's algorithm (RFC 896) enabled/disabled
         bool limitedTransmitEnabled = default(false); // Limited Transmit algorithm (RFC 3042) enabled/disabled (can be used for TcpReno/TcpTahoe/TcpNewReno/TcpNoCongestionControl)
@@ -195,7 +214,7 @@ simple Tcp extends SimpleModule like ITcp
         bool sackSupport = default(false); // Selective Acknowledgment (RFC 2018, 2883, 3517) support (header option) (SACK will be enabled for a connection if both endpoints support it)
         bool windowScalingSupport = default(false); // Window Scale (RFC 1323) support (header option) (WS will be enabled for a connection if both endpoints support it)
         int windowScalingFactor = default(-1); // Window Scaling Factor given as a shift count. Valid values are 0..14, and -1 for automatic selection (it chooses the smallest shift count that makes advertisedWindow representable in 16 bits)
-        bool timestampSupport = default(false); // Timestamps (RFC 1323) support (header option) (TS will be enabled for a connection if both endpoints support it)
+        bool timestampSupport @mutable = default(false); // Timestamps (RFC 1323) support (header option) (TS will be enabled for a connection if both endpoints support it). Each connection reads it at its open, so a run can change it as the host-wide sysctl net.ipv4.tcp_timestamps
         int mss = default(536); // Maximum Segment Size (header option). Default 536 per RFC 1122.
         int msl @unit(s) = default(120s);   // Maximum Segment Lifetime
         string tcpAlgorithmClass @examples("TcpVegas", "TcpWestwood", "DcTcp", "TcpNewReno", "TcpReno", "TcpTahoe", "TcpNoCongestionControl") = default("TcpReno");
@@ -203,7 +222,9 @@ simple Tcp extends SimpleModule like ITcp
         int initialSsthresh = default(0xFFFFFFFF); // Initial value for Slow Start threshold used in TahoeRenoFamily. The initial value of ssthresh SHOULD be set arbitrarily high (e.g., to the size of the largest possible advertised window) Without user interaction there is no limit...
         double stopOperationExtraTime @unit(s) = default(0s);    // Extra time after lifecycle stop operation finished
         double stopOperationTimeout @unit(s) = default(2s);    // Timeout value for lifecycle stop operation
-        bool ecnWillingness = default(false); // True if willing to use ECN
+        string tcpEcnMode @mutable @enum("off","passive","rfc3168","accecn","accecn-passive") = default("off"); // ECN: "off": no ECN; "passive": answer an ECN-setup SYN (RFC 3168), but request no ECN in an active open (Linux tcp_ecn=2, its default); "rfc3168": request and answer ECN; "accecn": request Accurate ECN (RFC 9768), and answer it and ECN; "accecn-passive": answer Accurate ECN and ECN, but request nothing. Each connection reads it at its open
+        bool ecnWillingness = default(false); // deprecated: true is tcpEcnMode="rfc3168"
+        bool ecnMarkAll = default(false); // ECN: ECT also on the pure ACKs, FINs, retransmissions and window probes of an AccECN connection (RFC 9768) and of a DCTCP connection, as Linux does (tcp_ecn_send()); RFC 8257 section 4.1 recommends such a knob for DCTCP. false: ECT only on new data, as RFC 3168 sections 6.1.4 to 6.1.6 ask, which RFC 9768 section 4 keeps
         double dctcpGamma = default(0.0625); // A fixed estimation gain for calculating dctcp_alpha (RFC 8257 4.2)
         bool pmtudEnabled = default(false); // Path MTU Discovery (RFC 1191, RFC 1981) enabled/disabled
         double pmtudTimeout @unit(s) = default(600s); // Time after which the original MSS is restored to probe for increased path MTU (RFC 1191, Section 6.3)
@@ -226,9 +247,44 @@ simple Tcp extends SimpleModule like ITcp
         bool lossUndoEnabled = default(false); // Undo a spurious cwnd/ssthresh reduction when D-SACK (RFC 2883) or timestamps (RFC 3522 Eifel) reveal the retransmission was unnecessary.
         int maxReordering = default(300); // Upper bound on the learned reordering degree in segments (Linux tcp_max_reordering).
         bool prrEnabled = default(false); // Proportional Rate Reduction (RFC 6937) during fast recovery instead of classic cwnd inflation/halving. Requires sackSupport.
+        bool abortOnDataAfterClose = default(false); // model the full close of Linux close(): a CLOSE without halfClose also shuts the receive side down, and new data after it resets the connection (RFC 1122 section 4.2.2.13); false: RFC 9293 CLOSE, after which the application may still receive
+        bool accEcnBareTimeWaitAck = default(false); // AccECN: the ACKs of TIME_WAIT carry no ACE field, as in Linux, whose time-wait socket sends them (tcp_v4_send_ack()); false: they carry it, as each ACK after the handshake (RFC 9768 section 3.2.2.2: MUST)
+        bool accEcnOptionEnabled @mutable = default(true); // AccECN: send the AccECN option, which gives the byte counts of each ECN codepoint (RFC 9768 section 3.2.3: RECOMMENDED); false: only the ACE field (Linux tcp_ecn_option=0). Each connection reads it at its open
+        string accEcnOptionPolicy @enum("rfc","linux") = default("rfc"); // AccECN: when the option goes out and which fields it has. "rfc": the recommended scheme of RFC 9768 section 3.2.3.3: after a byte count changed, with each field that ever changed, in the order that needs fewer fields, and with each field on the SYN-ACK and on the first segments of the client (section 3.2.3.2.1); "linux": as Linux tcp_ecn_option=2: on each segment, kind 174 with each field that fits, but only after the peer sent an option (section 3.2.3.2.3 asks to send it also then)
+        bool adaptiveDelayedAcks = default(false); // with delayedAcksEnabled, the delayed ACK of Linux: a quickack budget (ACKs at once at the start of a connection, after out-of-order data and after a long pause), an adaptive delay (ATO: from 40 ms, after the gaps between arrivals, at most the SRTT and 200 ms) in place of delayedAckTimeout, and a pingpong mode, which delays the ACKs of interactive traffic; false: the delayed ACK of RFC 9293 section 3.8.6.3 (delayedAckTimeout, delayedAckFrameCount)
+        bool alignOptions = default(true); // align each TCP option with NOP options before it, as before; false: no NOPs, and End of Option List bytes pad the option area (for peers that compare the exact option layout)
+        int delayedAckFrameCount = default(2); // with delayedAcksEnabled, the ACK goes at once when this number of full-sized segments waits for it (RFC 9293 SHLD-19: an ACK for at least each second full-sized segment)
+        double delayedAckTimeout @unit(s) = default(200ms); // with delayedAcksEnabled, the longest delay of an ACK (RFC 9293 MUST-40: less than 0.5 s)
+        bool fastopenAcceptWithoutCookie @mutable = default(false); // TCP Fast Open, server: accept the data of a SYN without a valid cookie, if the SYN has data or a Fast Open option, and give no cookie (Linux tcp_fastopen bit 0x200); RFC 7413 requires a valid cookie
+        double fastopenBlackholeTimeout @unit(s) = default(3600s); // TCP Fast Open, client: when a SYN with a Fast Open option or data is sent the third time (a negative response, RFC 7413 section 4.1.3.1), no connection uses Fast Open for this time, which doubles at each further blackhole, up to 64 times (as Linux); 0s: no detection (the Linux default since 5.14)
+        bool fastopenClientEnabled @mutable = default(false); // TCP Fast Open (RFC 7413), client: a connect() with fastOpen requests a cookie from the server, and with a cached cookie it sends its first data on the SYN (~ Linux tcp_fastopen bit 0x1)
+        bool fastopenClientNoCookieRequired @mutable = default(false); // TCP Fast Open, client: send the data on the SYN without a cookie and without a Fast Open option (Linux tcp_fastopen bit 0x4), for a server that accepts it; RFC 7413 requires a cookie
+        int fastopenCookieBytes = default(8); // TCP Fast Open, server: the length of the cookies that this server gives (RFC 7413: an even number from 4 to 16)
+        int fastopenCookieCacheSize = default(1024); // TCP Fast Open, client: the number of servers whose cookie is kept; a new server then replaces an arbitrary entry
+        bool fastopenExpOptionEnabled @mutable = default(false); // TCP Fast Open: also use the experimental option (kind 254 with the magic number 0xF989, RFC 7413 appendix A), as Linux: the server answers it in the same option, and the client tries it once when a cookie request had no answer; false: only kind 34, which RFC 7413 section 9 says implementations SHOULD use
+        string fastopenKey @mutable = default(""); // TCP Fast Open, server: the key of the cookies, in the format of Linux net.ipv4.tcp_fastopen_key ("xxxxxxxx-xxxxxxxx-xxxxxxxx-xxxxxxxx", the primary key); a cookie of 8 bytes is then the cookie of Linux with this key; empty: a key from the RNG
+        bool fastopenLenientCookieValidation = default(false); // TCP Fast Open, server: accept each cookie of a valid length without a check; false: accept only the cookie that this server gives the address of the client (RFC 7413 section 4.2.2)
+        int fastopenMaxPendingRequests = default(16); // TCP Fast Open, server: the largest number of Fast Open connections of a local port in SYN_RCVD (PendingFastOpenRequests, RFC 7413 section 4.2; Linux takes it from the TCP_FASTOPEN socket option of the listener); above it, a SYN gets no Fast Open: no cookie, and its data is not acknowledged
+        bool fastopenServerEnabled @mutable = default(false); // TCP Fast Open (RFC 7413), server: give cookies, and deliver the data of a SYN with a valid cookie to the application before the handshake completes (~ Linux tcp_fastopen bit 0x2)
+        double initialRto @unit(s) = default(3s); // the retransmission timeout before the first RTT measurement, also the first timeout of a SYN and of a SYN-ACK (RFC 6298 section 2.1: 1 s; 3 s is the value of RFC 1122)
+        bool keepAliveEnabled = default(false); // keepalive (RFC 9293 section 3.8.4): after keepAliveIdleTime without a received segment and without data in flight, send a probe without data (SEG.SEQ = SND.UNA - 1), again each keepAliveInterval, and abort the connection after keepAliveProbeCount probes without an answer; off by default (MUST-25); TcpSocket::setKeepAlive() turns it on or off for one connection (MUST-24)
+        double keepAliveIdleTime @unit(s) = default(7200s); // the idle time before the first keepalive probe (RFC 9293 MUST-28: at least two hours; Linux tcp_keepalive_time)
+        double keepAliveInterval @unit(s) = default(75s); // the time between two keepalive probes (Linux tcp_keepalive_intvl)
+        int keepAliveProbeCount = default(9); // the keepalive probes without an answer, after which the connection aborts (Linux tcp_keepalive_probes; RFC 9293 MUST-29: one probe without an answer is not a dead connection)
+        double maxPersistTimeout @unit(s) = default(60s); // the upper limit of the interval of the zero-window probes, which starts at the RTO and doubles at each probe (RFC 9293 SHLD-29, SHLD-30)
+        int maxRexmitCount = default(12); // the retransmissions of one segment, after which the connection aborts
+        double maxRexmitTimeout @unit(s) = default(240s); // the upper limit of the retransmission timeout (RFC 6298 section 2.5: at least 60 s)
+        double minRexmitTimeout @unit(s) = default(1s); // the lower limit of the retransmission timeout (RFC 6298 section 2.4: 1 s; Linux: 200 ms)
+        bool rtoVarianceFloor = default(false); // false: RTO = SRTT + 4*RTTVAR, rounded up to minRexmitTimeout (RFC 6298 sections 2.3 and 2.4); true: RTO = SRTT + max(4*RTTVAR, minRexmitTimeout), as Linux (tcp_set_rto()), whose minimum limits the variance term
         bool seedRttFromHandshake = default(false); // Seed the RTT estimator (srtt/rttvar/RTO) from the SYN<->SYN-ACK exchange, as Linux does. The first-flight RTO becomes RTT-scaled instead of the initial RTO.
+        bool sendDataWithFirstAck = default(true); // an active open sends data that waits at the end of the handshake with the ACK of the SYN-ACK; false: a bare ACK first, and then the data
+        bool sendMssOption = default(true); // send the MSS option in the SYN and the SYN-ACK; false: leave it out, as some peers do (the other side then assumes the default send MSS of RFC 9293 MUST-15)
+        int synLinearTimeouts = default(0); // the first retransmissions of a SYN that keep the initial timeout before it doubles, as Linux net.ipv4.tcp_syn_linear_timeouts (its default: 4): with 4 and an initial RTO of 1 s, the SYN timeouts are 1, 1, 1, 1, 1, 2, 4 s; 0: the timeout doubles at each expiry (RFC 6298 section 5.5)
+        int synRetries = default(12); // the retransmissions of a SYN or of a SYN-ACK, after which the open fails (Linux net.ipv4.tcp_syn_retries, its default: 6; Linux has tcp_synack_retries for the SYN-ACK); an active open also fails after 75 s
+        bool syncookiesAlways = default(false); // model Linux tcp_syncookies=2 (a SYN cookie on every passive open): the cookie quantizes the MSS of the peer down to the IPv4 msstab {536, 1300, 1440, 1460} of net/ipv4/syncookies.c; the other options stay exact
         bool tlpEnabled = default(false); // Tail Loss Probe (RFC 8985 section 7): about two SRTTs after the last transmission or ACK of new data, send one probe, so that its ACK starts the repair of a lost tail before the RTO. Requires sackSupport.
         double rackReoTimerGranularity @unit(s) = default(0s); // model the kernel's jiffy-quantized REO timeout arming (Linux usecs_to_jiffies(timeout)+1: delay rounded UP to this granularity plus one extra tick, e.g. 4ms for an HZ=250 kernel); a sub-tick RACK deadline then fires whole ticks later, letting a dupthresh-timed SACK enter recovery first, as real kernels do. 0 = exact (default INET behavior)
+        string zeroWindowProbe @enum("rfc","linux") = default("rfc"); // the probe of a zero window. "rfc": the first unacknowledged octet, as RFC 9293 section 3.8.6.1 says ("at least one octet of new data (if available), or retransmit"); "linux": a segment without data with SEG.SEQ = SND.UNA - 1, which the receiver answers with an ACK, as Linux (tcp_xmit_probe_skb())
         @display("i=block/wheelbarrow");
         @signal[tcpConnectionAdded];
         @signal[tcpConnectionRemoved];

@@ -8,6 +8,7 @@
 #include "TCPTester.h"
 
 #include "inet/common/ProtocolTag_m.h"
+#include "inet/common/packet/chunk/ByteCountChunk.h"
 #include "inet/networklayer/common/EcnTag_m.h"
 #include "inet/networklayer/common/L3AddressTag_m.h"
 
@@ -36,9 +37,20 @@ void TCPTesterBase::dump(const Ptr<const inet::tcp::TcpHeader>& seg, int tcpLeng
     sprintf(lbl," %c%03d", fromA ? 'A' : 'B', fromA ? fromASeq : fromBSeq);
     std::ostringstream out;
     tcpdump.setOutStream(out);
-    tcpdump.tcpDump(fromA, lbl, seg, tcpLength, std::string(fromA ? "A":"B"),std::string(fromA ? "B":"A"), comment);
+    tcpdump.tcpDump(fromA, lbl, seg, tcpLength, std::string(fromA ? "A":"B"),std::string(fromA ? "B":"A"), comment, segmentEcn);
     EV_DEBUG_C("testing") << out.str();
     tcpdump.setOutStream(EVSTREAM);
+}
+
+int TCPTesterBase::deliverEcn(Packet *pk)
+{
+    if (auto ecnReq = pk->findTag<EcnReq>()) {
+        int ecn = ecnReq->getExplicitCongestionNotification();
+        pk->removeTag<EcnReq>();
+        pk->addTagIfAbsent<EcnInd>()->setExplicitCongestionNotification(ecn);
+    }
+    auto ecnInd = pk->findTag<EcnInd>();
+    return ecnInd ? ecnInd->getExplicitCongestionNotification() : -1;
 }
 
 void TCPTesterBase::finish()
@@ -99,6 +111,49 @@ void TCPScriptableTester::parseScript(const char *script)
             cmd.command = CMD_COPY; s+=4;
         } else if (!strncmp(s,"ce",2)) {
             cmd.command = CMD_CE; s+=2;
+            cmd.ecn = IP_ECN_CE;
+        } else if (!strncmp(s,"ect1",4)) {
+            cmd.command = CMD_CE; s+=4;
+            cmd.ecn = IP_ECN_ECT_1;
+        } else if (!strncmp(s,"ect0",4)) {
+            cmd.command = CMD_CE; s+=4;
+            cmd.ecn = IP_ECN_ECT_0;
+        } else if (!strncmp(s,"tsecr",5)) {
+            cmd.command = CMD_TSECR; s+=5;
+            while (isspace(*s)) s++;
+            if (!isdigit(*s))
+                throw cRuntimeError("syntax error in script: TSecr value expected");
+            cmd.tsecr = strtoul(s, &const_cast<char *&>(s), 10);
+        } else if (!strncmp(s,"data",4)) {
+            // "data <bytes> [fin]": add the bytes after the payload, and set the FIN bit with "fin"
+            cmd.command = CMD_DATA; s+=4;
+            while (isspace(*s)) s++;
+            if (!isdigit(*s))
+                throw cRuntimeError("syntax error in script: number of bytes expected");
+            cmd.bytes = strtol(s, &const_cast<char *&>(s), 10);
+            while (isspace(*s)) s++;
+            if (!strncmp(s,"fin",3)) {
+                cmd.fin = true; s+=3;
+            }
+        } else if (!strncmp(s,"fin",3)) {
+            cmd.command = CMD_DATA; s+=3;
+            cmd.fin = true;
+        } else if (!strncmp(s,"zeroaccecn",10)) {
+            cmd.command = CMD_ZEROACCECN; s+=10;
+        } else if (!strncmp(s,"ace",3)) {
+            // "ace <value>": set AE, CWR and ECE to the bits of the value (AE = 4, CWR = 2, ECE = 1)
+            cmd.command = CMD_ACE; s+=3;
+            while (isspace(*s)) s++;
+            if (!isdigit(*s))
+                throw cRuntimeError("syntax error in script: ACE value expected");
+            cmd.ace = strtol(s, &const_cast<char *&>(s), 10);
+        } else if (!strncmp(s,"strip",5)) {
+            // "strip <kind>": remove the options of this kind
+            cmd.command = CMD_STRIP; s+=5;
+            while (isspace(*s)) s++;
+            if (!isdigit(*s))
+                throw cRuntimeError("syntax error in script: option kind expected");
+            cmd.kind = strtol(s, &const_cast<char *&>(s), 10);
         } else
             throw cRuntimeError("syntax error in script: wrong command");
 
@@ -158,6 +213,7 @@ void TCPScriptableTester::dispatchSegment(Packet *pk)
     Command *cmd = (Command *)pk->getContextPointer();
     bool fromA = cmd->fromA;
     bubble("introducing copy");
+    segmentEcn = deliverEcn(pk);
     dump(seg, pk->getByteLength(), fromA, "introducing copy");
     send(pk, fromA ? "out2" : "out1");
 }
@@ -175,6 +231,7 @@ void TCPScriptableTester::processIncomingSegment(Packet *pk, bool fromA)
     pk->addTagIfAbsent<L3AddressInd>()->setSrcAddress(pk->getTag<L3AddressReq>()->getSrcAddress());
     pk->addTagIfAbsent<L3AddressInd>()->setDestAddress(pk->getTag<L3AddressReq>()->getDestAddress());
     pk->removeTag<L3AddressReq>();
+    segmentEcn = deliverEcn(pk);
 
     // find entry in script
     Command *cmd = NULL;
@@ -219,9 +276,80 @@ void TCPScriptableTester::processIncomingSegment(Packet *pk, bool fromA)
     }
     else if (cmd->command==CMD_CE)
     {
-        bubble("marking CE");
-        pk->addTagIfAbsent<EcnInd>()->setExplicitCongestionNotification(IP_ECN_CE);
-        dump(seg, pk->getByteLength(), fromA, "marking CE");
+        const char *comment = cmd->ecn == IP_ECN_CE ? "marking CE" : cmd->ecn == IP_ECN_ECT_1 ? "marking ECT(1)" : "marking ECT(0)";
+        bubble(comment);
+        pk->addTagIfAbsent<EcnInd>()->setExplicitCongestionNotification(cmd->ecn);
+        segmentEcn = cmd->ecn;
+        dump(seg, pk->getByteLength(), fromA, comment);
+        send(pk, fromA ? "out2" : "out1");
+    }
+    else if (cmd->command==CMD_TSECR)
+    {
+        bubble("changing TSecr");
+        auto header = pk->removeAtFront<TcpHeader>();
+        for (size_t i = 0; i < header->getHeaderOptionArraySize(); i++)
+            if (auto ts = dynamic_cast<TcpOptionTimestamp *>(header->getHeaderOptionForUpdate(i)))
+                ts->setEchoedTimestamp(cmd->tsecr);
+        pk->insertAtFront(header);
+        dump(pk->peekAtFront<TcpHeader>(), pk->getByteLength(), fromA, "changing TSecr");
+        send(pk, fromA ? "out2" : "out1");
+    }
+    else if (cmd->command==CMD_DATA)
+    {
+        bubble("adding data");
+        if (cmd->fin) {
+            auto header = pk->removeAtFront<TcpHeader>();
+            header->setFinBit(true);
+            pk->insertAtFront(header);
+        }
+        if (cmd->bytes > 0)
+            pk->insertAtBack(makeShared<ByteCountChunk>(B(cmd->bytes)));
+        dump(pk->peekAtFront<TcpHeader>(), pk->getByteLength(), fromA, "adding data");
+        send(pk, fromA ? "out2" : "out1");
+    }
+    else if (cmd->command==CMD_ACE)
+    {
+        bubble("changing ACE bits");
+        auto header = pk->removeAtFront<TcpHeader>();
+        header->setAeBit((cmd->ace & 4) != 0);
+        header->setCwrBit((cmd->ace & 2) != 0);
+        header->setEceBit((cmd->ace & 1) != 0);
+        pk->insertAtFront(header);
+        dump(pk->peekAtFront<TcpHeader>(), pk->getByteLength(), fromA, "changing ACE bits");
+        send(pk, fromA ? "out2" : "out1");
+    }
+    else if (cmd->command==CMD_ZEROACCECN)
+    {
+        bubble("zeroing the AccECN option");
+        auto header = pk->removeAtFront<TcpHeader>();
+        for (size_t i = 0; i < header->getHeaderOptionArraySize(); i++)
+            if (auto accEcn = dynamic_cast<TcpOptionAccEcn *>(header->getHeaderOptionForUpdate(i))) {
+                accEcn->setEct0Bytes(0);
+                accEcn->setCeBytes(0);
+                accEcn->setEct1Bytes(0);
+            }
+        pk->insertAtFront(header);
+        dump(pk->peekAtFront<TcpHeader>(), pk->getByteLength(), fromA, "zeroing the AccECN option");
+        send(pk, fromA ? "out2" : "out1");
+    }
+    else if (cmd->command==CMD_STRIP)
+    {
+        bubble("removing options");
+        auto header = pk->removeAtFront<TcpHeader>();
+        std::vector<TcpOption *> options;
+        for (size_t i = 0; i < header->getHeaderOptionArraySize(); i++)
+            if (header->getHeaderOption(i)->getKind() != cmd->kind)
+                options.push_back(header->getHeaderOption(i)->dup());
+        header->dropHeaderOptions();
+        for (auto option : options)
+            header->appendHeaderOption(option);
+        while (header->getHeaderOptionArrayLength().get() % 4 != 0)
+            header->appendHeaderOption(new TcpOptionEnd());
+        B headerLength = TCP_MIN_HEADER_LENGTH + header->getHeaderOptionArrayLength();
+        header->setHeaderLength(headerLength);
+        header->setChunkLength(headerLength);
+        pk->insertAtFront(header);
+        dump(pk->peekAtFront<TcpHeader>(), pk->getByteLength(), fromA, "removing options");
         send(pk, fromA ? "out2" : "out1");
     }
     else
@@ -270,6 +398,7 @@ void TCPRandomTester::dispatchSegment(Packet *pk)
         throw cRuntimeError("Unknown message");
     bool fromA = (bool)pk->getContextPointer();
     bubble("introducing copy");
+    segmentEcn = deliverEcn(pk);
     dump(seg, pk->getByteLength(), fromA, "introducing copy");
     send(pk, fromA ? "out2" : "out1");
 }
@@ -288,6 +417,7 @@ void TCPRandomTester::processIncomingSegment(Packet *pk, bool fromA)
     pk->addTagIfAbsent<L3AddressInd>()->setSrcAddress(pk->getTag<L3AddressReq>()->getSrcAddress());
     pk->addTagIfAbsent<L3AddressInd>()->setDestAddress(pk->getTag<L3AddressReq>()->getDestAddress());
     pk->removeTag<L3AddressReq>();
+    segmentEcn = deliverEcn(pk);
 
     // decide what to do
     double x = dblrand();

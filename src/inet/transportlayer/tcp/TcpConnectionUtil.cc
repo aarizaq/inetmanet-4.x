@@ -29,6 +29,8 @@
 #include "inet/networklayer/contract/IL3AddressType.h"
 #include "inet/transportlayer/common/L4Tools.h"
 #include "inet/transportlayer/contract/tcp/TcpCommand_m.h"
+#include "inet/transportlayer/contract/tcp/TcpTimestampingTag_m.h"
+#include "inet/transportlayer/contract/tcp/TcpZerocopyTag_m.h"
 #include "inet/transportlayer/tcp/Tcp.h"
 #include "inet/transportlayer/tcp/TcpAlgorithm.h"
 #include "inet/transportlayer/tcp/TcpConnection.h"
@@ -151,6 +153,15 @@ const char *TcpConnection::optionName(int option)
         case TCPOPTION_TIMESTAMP:
             return "TS";
 
+        case TCPOPTION_TCP_FASTOPEN:
+            return "FAST_OPEN";
+
+        case TCPOPTION_ACCECN0:
+            return "ACCECN0";
+
+        case TCPOPTION_ACCECN1:
+            return "ACCECN1";
+
         default:
             return "unknown";
     }
@@ -231,13 +242,20 @@ void TcpConnection::initClonedConnection(TcpConnection *listenerConn)
     tcpAlgorithm = check_and_cast<TcpAlgorithm *>(inet::utils::createOne(tcpAlgorithmClass));
     tcpAlgorithm->setConnection(this);
 
+    socketAdvertisedWindow = listenerConn->socketAdvertisedWindow;
+    socketReceiveBufferSize = listenerConn->socketReceiveBufferSize;
+    socketSynRetries = listenerConn->socketSynRetries;
+    keepAliveSockopt = listenerConn->keepAliveSockopt;
     state = tcpAlgorithm->getStateVariables();
     configureStateVariables();
     tcpAlgorithm->initialize();
+    if (keepAliveSockopt >= 0)
+        tcpAlgorithm->setKeepAlive(keepAliveSockopt != 0);
 
     // put it into LISTEN, with our localAddr/localPort
     state->active = false;
     state->fork = true;
+    state->forked = true;
     localAddr = listenerConn->localAddr;
     localPort = listenerConn->localPort;
     autoRead = listenerConn->autoRead;
@@ -255,6 +273,150 @@ TcpConnection *TcpConnection::cloneListeningConnection()
     conn->initConnection(tcpMain, newSocketId);
     conn->initClonedConnection(this);
     return conn;
+}
+
+int TcpConnection::receivedEcnCodepoint(Packet *tcpSegment)
+{
+    auto ecnInd = tcpSegment->findTag<EcnInd>();
+    return ecnInd != nullptr ? ecnInd->getExplicitCongestionNotification() : IP_ECN_NOT_ECT;
+}
+
+uint8_t TcpConnection::accEcnReflectedAce(int ipEcnCodepoint)
+{
+    // RFC 9768 Tables 2 and 3: Not-ECT -> 0b010, ECT(1) -> 0b011, ECT(0) -> 0b100, CE -> 0b110
+    switch (ipEcnCodepoint) {
+        case IP_ECN_ECT_1: return 3;
+        case IP_ECN_ECT_0: return 4;
+        case IP_ECN_CE: return 6;
+        default: return 2;
+    }
+}
+
+bool TcpConnection::getAccEcnOptionFields(int& order, int& wanted, int& required) const
+{
+    if (!state->accEcnNegotiated || !state->accEcnOptionEnabled || state->accEcnOptFailSend)
+        return false;
+
+    // the counters that changed since the last option, and those that ever changed
+    // from their initial values (RFC 9768 section 3.2.1)
+    bool e0Changed = state->rcvEct0Bytes != state->accEcnOptEct0Bytes;
+    bool ceChanged = state->rcvCeBytes != state->accEcnOptCeBytes;
+    bool e1Changed = state->rcvEct1Bytes != state->accEcnOptEct1Bytes;
+    bool e0Ever = state->rcvEct0Bytes != 1;
+    bool ceEver = state->rcvCeBytes != 0;
+    bool e1Ever = state->rcvEct1Bytes != 1;
+    // the fields that an option of order 0 (EE0B, ECEB, EE1B) or of order 1 (EE1B,
+    // ECEB, EE0B) needs for the given counters (Table 5)
+    auto fields = [] (int order, bool e0, bool ce, bool e1) {
+        return (order == 0 ? e1 : e0) ? 3 : ce ? 2 : (order == 0 ? e0 : e1) ? 1 : 0;
+    };
+
+    if (tcpMain->accEcnOptionLinux) {
+        // Linux (tcp_established_options(), tcp_ecn_option=2): each segment, once the
+        // peer sent an option; kind 174 with each field that fits, but at least the
+        // fields that changed
+        if (!state->sawAccEcnOpt)
+            return false;
+        order = 1;
+        wanted = 3;
+        required = fields(1, e0Changed, ceChanged, e1Changed);
+        return true;
+    }
+
+    // section 3.2.3.2.1: the client "SHOULD include an AccECN Option in the first ACK
+    // at the end of the three-way handshake", and "SHOULD also include an AccECN
+    // Option on the first data segment it sends"; with each field that fits
+    if (state->active && !state->accEcnFirstDataOptionSent) {
+        order = 0;
+        wanted = 3;
+        required = fields(0, e0Changed, ceChanged, e1Changed);
+        return true;
+    }
+
+    // section 3.2.3.3, the recommended simple scheme: an option "on every scheduled ACK
+    // if any byte counter has incremented since the last ACK", here since the last
+    // option, which also covers an option that did not fit; "Whenever possible, it
+    // SHOULD include a field for every byte counter that has changed at some time
+    // during the connection". Of the two orders, the one with fewer fields.
+    if (!e0Changed && !ceChanged && !e1Changed)
+        return false;
+    order = fields(1, e0Ever, ceEver, e1Ever) < fields(0, e0Ever, ceEver, e1Ever) ? 1 : 0;
+    wanted = fields(order, e0Ever, ceEver, e1Ever);
+    required = fields(order, e0Changed, ceChanged, e1Changed);
+    return true;
+}
+
+unsigned int TcpConnection::getAccEcnOptionSpaceUsed(const Ptr<TcpHeader>& tcpHeader) const
+{
+    if (!tcpMain->accEcnOptionLinux)
+        return tcpHeader->getHeaderOptionArrayLength().get<B>();
+    // Linux decides the fields of the option with its own layout (tcp_established_options()):
+    // NOP, NOP, TS (12 bytes) and NOP, NOP, SACK (4 + 8 bytes for each block); INET can pack
+    // them tighter, which would give an option with more fields than Linux sends
+    unsigned int used = 0;
+    for (size_t i = 0; i < tcpHeader->getHeaderOptionArraySize(); i++) {
+        const TcpOption *option = tcpHeader->getHeaderOption(i);
+        switch (option->getKind()) {
+            case TCPOPTION_END_OF_OPTION_LIST:
+            case TCPOPTION_NO_OPERATION: break;
+            case TCPOPTION_TIMESTAMP: used += 12; break;
+            case TCPOPTION_SACK: used += 2 + option->getLength(); break;
+            default: used += (option->getLength() + 3) & ~3u; break;
+        }
+    }
+    return used;
+}
+
+bool TcpConnection::accEcnOptionFits(unsigned int used, int numFields, bool sack) const
+{
+    unsigned int length = 2 + 3 * numFields;
+    if (tcpMain->accEcnOptionLinux) {
+        // Linux (tcp_options_fit_accecn()): the option can take the 2 NOP bytes before
+        // a SACK option, so it rounds down to 4 bytes if that saves the odd bytes
+        unsigned int saving = sack ? 2 : 0;
+        unsigned int cost = (length & 3) > saving ? (length + 3) & ~3u : length & ~3u;
+        return used + cost <= TCP_OPTIONS_MAX_SIZE.get<B>();
+    }
+    return ((used + length + 3) & ~3u) <= TCP_OPTIONS_MAX_SIZE.get<B>();
+}
+
+void TcpConnection::appendAccEcnOption(const Ptr<TcpHeader>& tcpHeader, int order, int wanted, int required)
+{
+    // RFC 9768 section 3.2.3.3: the option "MAY be truncated to omit one or two fields
+    // from the end of the option ..., provided that the counter(s) that have changed
+    // since the previous AccECN TCP Option are not omitted. If there is insufficient
+    // space ..., then the entire AccECN TCP Option MUST be omitted."
+    bool sack = false;
+    for (size_t i = 0; i < tcpHeader->getHeaderOptionArraySize(); i++)
+        if (tcpHeader->getHeaderOption(i)->getKind() == TCPOPTION_SACK)
+            sack = true;
+    unsigned int used = getAccEcnOptionSpaceUsed(tcpHeader);
+    int numFields = wanted;
+    while (numFields >= required && !accEcnOptionFits(used, numFields, sack))
+        numFields--;
+    if (numFields < required) {
+        EV_INFO << "Tcp Header Option AccECN not sent: no space for the " << required << " fields that changed\n";
+        return;
+    }
+    unsigned int length = 2 + 3 * numFields;
+    if (tcpMain->alignOptions) {
+        unsigned int realUsed = tcpHeader->getHeaderOptionArrayLength().get<B>();
+        while ((realUsed + length) % 4 != 0) {
+            tcpHeader->appendHeaderOption(new TcpOptionNop());
+            realUsed++;
+        }
+    }
+    auto *option = new TcpOptionAccEcn();
+    option->setKind(order == 0 ? TCPOPTION_ACCECN0 : TCPOPTION_ACCECN1);
+    option->setLength(length);
+    // section 3.2.3.1: "the 24 least significant bits of the current value of the
+    // associated counter"
+    option->setEct0Bytes(state->rcvEct0Bytes & 0xFFFFFF);
+    option->setCeBytes(state->rcvCeBytes & 0xFFFFFF);
+    option->setEct1Bytes(state->rcvEct1Bytes & 0xFFFFFF);
+    tcpHeader->appendHeaderOption(option);
+    EV_INFO << "Tcp Header Option AccECN" << order << " (" << numFields << " fields, E0B=" << option->getEct0Bytes()
+            << ", CEB=" << option->getCeBytes() << ", E1B=" << option->getEct1Bytes() << ") sent\n";
 }
 
 void TcpConnection::sendToIP(Packet *tcpSegment, const Ptr<TcpHeader>& tcpHeader)
@@ -300,13 +462,72 @@ void TcpConnection::sendToIP(Packet *tcpSegment, const Ptr<TcpHeader>& tcpHeader
     addresses->setSrcAddress(localAddr);
     addresses->setDestAddress(remoteAddr);
 
-    // ECN:
-    // We decided to use ECT(1) to indicate ECN capable transport.
+    // AccECN (RFC 9768 section 3.2.2): after the handshake, AE, CWR and ECE of each
+    // segment with an ACK form the ACE field, the number of CE-marked packets
+    // received (r.cep, which starts at 5), mod 8. The pure ACK of the SYN-ACK feeds
+    // back the IP ECN codepoint of the SYN-ACK instead (section 3.2.2.1, Table 3):
+    // "If the TCP Client (A) in AccECN mode uses a pure ACK with no SACK blocks to
+    // acknowledge the SYN/ACK, it MUST use the binary encoding in Table 3". The
+    // ACKs that TIME_WAIT sends carry no ACE field in Linux (tcp_v4_send_ack()),
+    // selected by accEcnBareTimeWaitAck.
+    if (state->accEcnNegotiated && tcpHeader->getAckBit() && !tcpHeader->getSynBit()
+        && !(tcpMain->accEcnBareTimeWaitAck && the2MSLTimer != nullptr && the2MSLTimer->isScheduled()))
+    {
+        bool pureAck = tcpSegment->getByteLength() == 0;
+        bool sackBlocks = false;
+        for (size_t i = 0; i < tcpHeader->getHeaderOptionArraySize(); i++)
+            if (tcpHeader->getHeaderOption(i)->getKind() == TCPOPTION_SACK)
+                sackBlocks = true;
+        uint8_t ace;
+        if (state->accEcnReflectAce && pureAck && !sackBlocks) {
+            ace = accEcnReflectedAce(state->accEcnReflectCodepoint);
+            state->accEcnReflectAce = false;
+        }
+        else
+            ace = (state->rcvCePkts + 5) & 7;
+        tcpHeader->setAeBit((ace & 4) != 0);
+        tcpHeader->setCwrBit((ace & 2) != 0);
+        tcpHeader->setEceBit((ace & 1) != 0);
+    }
+
+    // AccECN option (RFC 9768 section 3.2.3.3): remember the counts that it reported,
+    // so that the next option knows the counters that changed since. A data segment
+    // with the option ends the extra options of the client (section 3.2.3.2.1). As
+    // Linux (tcp_options_write()), remember also whether the option went out with a
+    // D-SACK block, the first SACK block, below the acknowledgment number (RFC 2883).
+    bool accEcnOptionSent = false;
+    const TcpOptionSack *sackOption = nullptr;
+    for (size_t i = 0; i < tcpHeader->getHeaderOptionArraySize(); i++) {
+        const TcpOption *option = tcpHeader->getHeaderOption(i);
+        if (option->getKind() == TCPOPTION_ACCECN0 || option->getKind() == TCPOPTION_ACCECN1) {
+            accEcnOptionSent = true;
+            state->accEcnOptEct0Bytes = state->rcvEct0Bytes;
+            state->accEcnOptCeBytes = state->rcvCeBytes;
+            state->accEcnOptEct1Bytes = state->rcvEct1Bytes;
+            if (tcpSegment->getByteLength() > 0)
+                state->accEcnFirstDataOptionSent = true;
+        }
+        else if (option->getKind() == TCPOPTION_SACK)
+            sackOption = check_and_cast<const TcpOptionSack *>(option);
+    }
+    if (state->accEcnNegotiated) {
+        state->accEcnOptSentWithDsack = accEcnOptionSent && sackOption != nullptr && sackOption->getSackItemArraySize() > 0
+                && seqLess(sackOption->getSackItem(0).getStart(), tcpHeader->getAckNo());
+        if (state->accEcnOptSentWithDsack)
+            state->accEcnSentDsackStart = sackOption->getSackItem(0).getStart();
+    }
+
+    // ECN: the ECN capable transport codepoint is ECT(0).
     //
-    // rfc-3168, page 6:
-    // Routers treat the ECT(0) and ECT(1) codepoints
+    // RFC 3168, page 6:
+    // "Routers treat the ECT(0) and ECT(1) codepoints
     // as equivalent.  Senders are free to use either the ECT(0) or the
-    // ECT(1) codepoint to indicate ECT.
+    // ECT(1) codepoint to indicate ECT."
+    //
+    // RFC 8311, section 3, which gives ECT(1) to experiments (L4S, RFC 9331):
+    // "A network node MUST NOT originate traffic marked with ECT(1) unless the
+    // network node is participating in a Congestion Marking Differences
+    // experiment that uses ECT(1)"
     //
     // rfc-3168, page 20:
     // For the current generation of TCP congestion control algorithms, pure
@@ -316,7 +537,28 @@ void TcpConnection::sendToIP(Packet *tcpSegment, const Ptr<TcpHeader>& tcpHeader
     // rfc-3168, page 20:
     // ECN-capable TCP implementations MUST NOT set either ECT codepoint
     // (ECT(0) or ECT(1)) in the IP header for retransmitted data packets
-    tcpSegment->addTagIfAbsent<EcnReq>()->setExplicitCongestionNotification((state->ect && !state->sndAck && !state->rexmit) ? IP_ECN_ECT_1 : IP_ECN_NOT_ECT);
+    //
+    // RFC 3168, section 6.1.1: "A host MUST NOT set ECT on SYN or SYN-ACK packets."
+    // RFC 3168, section 6.1.6: "the TCP data sender MUST NOT set either an ECT
+    // codepoint or the CWR bit on window probe packets."
+    // So ECT goes only on new data, also not on a FIN without data.
+    //
+    // DCTCP, RFC 8257 section 3.6: "for DCTCP connections, the sender SHOULD set ECT
+    // for SYN, SYN-ACK, and RST packets", as Linux does for a flavour that needs ECN:
+    // on an ECN-setup SYN, and on the SYN-ACK of an ECN connection. ecnMarkAll sets
+    // ECT also on the other segments of an AccECN or DCTCP connection, as Linux
+    // (tcp_ecn_send()); RFC 8257 section 4.1: "It is RECOMMENDED that an
+    // implementation provide a configuration knob that will cause ECT to be set on
+    // such control packets".
+    bool needsEcn = tcpAlgorithm != nullptr && tcpAlgorithm->needsEcn();
+    bool markEct;
+    if (tcpHeader->getSynBit())
+        markEct = needsEcn && (tcpHeader->getAckBit() ? state->ect : tcpHeader->getEceBit());
+    else if (tcpMain->ecnMarkAll && (state->accEcnNegotiated || needsEcn))
+        markEct = state->ect;
+    else
+        markEct = state->ect && tcpSegment->getByteLength() > 0 && !state->rexmit && !sendingWindowProbe;
+    tcpSegment->addTagIfAbsent<EcnReq>()->setExplicitCongestionNotification(markEct ? IP_ECN_ECT_0 : IP_ECN_NOT_ECT);
 
     tcpHeader->setChecksum(0);
     tcpHeader->setChecksumMode(tcpMain->checksumMode);
@@ -572,12 +814,20 @@ void TcpConnection::sendAvailableDataToApp()
     if (receiveQueue->getAmountOfBufferedBytes()) {
         if (autoRead || maxByteCountRequested > 0) {
             uint32_t endSeqNo = state->rcv_nxt;
+            // rcv_nxt may already be advanced past a received FIN (which
+            // occupies a sequence number but has no bytes in the queue) --
+            // clamp extraction at the FIN or the queue's range assert trips
+            if (state->fin_rcvd && seqLess(state->rcv_fin_seq, endSeqNo))
+                endSeqNo = state->rcv_fin_seq;
             if (!autoRead) {
                 uint32_t requestedEndPos = receiveQueue->getFirstSeqNo() + maxByteCountRequested;
                 if (seqLess(requestedEndPos, endSeqNo))
                     endSeqNo = requestedEndPos;
             }
             while (auto msg = receiveQueue->extractBytesUpTo(endSeqNo)) {
+                releaseRcvBuffer(msg->getByteLength());
+                if (rxTimestampingEnabled)
+                    msg->addTag<TcpRxTimestampInd>(); // SO_TIMESTAMPING: the time of the delivery
                 msg->setKind(TCP_I_DATA);    // TBD currently we never send TCP_I_URGENT_DATA
                 msg->addTag<SocketInd>()->setSocketId(socketId);
                 sendToApp(msg);
@@ -604,6 +854,10 @@ void TcpConnection::initConnection(TcpOpenCommand *openCmd)
     rexmitQueue = new TcpSackRexmitQueue();
     rexmitQueue->setConnection(this);
 
+    socketAdvertisedWindow = openCmd->getAdvertisedWindow();
+    socketReceiveBufferSize = openCmd->getReceiveBufferSize();
+    socketSynRetries = openCmd->getSynRetries();
+
     // create algorithm
     const char *tcpAlgorithmClass = openCmd->getTcpAlgorithmClass();
 
@@ -617,13 +871,17 @@ void TcpConnection::initConnection(TcpOpenCommand *openCmd)
     state = tcpAlgorithm->getStateVariables();
     configureStateVariables();
     tcpAlgorithm->initialize();
+    if (keepAliveSockopt >= 0)
+        tcpAlgorithm->setKeepAlive(keepAliveSockopt != 0);
 }
 
 void TcpConnection::configureStateVariables()
 {
-    uint32_t advertisedWindow = tcpMain->par("advertisedWindow");
+    // the window of the socket, from its open command, takes the place of the module
+    // parameters, with an automatic window scale (D-4)
+    uint32_t advertisedWindow = socketAdvertisedWindow >= 0 ? (uint32_t)socketAdvertisedWindow : (uint32_t)tcpMain->par("advertisedWindow").intValue();
     state->ws_support = tcpMain->par("windowScalingSupport");
-    int windowScalingFactor = tcpMain->par("windowScalingFactor");
+    int windowScalingFactor = socketAdvertisedWindow >= 0 ? -1 : (int)tcpMain->par("windowScalingFactor");
     if (windowScalingFactor < -1 || windowScalingFactor > 14)
         throw cRuntimeError("Invalid parameter value windowScalingFactor=%d -- valid values are 0..14, and -1 for automatic selection based on advertisedWindow", windowScalingFactor);
     if (state->ws_support) {
@@ -645,14 +903,61 @@ void TcpConnection::configureStateVariables()
     }
 
     state->maxRcvBuffer = advertisedWindow;
+    double receiveBufferSize = socketReceiveBufferSize >= 0 ? (double)socketReceiveBufferSize : tcpMain->par("receiveBufferSize").doubleValue();
+    state->rcvBufferSize = receiveBufferSize > 0 ? (uint32_t)receiveBufferSize : 0;
+    state->acceptBeyondBufferAtEmptyQueue = tcpMain->par("acceptBeyondBufferAtEmptyQueue");
+    // window auto-tuning (Linux tcp_grow_window()): the offer starts at the advertised
+    // window and grows toward half the receive buffer (tcp_win_from_space() at the
+    // default scaling ratio)
+    if (tcpMain->par("windowAutoTuning").boolValue() && state->rcvBufferSize > 0) {
+        state->rcv_ssthresh = advertisedWindow;
+        state->window_clamp = std::max(advertisedWindow, state->rcvBufferSize / 2);
+    }
+    // windowShrinkAllowed (Linux tcp_shrink_window=1): the window follows the receive
+    // buffer, and the first offer is half the buffer (tcp_select_initial_window() at the
+    // default scaling ratio)
+    state->windowShrinkAllowed = tcpMain->par("windowShrinkAllowed");
+    if (state->windowShrinkAllowed && state->rcvBufferSize > 0) {
+        state->maxRcvBuffer = state->rcvBufferSize;
+        state->rcv_wnd = state->rcv_adv = std::min<uint32_t>(state->rcvBufferSize / 2, TCP_MAX_WIN);
+        if (state->rcv_ssthresh > 0) {
+            state->rcv_ssthresh = std::max(state->rcv_ssthresh, state->rcvBufferSize);
+            state->window_clamp = std::max(state->window_clamp, state->rcvBufferSize);
+        }
+    }
+    // a receive buffer smaller than the advertised window limits the first offer too
+    if (state->rcvBufferSize > 0 && state->rcv_wnd > state->rcvBufferSize)
+        state->rcv_wnd = state->rcv_adv = state->rcvBufferSize;
     state->delayed_acks_enabled = tcpMain->par("delayedAcksEnabled"); // delayed ACK algorithm (RFC 1122) enabled/disabled
+    state->delayedAckFrameCount = tcpMain->par("delayedAckFrameCount");
+    state->adaptiveDelayedAcks = tcpMain->par("adaptiveDelayedAcks");
+    state->synRetries = socketSynRetries >= 0 ? socketSynRetries : (int)tcpMain->par("synRetries");
+    state->synLinearTimeouts = tcpMain->par("synLinearTimeouts");
+    state->linuxZeroWindowProbe = !strcmp(tcpMain->par("zeroWindowProbe").stringValue(), "linux");
     state->nagle_enabled = tcpMain->par("nagleEnabled"); // Nagle's algorithm (RFC 896) enabled/disabled
     state->limited_transmit_enabled = tcpMain->par("limitedTransmitEnabled"); // Limited Transmit algorithm (RFC 3042) enabled/disabled
     state->increased_IW_enabled = tcpMain->par("increasedIWEnabled"); // Increased Initial Window (RFC 3390) enabled/disabled
     state->snd_mss = tcpMain->par("mss"); // Maximum Segment Size (RFC 793)
     state->advertisedMss = state->snd_mss; // our own receive limit; stays when snd_mss falls to the MSS of the peer
     state->ts_support = tcpMain->par("timestampSupport"); // if set, this means that current host supports TS (RFC 1323)
-    state->ecnWillingness = tcpMain->par("ecnWillingness"); // if set, current host is willing to use ECN
+    const char *tcpEcnMode = tcpMain->par("tcpEcnMode");
+    if (tcpMain->par("ecnWillingness").boolValue()) {
+        if (strcmp(tcpEcnMode, "off") != 0)
+            throw cRuntimeError("Set the deprecated ecnWillingness or tcpEcnMode, not both");
+        state->ecnMode = TCP_ECN_MODE_RFC3168;
+    }
+    else if (!strcmp(tcpEcnMode, "passive"))
+        state->ecnMode = TCP_ECN_MODE_PASSIVE;
+    else if (!strcmp(tcpEcnMode, "rfc3168"))
+        state->ecnMode = TCP_ECN_MODE_RFC3168;
+    else if (!strcmp(tcpEcnMode, "accecn"))
+        state->ecnMode = TCP_ECN_MODE_ACCECN;
+    else if (!strcmp(tcpEcnMode, "accecn-passive"))
+        state->ecnMode = TCP_ECN_MODE_ACCECN_PASSIVE;
+    else
+        state->ecnMode = TCP_ECN_MODE_OFF;
+    state->ecnWillingness = state->ecnMode != TCP_ECN_MODE_OFF;
+    state->accEcnOptionEnabled = tcpMain->par("accEcnOptionEnabled");
     state->dupthresh = tcpMain->par("dupthresh");
     state->sack_support = tcpMain->par("sackSupport"); // if set, this means that current host supports SACK (RFC 2018, 2883, 3517)
     // SACK-based (RFC 6675) loss recovery is provided by flavours whose createRecovery()
@@ -666,6 +971,15 @@ void TcpConnection::configureStateVariables()
         state->sack_support = false;
     }
     state->seedRttFromHandshake = tcpMain->par("seedRttFromHandshake");
+    state->fastopenClientEnabled = tcpMain->par("fastopenClientEnabled");
+    state->fastopenServerEnabled = tcpMain->par("fastopenServerEnabled");
+    state->fastopenLenientCookieValidation = tcpMain->par("fastopenLenientCookieValidation");
+    state->fastopenExpOptionEnabled = tcpMain->par("fastopenExpOptionEnabled");
+    state->fastopenAcceptWithoutCookie = tcpMain->par("fastopenAcceptWithoutCookie");
+    state->fastopenClientNoCookieRequired = tcpMain->par("fastopenClientNoCookieRequired");
+    state->fastopenCookieBytes = tcpMain->par("fastopenCookieBytes");
+    if (state->fastopenCookieBytes < 4 || state->fastopenCookieBytes > 16 || state->fastopenCookieBytes % 2 != 0)
+        throw cRuntimeError("fastopenCookieBytes must be an even number from 4 to 16 (RFC 7413 section 4.1.1), but it is %d", state->fastopenCookieBytes);
     state->prrEnabled = tcpMain->par("prrEnabled");
     state->lossUndoEnabled = tcpMain->par("lossUndoEnabled");
     state->frtoEnabled = tcpMain->par("frtoEnabled");
@@ -692,6 +1006,12 @@ void TcpConnection::configureStateVariables()
     // sendData() call says otherwise (enqueueSendCommandData(), sendData()).
     state->busyStartTime = -1;
     state->rwndLimitedStartTime = -1;
+
+    // TCP_NOTSENT_LOWAT: a TcpSetNotsentLowatCommand before the open takes the place of
+    // the parameter
+    int notsentLowat = notsentLowatSockopt != INT_MIN ? notsentLowatSockopt : (int)tcpMain->par("notsentLowat").intValue();
+    state->notsentLowat = notsentLowat < 0 ? (uint32_t)-1 : (uint32_t)notsentLowat;
+    state->sndbufLimitedStartTime = -1;
 
     WATCH_EXPR("snd_nxt", state->snd_nxt);
     WATCH_EXPR("rcv_nxt", state->rcv_nxt);
@@ -777,11 +1097,29 @@ void TcpConnection::sendSyn()
     updateRcvWnd();
     tcpHeader->setWindow(state->rcv_wnd);
 
-    state->snd_max = state->snd_nxt = state->iss + 1;
+    // TCP Fast Open (RFC 7413 section 4.2.2): the data that process_SEND() gave
+    // the SYN takes the sequence numbers after the SYN
+    uint32_t synDataLen = state->fastopenSynDataLen;
+    state->snd_max = state->snd_nxt = state->iss + 1 + synDataLen;
     emit(sndMaxSignal, state->snd_max);
 
-    // ECN
-    if (state->ecnWillingness) {
+    // The rexmit queue records the data of the SYN once, at the first SYN. A
+    // retransmitted SYN leaves the data out (RFC 7413 section 4.2.2), and the
+    // data stays in flight until the SYN-ACK shows what the server acknowledged.
+    if (synDataLen > 0 && rexmitQueue->getBufferEndSeq() == state->iss + 1)
+        rexmitQueue->enqueueSentData(state->iss + 1, state->iss + 1 + synDataLen);
+
+    // ECN: the "accecn" mode requests Accurate ECN with (AE,CWR,ECE) = (1,1,1) (RFC 9768
+    // section 3.1.1), and the "rfc3168" mode requests ECN (RFC 3168)
+    if (state->ecnMode == TCP_ECN_MODE_ACCECN) {
+        tcpHeader->setAeBit(true);
+        tcpHeader->setCwrBit(true);
+        tcpHeader->setEceBit(true);
+        state->aeSynSent = true;
+        state->ecnSynSent = false;
+        EV << "AccECN-setup SYN packet sent\n";
+    }
+    else if (state->ecnMode == TCP_ECN_MODE_RFC3168) {
         tcpHeader->setEceBit(true);
         tcpHeader->setCwrBit(true);
         state->ecnSynSent = true;
@@ -798,11 +1136,28 @@ void TcpConnection::sendSyn()
 //        EV << "non-ECN-setup SYN packet sent\n";
     }
 
+    // AccECN fallback. RFC 9768 section 3.1.4.1: the client "SHOULD attempt to negotiate
+    // the use of AccECN at least one more time by continuing to set all three TCP-ECN
+    // flags (AE,CWR,ECE) = (1,1,1) on the first retransmitted SYN", and it "SHOULD send
+    // subsequent retransmissions of the SYN with the three TCP-ECN flags cleared". A
+    // SYN-ACK that answers an earlier SYN still sets the mode, so the request stays
+    // recorded. An ECN-setup SYN keeps its flags: RFC 3168 section 6.1.1.1 lets it clear
+    // them ("MAY"), but a SYN lost to congestion would then cost the connection its ECN.
+    if (state->syn_rexmit_count >= 2 && state->ecnMode == TCP_ECN_MODE_ACCECN) {
+        tcpHeader->setAeBit(false);
+        tcpHeader->setCwrBit(false);
+        tcpHeader->setEceBit(false);
+        EV << "SYN retransmission " << state->syn_rexmit_count << ": no ECN flags (AccECN fallback)\n";
+    }
+
     // write header options
     writeHeaderOptions(tcpHeader);
-    Packet *fp = new Packet("SYN");
+    bool attachSynData = synDataLen > 0 && state->syn_rexmit_count == 0;
+    Packet *fp = attachSynData ? sendQueue->createSegmentWithBytes(state->iss + 1, synDataLen) : new Packet("SYN");
 
     state->handshakeSentTime = simTime(); // for the handshake RTT seed on ESTABLISHED
+    if (state->syn_rexmit_count == 0)
+        state->firstSynSentTime = simTime(); // for the TSecr check of the SYN-ACK
 
     // send it
     sendToIP(fp, tcpHeader);
@@ -819,10 +1174,39 @@ void TcpConnection::sendSynAck()
     updateRcvWnd();
     tcpHeader->setWindow(state->rcv_wnd);
 
-    state->snd_max = state->snd_nxt = state->iss + 1;
+    // The SYN-ACK takes the ISS: snd_nxt and snd_max are at least ISS+1. A
+    // retransmitted SYN-ACK of a TCP Fast Open server that sent data in SYN_RCVD
+    // does not move them back over the data.
+    if (seqLess(state->snd_nxt, state->iss + 1))
+        state->snd_nxt = state->iss + 1;
+    if (seqLess(state->snd_max, state->iss + 1))
+        state->snd_max = state->iss + 1;
 
-    // ECN
-    if (state->ecnWillingness) {
+    // ECN. RFC 3168, section 6.1.1: "If a host has received an ECN-setup SYN packet,
+    // then it MAY send an ECN-setup SYN-ACK packet.  Otherwise, it MUST NOT send an
+    // ECN-setup SYN-ACK packet."
+    if (state->accEcnNegotiated) {
+        // RFC 9768 section 3.1.1: the flags of the SYN-ACK feed back the IP ECN
+        // codepoint of the SYN (Table 2)
+        uint8_t ace = accEcnReflectedAce(state->accEcnReflectCodepoint);
+        tcpHeader->setAeBit((ace & 4) != 0);
+        tcpHeader->setCwrBit((ace & 2) != 0);
+        tcpHeader->setEceBit((ace & 1) != 0);
+        EV << "AccECN-setup SYN-ACK packet sent (ACE=" << (int)ace << ")\n";
+        // RFC 9768 section 3.2.3.2.2: if the first retransmission of the SYN-ACK "times
+        // out, to expedite connection setup, the TCP Server SHOULD retransmit the SYN/ACK
+        // with (AE,CWR,ECE) = (0,0,0) and no AccECN Option, but it remains in AccECN
+        // feedback mode"; after it, the server "MUST NOT set ECT on any packet for the
+        // rest of the connection" (section 3.1.5)
+        if (state->syn_rexmit_count >= 2) {
+            tcpHeader->setAeBit(false);
+            tcpHeader->setCwrBit(false);
+            tcpHeader->setEceBit(false);
+            state->accEcnNoEct = true;
+            EV << "SYN-ACK retransmission " << state->syn_rexmit_count << ": no AccECN flags (AccECN fallback), and no ECT\n";
+        }
+    }
+    else if (state->ecnWillingness && state->endPointIsWillingECN) {
         tcpHeader->setEceBit(true);
         tcpHeader->setCwrBit(false);
         EV << "ECN-setup SYN-ACK packet sent\n";
@@ -833,7 +1217,9 @@ void TcpConnection::sendSynAck()
         if (state->endPointIsWillingECN)
             EV << "non-ECN-setup SYN-ACK packet sent\n";
     }
-    if (state->ecnWillingness && state->endPointIsWillingECN) {
+    if (state->accEcnNegotiated)
+        state->ect = !state->accEcnNoEct;
+    else if (state->ecnWillingness && state->endPointIsWillingECN) {
         state->ect = true;
         EV << "both end-points are willing to use ECN... ECN is enabled\n";
     }
@@ -879,6 +1265,10 @@ void TcpConnection::sendRst(uint32_t seq, L3Address src, L3Address dest, int src
     tcpHeader->setChecksum(0);
 
     Packet *fp = new Packet("RST");
+
+    // RFC 8257 section 3.6: the RST of a DCTCP connection carries ECT (see sendToIP())
+    if (state != nullptr && state->ect && tcpAlgorithm != nullptr && tcpAlgorithm->needsEcn())
+        fp->addTag<EcnReq>()->setExplicitCongestionNotification(IP_ECN_ECT_0);
 
     // send it
     sendToIP(fp, tcpHeader, src, dest);
@@ -929,8 +1319,9 @@ void TcpConnection::sendAck()
     // flag set).  After the receipt of the CWR packet, acknowledgments for
     // subsequent non-CE data packets do not have the ECN-Echo flag set.
 
+    // (an AccECN connection uses the ECE bit for the ACE field, see sendToIP())
     TcpStateVariables *state = getStateForUpdate();
-    if (state && state->ect) {
+    if (state && state->ect && !state->accEcnNegotiated) {
         if (tcpAlgorithm->shouldMarkAck()) {
             tcpHeader->setEceBit(true);
             EV_INFO << "In ecnEcho state... send ACK with ECE bit set\n";
@@ -941,13 +1332,8 @@ void TcpConnection::sendAck()
     writeHeaderOptions(tcpHeader);
     Packet *fp = new Packet("TcpAck");
 
-    // rfc-3168 page 20: pure ack packets must be sent with not-ECT codepoint
-    state->sndAck = true;
-
-    // send it
+    // send it (Not-ECT, as each segment without data, see sendToIP())
     sendToIP(fp, tcpHeader);
-
-    state->sndAck = false;
 
     // notify
     tcpAlgorithm->ackSent();
@@ -1068,7 +1454,9 @@ uint32_t TcpConnection::sendSegment(uint32_t bytes)
     tcpHeader->setWindow(updateRcvWnd());
 
     // ECN
-    if (state->ect && state->sndCwr) {
+    // (RFC 9768 section 3.1.5: an AccECN connection "MUST NOT set CWR to indicate
+    // that it has received and responded to indications of congestion")
+    if (state->ect && state->sndCwr && !sendingWindowProbe && !state->accEcnNegotiated) {
         tcpHeader->setCwrBit(true);
         EV_INFO << "set CWR bit\n";
         state->sndCwr = false;
@@ -1089,6 +1477,23 @@ uint32_t TcpConnection::sendSegment(uint32_t bytes)
         tcpHeader->setFinBit(true);
         state->snd_nxt = state->snd_fin_seq + 1;
     }
+
+    // MSG_ZEROCOPY: a completion for each zero-copy SEND whose data went out now; one
+    // segment can complete several small SENDs. As Linux on a device that copies the
+    // data (a tun device), TCP is then done with the buffer of the application.
+    while (!zerocopySeqNums.empty() && !seqGreater(zerocopySeqNums.begin()->first, state->snd_nxt)) {
+        uint32_t zerocopyId = zerocopySeqNums.begin()->second;
+        zerocopySeqNums.erase(zerocopySeqNums.begin());
+        EV_INFO << "Notifying app: ZEROCOPY_COMPLETION id=" << zerocopyId << "\n";
+        auto *indication = new Indication("ZerocopyCompletion", TCP_I_ZEROCOPY_COMPLETION);
+        auto *completionInfo = new TcpZerocopyCompletionInfo();
+        completionInfo->setZerocopyId(zerocopyId);
+        indication->addTag<SocketInd>()->setSocketId(socketId);
+        indication->setControlInfo(completionInfo);
+        sendToApp(indication);
+    }
+
+    updateSndbufLimitedChrono(); // this segment can have sent the last unsent data
 
     // copy the region of tcpHeader to rexmitQueue; without SACK, the queue
     // still records what is in flight
@@ -1112,6 +1517,15 @@ uint32_t TcpConnection::sendSegment(uint32_t bytes)
         // Tell upper layer readiness to accept more data
         sendIndicationToApp(TCP_I_SEND_MSG, abated);
         state->queueUpdate = true;
+    }
+
+    // TCP_NOTSENT_LOWAT: the unsent bytes are at the mark again
+    if (state->notsentLowat != (uint32_t)-1 && !state->notsentLowatUpdate) {
+        uint32_t notsentBytes = sendQueue->getBytesAvailable(state->snd_nxt);
+        if (notsentBytes <= state->notsentLowat) {
+            sendIndicationToApp(TCP_I_SEND_MSG, notsentBytes);
+            state->notsentLowatUpdate = true;
+        }
     }
 
     // remember highest seq sent (snd_nxt may be set back on retransmission,
@@ -1139,6 +1553,16 @@ uint32_t TcpConnection::sendSegment(uint32_t bytes)
 
 void TcpConnection::enqueueSendCommandData(Packet *packet)
 {
+    // A SEND of zero bytes has nothing to queue, and TcpSendQueue::enqueueAppData()
+    // cannot take it: its peekDataAt(B(0), 0) throws "Returning an empty chunk is not
+    // allowed". It is not a malformed command: send(fd, x, 0) is a legal no-op, and
+    // sendto(fd, x, 0, MSG_FASTOPEN) asks for nothing but a Fast Open cookie.
+    if (packet->getByteLength() == 0) {
+        EV_DETAIL << "SEND of zero bytes: nothing to queue\n";
+        delete packet;
+        return;
+    }
+
     // TCP_INFO time counters (busy_time): read-only bookkeeping -- if the connection
     // was fully idle (nothing outstanding, nothing queued) before this SEND, it
     // becomes busy now. See processAckInEstabEtc() for the matching "back to idle" exit.
@@ -1148,7 +1572,18 @@ void TcpConnection::enqueueSendCommandData(Packet *packet)
         state->busyStartTime = simTime();
     }
 
+    bool zerocopy = packet->findTag<TcpSendZerocopyReq>() != nullptr;
     sendQueue->enqueueAppData(packet);
+
+    // MSG_ZEROCOPY: the completion of this SEND waits until its last byte goes out
+    if (zerocopy) {
+        uint32_t endSeq = sendQueue->getBufferEndSeq();
+        zerocopySeqNums[endSeq] = nextZerocopyId;
+        EV_DETAIL << "MSG_ZEROCOPY: completion " << nextZerocopyId << " at sequence number " << endSeq << "\n";
+        nextZerocopyId++;
+    }
+
+    updateSndbufLimitedChrono(); // new unsent data ends a limited interval
 }
 
 int TcpConnection::deriveLinuxCaState() const
@@ -1167,6 +1602,14 @@ int TcpConnection::deriveLinuxCaState() const
     if (state->sack_enabled && state->sackedBytes > 0)
         return 1; // TCP_CA_Disorder
     return 0; // TCP_CA_Open
+}
+
+uint32_t TcpConnection::getDataSndUna() const
+{
+    // only a TCP Fast Open server sends data while snd_una is at the ISS
+    if (fsm.getState() == TCP_S_SYN_RCVD && state->snd_una == state->iss)
+        return state->iss + 1;
+    return state->snd_una;
 }
 
 bool TcpConnection::sendData(uint32_t congestionWindow)
@@ -1189,7 +1632,7 @@ bool TcpConnection::sendData(uint32_t congestionWindow)
     // effectiveWindow: number of bytes we're allowed to send now. The advertised
     // window limits the unacknowledged sequence space, and the congestion window
     // limits the bytes in flight that the algorithm reports.
-    uint32_t unackedInWindow = state->snd_nxt - state->snd_una;
+    uint32_t unackedInWindow = state->snd_nxt - getDataSndUna();
     uint32_t bytesInFlight = tcpAlgorithm->getBytesInFlight();
     int64_t effectiveWin = std::min((int64_t)state->snd_wnd - unackedInWindow, (int64_t)congestionWindow - bytesInFlight);
 
@@ -1245,7 +1688,13 @@ bool TcpConnection::sendData(uint32_t congestionWindow)
         // Nagle's algorithm: when a TCP connection has outstanding data that has not
         // yet been acknowledged, small segments cannot be sent until the outstanding
         // data is acknowledged.
-        bool unacknowledgedData = (state->snd_una != state->snd_max);
+        // The SYN-ACK of a TCP Fast Open server that sends in SYN_RCVD is not
+        // data: Nagle does not wait for its ACK (Linux applies Nagle to the data
+        // in the write queue only). In SYN_SENT, the ACK that completes the
+        // handshake carries the data of a Fast Open SYN that the SYN-ACK did not
+        // acknowledge (RFC 7413 section 4.2.2: "include the data after SND.UNA if
+        // data is available"), without Nagle.
+        bool unacknowledgedData = (getDataSndUna() != state->snd_max) && fsm.getState() != TCP_S_SYN_SENT;
         bool containsFin = state->send_fin && (state->snd_nxt + bytesToSend) == state->snd_fin_seq;
         if (state->nagle_enabled && unacknowledgedData && !containsFin)
             EV_WARN << "Cannot send (last) segment due to Nagle, not enough data for a full segment\n";
@@ -1272,34 +1721,81 @@ bool TcpConnection::sendData(uint32_t congestionWindow)
     return true;
 }
 
+void TcpConnection::sendKeepAliveProbe()
+{
+    // RFC 9293 section 3.8.4: "Such a segment generally contains SEG.SEQ = SND.NXT-1";
+    // the connection is idle, so SND.NXT = SND.UNA. No data (SHLD-12).
+    EV_INFO << "Sending keepalive probe, seq=" << (state->snd_una - 1) << "\n";
+    sendSegmentBelowWindow("TcpKeepAlive");
+}
+
+void TcpConnection::sendSegmentBelowWindow(const char *name)
+{
+    // As Linux tcp_xmit_probe_skb(): a segment without data with SEG.SEQ = SND.UNA - 1.
+    // The sequence number is below the window of the peer, so the peer answers with an
+    // ACK and accepts nothing. No data, and so no ECT; snd_nxt and snd_max stay. The
+    // segment carries the current ACK (Linux tcp_event_ack_sent()).
+    const auto& tcpHeader = makeShared<TcpHeader>();
+    tcpHeader->setAckBit(true);
+    tcpHeader->setSequenceNo(state->snd_una - 1);
+    tcpHeader->setAckNo(state->rcv_nxt);
+    tcpHeader->setWindow(updateRcvWnd());
+    writeHeaderOptions(tcpHeader);
+    Packet *fp = new Packet(name);
+    sendToIP(fp, tcpHeader);
+    tcpAlgorithm->ackSent();
+}
+
 bool TcpConnection::sendProbe()
 {
-    // we'll start sending from snd_max
-    state->snd_nxt = state->snd_max;
-
-    // check we have 1 byte to send
-    if (sendQueue->getBytesAvailable(state->snd_nxt) == 0) {
+    // RFC 9293 section 3.8.6.1: "The sending TCP peer must regularly transmit at least
+    // one octet of new data (if available), or retransmit to the receiving TCP peer even
+    // if the send window is zero, in order to "probe" the window." The probe is the
+    // first unacknowledged octet: new data at the first probe, and the same octet again
+    // at the later ones, as BSD sends it in its persist state. snd_nxt stays at snd_una,
+    // so the octet goes again with the data when the window opens. The probe starts no
+    // retransmission timer: the persist timer repeats it, so the connection stays open
+    // as long as the peer answers (MUST-37).
+    if (sendQueue->getBytesAvailable(state->snd_una) == 0) {
         EV_WARN << "Cannot send probe because send buffer is empty\n";
         return false;
     }
 
-    uint32_t old_snd_nxt = state->snd_nxt;
+    // zeroWindowProbe="linux": the probe of Linux without data (tcp_xmit_probe_skb())
+    if (state->linuxZeroWindowProbe) {
+        EV_INFO << "Sending zero-window probe without data, seq=" << (state->snd_una - 1) << "\n";
+        sendSegmentBelowWindow("ZeroWindowProbe");
+        return true;
+    }
 
-    EV_INFO << "Sending 1 byte as probe, with seq=" << state->snd_nxt << "\n";
+    EV_INFO << "Sending 1 byte as probe, with seq=" << state->snd_una << "\n";
+    unsendWindowProbe(); // the earlier probe octet: each probe is the first transmission of it
+    bool afterRto = state->afterRto; // the probe octet is the octet at snd_una (see sendSegment())
+    state->afterRto = false;
+    sendingWindowProbe = true; // no ECT and no CWR (RFC 3168 section 6.1.6)
     sendSegment(1);
-
-    // remember highest seq sent (snd_nxt may be set back on retransmission,
-    // but we'll need snd_max to check validity of ACKs -- they must ack
-    // something we really sent)
-    state->snd_max = state->snd_nxt;
+    sendingWindowProbe = false;
+    state->afterRto = afterRto;
+    if (seqGreater(state->snd_nxt, state->snd_max))
+        state->snd_max = state->snd_nxt;
+    state->snd_nxt = state->snd_una;
 
     emit(unackedSignal, state->snd_max - state->snd_una);
 
     // notify
     tcpAlgorithm->ackSent();
-    tcpAlgorithm->dataSent(old_snd_nxt);
 
     return true;
+}
+
+void TcpConnection::unsendWindowProbe()
+{
+    if (seqGreater(state->snd_max, state->snd_una)) {
+        ASSERT(state->snd_max - state->snd_una == 1);
+        rexmitQueue->discardFrom(state->snd_una);
+        state->snd_max = state->snd_una;
+    }
+    state->snd_nxt = state->snd_una;
 }
 
 void TcpConnection::markOutstandingLostOnRto()
@@ -1339,6 +1835,12 @@ void TcpConnection::retransmitOneSegment(bool called_at_rto)
 
     // retransmit one segment at snd_una, and set snd_nxt accordingly (if not called at RTO)
     state->snd_nxt = state->snd_una;
+
+    // ... but at the first data byte, while a TCP Fast Open server sends data in
+    // SYN_RCVD: the SYN-ACK is not in the send queue, and the SYN-REXMIT timer
+    // retransmits it
+    if (fsm.getState() == TCP_S_SYN_RCVD && seqLess(state->snd_nxt, state->iss + 1))
+        state->snd_nxt = state->iss + 1;
 
     // When FIN sent the snd_max - snd_nxt larger than bytes available in queue
     uint32_t bytes = std::min(std::min(state->snd_effmss, state->snd_max - state->snd_nxt),
@@ -1456,6 +1958,11 @@ void TcpConnection::retransmitData()
     // retransmit everything from snd_una
     state->snd_nxt = state->snd_una;
 
+    // ... from the first data byte, while a TCP Fast Open server sends data in
+    // SYN_RCVD (see retransmitOneSegment())
+    if (fsm.getState() == TCP_S_SYN_RCVD && seqLess(state->snd_nxt, state->iss + 1))
+        state->snd_nxt = state->iss + 1;
+
     uint32_t bytesToSend = state->snd_max - state->snd_nxt;
 
     // FIN (without user data) needs to be resent
@@ -1545,6 +2052,42 @@ void TcpConnection::readHeaderOptions(const Ptr<const TcpHeader>& tcpHeader)
                 ok = processTSOption(tcpHeader, *check_and_cast<const TcpOptionTimestamp *>(option));
                 break;
 
+            case TCPOPTION_TCP_FASTOPEN: // TFO=34
+                ok = processFastOpenOption(tcpHeader, *check_and_cast<const TcpOptionTcpFastOpen *>(option));
+                break;
+
+            case TCPOPTION_RFC3692_STYLE_EXPERIMENT_2: // 254: the experimental Fast Open option, if enabled
+                if (state->fastopenExpOptionEnabled && dynamic_cast<const TcpOptionTcpFastOpenExp *>(option))
+                    ok = processFastOpenExpOption(tcpHeader, *check_and_cast<const TcpOptionTcpFastOpenExp *>(option));
+                else
+                    EV_ERROR << "ERROR: Unsupported Tcp option kind " << kind << "\n";
+                break;
+
+            case TCPOPTION_ACCECN0: // 172
+            case TCPOPTION_ACCECN1: // 174
+                // RFC 9768 section 3.2.3.2.1: "If there is somehow an AccECN Option on a
+                // SYN, it MUST be ignored when forwarded or received."
+                if (!tcpHeader->getSynBit() || tcpHeader->getAckBit()) {
+                    state->sawAccEcnOpt = true;
+                    // section 3.2.3.2.4: a host "MAY check that the initial value of the EE0B
+                    // field or the EE1B field is non-zero" in the first option, and if either
+                    // is zero, it "will switch into a mode that ignores AccECN Options for this
+                    // half-connection" (as Linux tcp_accecn_option_init())
+                    auto accEcnOption = check_and_cast<const TcpOptionAccEcn *>(option);
+                    int numFields = std::min(3, (length - 2) / 3);
+                    bool order0 = kind == TCPOPTION_ACCECN0;
+                    bool e0 = numFields >= (order0 ? 1 : 3);
+                    bool e1 = numFields >= (order0 ? 3 : 1);
+                    if (!state->accEcnOptionChecked && (e0 || e1)) {
+                        state->accEcnOptionChecked = true;
+                        if ((e0 && accEcnOption->getEct0Bytes() == 0) || (e1 && accEcnOption->getEct1Bytes() == 0)) {
+                            state->accEcnOptionIgnored = true;
+                            EV_INFO << "AccECN option with a zeroed EE0B or EE1B field: the AccECN options are ignored\n";
+                        }
+                    }
+                }
+                break;
+
             // TODO add new TCPOptions here once they are implemented
             // TODO delegate to TcpAlgorithm as well -- it may want to recognized additional options
 
@@ -1582,6 +2125,7 @@ bool TcpConnection::processMSSOption(const Ptr<const TcpHeader>& tcpHeader, cons
     //
     // The value of snd_mss (SMSS) is set to the minimum of snd_mss (local parameter) and
     // the value specified in the MSS option received during connection startup.
+    state->peerAdvertisedMss = option.getMaxSegmentSize(); // before the local limit, for the Fast Open cache
     state->snd_mss = std::min(state->snd_mss, (uint32_t)option.getMaxSegmentSize());
 
     if (state->snd_mss == 0)
@@ -1592,6 +2136,25 @@ bool TcpConnection::processMSSOption(const Ptr<const TcpHeader>& tcpHeader, cons
 
     EV_INFO << "Tcp Header Option MSS(=" << option.getMaxSegmentSize() << ") received, SMSS is set to " << state->snd_mss << "\n";
     return true;
+}
+
+void TcpConnection::applyDefaultSendMss(const Ptr<const TcpHeader>& tcpHeader, const L3Address& peerAddr)
+{
+    // RFC 9293, section 3.7.1:
+    //"
+    // If an MSS Option is not received at connection setup, TCP
+    // implementations MUST assume a default send MSS of 536 (576 - 40) for
+    // IPv4 or 1220 (1280 - 60) for IPv6 (MUST-15).
+    //"
+    for (size_t i = 0; i < tcpHeader->getHeaderOptionArraySize(); i++)
+        if (tcpHeader->getHeaderOption(i)->getKind() == TCPOPTION_MAXIMUM_SEGMENT_SIZE)
+            return;
+    uint32_t defaultMss = peerAddr.getType() == L3Address::IPv6 ? 1220 : 536;
+    if (state->snd_mss > defaultMss) {
+        EV_INFO << "No MSS option received, SMSS is set to the default " << defaultMss << " (RFC 9293 MUST-15)\n";
+        state->snd_mss = defaultMss;
+        state->pmtudOriginalMss = state->snd_mss;
+    }
 }
 
 bool TcpConnection::processWSOption(const Ptr<const TcpHeader>& tcpHeader, const TcpOptionWindowScale& option)
@@ -1664,6 +2227,9 @@ bool TcpConnection::processTSOption(const Ptr<const TcpHeader>& tcpHeader, const
             }
         }
         else if (seqLE(tcpHeader->getSequenceNo(), state->last_ack_sent)) { // Note: test is modified according to the latest proposal of the tcplw@cray.com list (Braden 1993/04/26)
+            // a newer timestamp lets the AccECN decode read this ACK (Linux FLAG_TS_PROGRESS)
+            if (seqGreater(option.getSenderTimestamp(), state->ts_recent))
+                state->accEcnTsProgress = true;
             state->ts_recent = option.getSenderTimestamp();
             EV_DETAIL << "Updating ts_recent from segment: new ts_recent=" << state->ts_recent << "\n";
         }
@@ -1700,18 +2266,127 @@ uint32_t TcpConnection::calculateEffectiveMss()
     return state->snd_mss - (state->ts_enabled ? 10 + 2 : 0);
 }
 
+bool TcpConnection::processFastOpenOption(const Ptr<const TcpHeader>& tcpHeader, const TcpOptionTcpFastOpen& option)
+{
+    std::vector<uint8_t> cookie(option.getCookieArraySize());
+    for (size_t i = 0; i < cookie.size(); i++)
+        cookie[i] = option.getCookie(i);
+    return processFastOpenCookieBytes(cookie);
+}
+
+bool TcpConnection::processFastOpenExpOption(const Ptr<const TcpHeader>& tcpHeader, const TcpOptionTcpFastOpenExp& option)
+{
+    // the server answers in the option of the client, and the client caches the
+    // option of the cookie (Linux foc->exp)
+    state->fastopenPeerUsedExpOption = true;
+    std::vector<uint8_t> cookie(option.getCookieArraySize());
+    for (size_t i = 0; i < cookie.size(); i++)
+        cookie[i] = option.getCookie(i);
+    return processFastOpenCookieBytes(cookie);
+}
+
+bool TcpConnection::processFastOpenCookieBytes(const std::vector<uint8_t>& cookie)
+{
+    // RFC 7413 section 4.2: without Fast Open, a server "MUST ignore all cookie
+    // options", and so does a client
+    bool serverSyn = state->fastopenServerEnabled && fsm.getState() == TCP_S_LISTEN;
+    bool clientSynAck = state->fastopenClientEnabled && fsm.getState() == TCP_S_SYN_SENT;
+    if (!serverSyn && !clientSynAck)
+        return true;
+
+    // RFC 7413 section 4.1.1: the cookie is empty, or it has an even number of
+    // bytes from 4 to 16, and "Options with invalid Length values ... MUST be
+    // ignored"
+    size_t cookieLength = cookie.size();
+    if (cookieLength != 0 && (cookieLength < 4 || cookieLength > 16 || cookieLength % 2 != 0)) {
+        EV_WARN << "Fast Open: ignoring the option with a cookie of " << cookieLength << " bytes\n";
+        return false;
+    }
+
+    if (serverSyn) {
+        if (cookieLength == 0) {
+            // RFC 7413 section 4.2.1: the client requests a cookie
+            state->fastopenCookieRequested = true;
+            state->fastopenCookieToSend = tcpMain->generateFastOpenCookie(localAddr, remoteAddr, state->fastopenCookieBytes);
+            state->fastopenSendCookieOption = true;
+            EV_INFO << "Fast Open: cookie requested\n";
+        }
+        else if (state->fastopenLenientCookieValidation || cookie == tcpMain->generateFastOpenCookie(localAddr, remoteAddr, cookieLength)) {
+            state->fastopenCookieValid = true;
+            EV_INFO << "Fast Open: valid cookie\n";
+        }
+        else {
+            // RFC 7413 section 4.1.2: "if the incoming cookie fails the check, a
+            // valid cookie is readily available to be sent to the client"
+            state->fastopenCookieToSend = tcpMain->generateFastOpenCookie(localAddr, remoteAddr, state->fastopenCookieBytes);
+            state->fastopenSendCookieOption = true;
+            EV_INFO << "Fast Open: the cookie is not valid, giving a new one\n";
+        }
+    }
+    else {
+        // RFC 7413 section 4.2.2, client step 1: cache the cookie with the MSS of
+        // the server, before the local limit. As Linux, cache it only when the SYN
+        // carried a Fast Open option.
+        if (!state->fastopenSynCarriedOption)
+            EV_INFO << "Fast Open: ignoring a cookie that the SYN did not request\n";
+        else if (cookieLength > 0) {
+            uint32_t cacheMss = state->peerAdvertisedMss > 0 ? state->peerAdvertisedMss : state->snd_mss;
+            tcpMain->setFastOpenCookie(remoteAddr, cookie, cacheMss);
+            tcpMain->setFastOpenCookieExpForm(remoteAddr, state->fastopenPeerUsedExpOption);
+            EV_INFO << "Fast Open: caching the cookie of " << cookieLength << " bytes for " << remoteAddr
+                    << (state->fastopenPeerUsedExpOption ? " (experimental option)" : "") << "\n";
+        }
+    }
+    return true;
+}
+
+// a TCP Fast Open option (kind 34), or the experimental option (kind 254 with the
+// magic number 0xF989, RFC 7413 appendix A); with alignment, 2 NOPs before it make
+// its length a multiple of 4
+static void appendFastOpenOption(const Ptr<TcpHeader>& tcpHeader, const std::vector<uint8_t>& cookie, bool align, bool exp)
+{
+    int length = (exp ? 4 : 2) + cookie.size();
+    if (align && length % 4 == 2) {
+        tcpHeader->appendHeaderOption(new TcpOptionNop());
+        tcpHeader->appendHeaderOption(new TcpOptionNop());
+    }
+    if (exp) {
+        auto option = new TcpOptionTcpFastOpenExp();
+        option->setExpId(0xF989);
+        option->setCookieArraySize(cookie.size());
+        for (size_t i = 0; i < cookie.size(); i++)
+            option->setCookie(i, cookie[i]);
+        option->setLength(length);
+        tcpHeader->appendHeaderOption(option);
+    }
+    else {
+        auto option = new TcpOptionTcpFastOpen();
+        option->setCookieArraySize(cookie.size());
+        for (size_t i = 0; i < cookie.size(); i++)
+            option->setCookie(i, cookie[i]);
+        option->setLength(length);
+        tcpHeader->appendHeaderOption(option);
+    }
+}
+
 TcpHeader TcpConnection::writeHeaderOptions(const Ptr<TcpHeader>& tcpHeader)
 {
     // SYN flag set and connetion in INIT or LISTEN state (or after synRexmit timeout)
     if (tcpHeader->getSynBit() && (fsm.getState() == TCP_S_INIT || fsm.getState() == TCP_S_LISTEN
                                 || ((fsm.getState() == TCP_S_SYN_SENT || fsm.getState() == TCP_S_SYN_RCVD)
-                                    && state->syn_rexmit_count > 0)))
+                                    && (state->syn_rexmit_count > 0
+                                        // TCP Fast Open: the deferred SYN goes out in SYN_SENT
+                                        || state->fastopenSynDeferred
+                                        // simultaneous open: the SYN-ACK that answers the
+                                        // crossing SYN goes out in SYN_SENT, and it carries the
+                                        // handshake options as any other SYN segment
+                                        || tcpHeader->getAckBit()))))
     {
         // MSS header option
         // RFC 9293, section 3.7.1: the MSS option announces the maximum segment
         // size that this side can receive. By the time of the SYN-ACK, snd_mss is
         // already the minimum with the MSS of the peer, so it is not announced.
-        if (state->advertisedMss > 0) {
+        if (tcpMain->sendMssOption && state->advertisedMss > 0) {
             TcpOptionMaxSegmentSize *option = new TcpOptionMaxSegmentSize();
             option->setMaxSegmentSize(state->advertisedMss);
             tcpHeader->appendHeaderOption(option);
@@ -1720,17 +2395,19 @@ TcpHeader TcpConnection::writeHeaderOptions(const Ptr<TcpHeader>& tcpHeader)
 
         // WS header option
         if (state->ws_support && (state->rcv_ws || (fsm.getState() == TCP_S_INIT
-                                                    || (fsm.getState() == TCP_S_SYN_SENT && state->syn_rexmit_count > 0))))
+                                                    || (fsm.getState() == TCP_S_SYN_SENT && (state->syn_rexmit_count > 0 || state->fastopenSynDeferred)))))
         {
-            // 1 padding byte
-            tcpHeader->appendHeaderOption(new TcpOptionNop()); // NOP
+            if (tcpMain->alignOptions) // 1 padding byte
+                tcpHeader->appendHeaderOption(new TcpOptionNop()); // NOP
 
             // Update WS variables
             if (state->ws_manual_scale > -1) {
                 state->rcv_wnd_scale = state->ws_manual_scale;
             }
             else {
-                ulong scaled_rcv_wnd = receiveQueue->getFirstSeqNo() + state->maxRcvBuffer - state->rcv_nxt;
+                // the largest window that the connection can offer: the advertised window,
+                // or with windowAutoTuning the window that auto-tuning can reach
+                ulong scaled_rcv_wnd = receiveQueue->getFirstSeqNo() + std::max(state->maxRcvBuffer, state->window_clamp) - state->rcv_nxt;
                 state->rcv_wnd_scale = 0;
 
                 while (scaled_rcv_wnd > TCP_MAX_WIN && state->rcv_wnd_scale < 14) { // RFC 1323, page 11: "the shift count must be limited to 14"
@@ -1749,9 +2426,9 @@ TcpHeader TcpConnection::writeHeaderOptions(const Ptr<TcpHeader>& tcpHeader)
 
         // SACK_PERMITTED header option
         if (state->sack_support && (state->rcv_sack_perm || (fsm.getState() == TCP_S_INIT
-                                                             || (fsm.getState() == TCP_S_SYN_SENT && state->syn_rexmit_count > 0))))
+                                                             || (fsm.getState() == TCP_S_SYN_SENT && (state->syn_rexmit_count > 0 || state->fastopenSynDeferred)))))
         {
-            if (!state->ts_support) { // if TS is supported by host, do not add NOPs to this segment
+            if (tcpMain->alignOptions && !state->ts_support) { // if TS is supported by host, do not add NOPs to this segment
                 // 2 padding bytes
                 tcpHeader->appendHeaderOption(new TcpOptionNop()); // NOP
                 tcpHeader->appendHeaderOption(new TcpOptionNop()); // NOP
@@ -1767,9 +2444,9 @@ TcpHeader TcpConnection::writeHeaderOptions(const Ptr<TcpHeader>& tcpHeader)
 
         // TS header option
         if (state->ts_support && (state->rcv_initial_ts || (fsm.getState() == TCP_S_INIT
-                                                            || (fsm.getState() == TCP_S_SYN_SENT && state->syn_rexmit_count > 0))))
+                                                            || (fsm.getState() == TCP_S_SYN_SENT && (state->syn_rexmit_count > 0 || state->fastopenSynDeferred)))))
         {
-            if (!state->sack_support) { // if SACK is supported by host, do not add NOPs to this segment
+            if (tcpMain->alignOptions && !state->sack_support) { // if SACK is supported by host, do not add NOPs to this segment
                 // 2 padding bytes
                 tcpHeader->appendHeaderOption(new TcpOptionNop()); // NOP
                 tcpHeader->appendHeaderOption(new TcpOptionNop()); // NOP
@@ -1796,6 +2473,39 @@ TcpHeader TcpConnection::writeHeaderOptions(const Ptr<TcpHeader>& tcpHeader)
             tcpHeader->appendHeaderOption(option);
         }
 
+        // TCP Fast Open (RFC 7413), server: the SYN-ACK gives a cookie. A
+        // retransmitted SYN-ACK goes out without it (RFC 7413 section 4.2.2).
+        if (state->fastopenServerEnabled && state->fastopenSendCookieOption && tcpHeader->getAckBit()
+            && state->syn_rexmit_count == 0)
+        {
+            appendFastOpenOption(tcpHeader, state->fastopenCookieToSend, tcpMain->alignOptions, state->fastopenPeerUsedExpOption);
+            EV_INFO << "Tcp Header Option FAST_OPEN (cookie of " << state->fastopenCookieToSend.size() << " bytes) sent\n";
+        }
+
+        // TCP Fast Open (RFC 7413 section 4.2), client: the first SYN of a connection
+        // that asked for Fast Open carries the cached cookie, or an empty option that
+        // requests a cookie. A retransmitted SYN goes out without it (RFC 7413
+        // section 4.2.1), and so does the SYN-ACK of a simultaneous open.
+        if (state->fastopenClientEnabled && state->fastopenRequested && state->syn_rexmit_count == 0
+            && !tcpHeader->getAckBit() && !state->fastopenClientNoCookieRequired)
+        {
+            std::vector<uint8_t> cookie;
+            bool cachedCookie = !state->fastopenCookieRequestPending && tcpMain->getFastOpenCookie(remoteAddr, cookie);
+            if (cachedCookie || state->fastopenCookieRequestPending) {
+                bool exp = state->fastopenExpOptionEnabled && tcpMain->getFastOpenUseExpOption(remoteAddr);
+                appendFastOpenOption(tcpHeader, cookie, tcpMain->alignOptions, exp);
+                state->fastopenSynCarriedOption = true;
+                EV_INFO << "Tcp Header Option FAST_OPEN (cookie of " << cookie.size() << " bytes) sent\n";
+            }
+        }
+
+        // AccECN (RFC 9768 section 3.2.3.2.1): "A TCP Server that confirms its support
+        // for AccECN ... SHOULD include an AccECN TCP Option on the SYN/ACK", with each
+        // field that fits; a retransmitted SYN-ACK goes out without it (section
+        // 3.2.3.2.2). The SYN never carries it ("MUST NOT").
+        if (tcpHeader->getAckBit() && state->accEcnNegotiated && state->accEcnOptionEnabled && state->syn_rexmit_count == 0)
+            appendAccEcnOption(tcpHeader, tcpMain->accEcnOptionLinux ? 1 : 0, 3, 0);
+
         // TODO add new TCPOptions here once they are implemented
     }
     else if (fsm.getState() == TCP_S_SYN_SENT || fsm.getState() == TCP_S_SYN_RCVD
@@ -1804,7 +2514,7 @@ TcpHeader TcpConnection::writeHeaderOptions(const Ptr<TcpHeader>& tcpHeader)
     {
         // TS header option
         if (state->ts_enabled) { // Is TS enabled?
-            if (!(state->sack_enabled && (state->snd_sack || state->snd_dsack))) { // if SACK is enabled and SACKs need to be added, do not add NOPs to this segment
+            if (tcpMain->alignOptions && !(state->sack_enabled && (state->snd_sack || state->snd_dsack))) { // if SACK is enabled and SACKs need to be added, do not add NOPs to this segment
                 // 2 padding bytes
                 tcpHeader->appendHeaderOption(new TcpOptionNop()); // NOP
                 tcpHeader->appendHeaderOption(new TcpOptionNop()); // NOP
@@ -1845,11 +2555,23 @@ TcpHeader TcpConnection::writeHeaderOptions(const Ptr<TcpHeader>& tcpHeader)
             addSacks(tcpHeader);
         }
 
+        // AccECN option (RFC 9768 section 3.2.3), after the SACK option, which leaves
+        // room for the fields that changed (see addSacks())
+        int accEcnOrder, accEcnWanted, accEcnRequired;
+        if (tcpHeader->getAckBit() && getAccEcnOptionFields(accEcnOrder, accEcnWanted, accEcnRequired))
+            appendAccEcnOption(tcpHeader, accEcnOrder, accEcnWanted, accEcnRequired);
+
         // TODO add new TCPOptions here once they are implemented
         // TODO delegate to TcpAlgorithm as well -- it may want to append additional options
     }
 
     if (tcpHeader->getHeaderOptionArraySize() != 0) {
+        // RFC 9293 section 3.1: the header ends on a 32-bit boundary, and the padding
+        // is zeros, that is, End of Option List bytes. An option area that the options
+        // do not fill (for example MSS and SACK-Permitted without NOPs) gets them.
+        while (tcpHeader->getHeaderOptionArrayLength().get() % 4 != 0)
+            tcpHeader->appendHeaderOption(new TcpOptionEnd());
+
         B options_len = tcpHeader->getHeaderOptionArrayLength();
 
         if (options_len <= TCP_OPTIONS_MAX_SIZE) { // Options length allowed? - maximum: 40 Bytes
@@ -1889,11 +2611,77 @@ uint32_t TcpConnection::getTSecr(const Ptr<const TcpHeader>& tcpHeader) const
     return 0;
 }
 
+void TcpConnection::updateSndbufLimitedChrono()
+{
+    // as Linux at the end of tcp_write_xmit(): the send buffer limits the sender when
+    // the write queue has no unsent data, but the blocked writer waits for space
+    if (state == nullptr || sendQueue == nullptr)
+        return;
+    bool limited = writerBlocked && sendQueue->getBytesAvailable(state->snd_nxt) == 0 && state->snd_una != state->snd_max;
+    if (limited && state->sndbufLimitedStartTime < SIMTIME_ZERO)
+        state->sndbufLimitedStartTime = simTime();
+    else if (!limited && state->sndbufLimitedStartTime >= SIMTIME_ZERO) {
+        state->sndbufLimitedAccumulated += simTime() - state->sndbufLimitedStartTime;
+        state->sndbufLimitedStartTime = -1;
+    }
+}
+
+uint32_t TcpConnection::linuxSkbTruesize(uint32_t payloadBytes)
+{
+    uint32_t base = payloadBytes + 40 + 320;
+    uint32_t alloc;
+    if (base > 16384)
+        alloc = ((base + 32767) / 32768) * 32768; // pages of order 3 (PAGE_ALLOC_COSTLY_ORDER)
+    else if (base > 4096)
+        alloc = ((base + 4095) / 4096) * 4096; // the paged skb of tun_alloc_skb()
+    else {
+        alloc = 1024; // a power-of-two page fragment (tun_build_skb())
+        while (alloc < base)
+            alloc <<= 1;
+    }
+    return alloc + 232;
+}
+
+void TcpConnection::chargeRcvBuffer(uint32_t payloadBytes)
+{
+    uint32_t truesize = linuxSkbTruesize(payloadBytes);
+    rcvSkbChain.push_back(std::make_pair(payloadBytes, truesize));
+    rcvBufOccupancy += truesize;
+    // Linux tcp_measure_rcv_mss(): a segment at least as large as the estimate, but of
+    // another length, measures the ratio; the estimate follows min(length, advmss)
+    if (payloadBytes >= rcvMssEstimate) {
+        if (payloadBytes != rcvMssEstimate) {
+            uint64_t ratio = ((uint64_t)payloadBytes << 8) / truesize;
+            rcvScalingRatio = (uint8_t)std::min<uint64_t>(ratio ? ratio : 1, 255);
+        }
+        rcvMssEstimate = std::min<uint32_t>(payloadBytes, state->advertisedMss > 0 ? (uint32_t)state->advertisedMss : payloadBytes);
+    }
+}
+
+void TcpConnection::releaseRcvBuffer(uint64_t readBytes)
+{
+    // Linux frees an skb, with all its truesize, only when the application read all of it
+    while (readBytes > 0 && !rcvSkbChain.empty()) {
+        auto& head = rcvSkbChain.front();
+        if (readBytes >= head.first) {
+            readBytes -= head.first;
+            rcvBufOccupancy -= std::min<uint64_t>(head.second, rcvBufOccupancy);
+            rcvSkbChain.pop_front();
+        }
+        else {
+            head.first -= (uint32_t)readBytes;
+            readBytes = 0;
+        }
+    }
+}
+
 void TcpConnection::updateRcvQueueVars()
 {
-    // update receive queue related state variables
-    state->freeRcvBuffer = receiveQueue->getAmountOfFreeBytes(state->maxRcvBuffer);
-    state->usedRcvBuffer = state->maxRcvBuffer - state->freeRcvBuffer;
+    // update receive queue related state variables: the unread and the out-of-order
+    // data use the receive buffer (receiveBufferSize, else the advertised window)
+    uint32_t bufferSize = state->rcvBufferSize > 0 ? state->rcvBufferSize : state->maxRcvBuffer;
+    state->freeRcvBuffer = receiveQueue->getAmountOfFreeBytes(bufferSize);
+    state->usedRcvBuffer = bufferSize - state->freeRcvBuffer;
 
     // update receive queue related statistics
     emit(tcpRcvQueueBytesSignal, state->usedRcvBuffer);
@@ -1907,7 +2695,45 @@ uint16_t TcpConnection::updateRcvWnd()
 
     // update receive queue related state variables and statistics
     updateRcvQueueVars();
+
+    // windowShrinkAllowed, as Linux with tcp_shrink_window=1 (__tcp_select_window()): the
+    // offer is the free buffer at the payload ratio, rounded down to the window scale;
+    // zero when it falls under 1/16 of the buffer (or under one MSS or one scale unit)
+    // while less than half the buffer is free; and at most rcv_ssthresh, aligned up. The
+    // right edge may move back; rcv_adv keeps the largest edge that the receiver offered.
+    if (state->windowShrinkAllowed) {
+        uint32_t rcvbuf = state->rcvBufferSize > 0 ? state->rcvBufferSize : state->maxRcvBuffer;
+        uint64_t freeSpace = rcvBufOccupancy < rcvbuf ? (((uint64_t)rcvbuf - rcvBufOccupancy) * rcvScalingRatio) >> 8 : 0;
+        uint64_t fullSpace = ((uint64_t)rcvbuf * rcvScalingRatio) >> 8;
+        uint32_t scaleUnit = 1u << state->rcv_wnd_scale;
+        freeSpace = (freeSpace / scaleUnit) * scaleUnit;
+        if (freeSpace < (fullSpace >> 1) && (freeSpace < (fullSpace >> 4) || freeSpace < state->snd_mss || freeSpace < scaleUnit))
+            freeSpace = 0;
+        if (state->rcv_ssthresh > 0 && freeSpace > state->rcv_ssthresh)
+            freeSpace = ((uint64_t)(state->rcv_ssthresh + scaleUnit - 1) / scaleUnit) * scaleUnit;
+        const uint32_t maxWin = (state->ws_enabled && state->rcv_wnd_scale) ? (TCP_MAX_WIN << state->rcv_wnd_scale) : TCP_MAX_WIN;
+        win = (uint32_t)std::min<uint64_t>(freeSpace, maxWin);
+        if (win > 0 && seqGE(state->rcv_nxt + win, state->rcv_adv)) {
+            state->rcv_adv = state->rcv_nxt + win;
+            emit(rcvAdvSignal, state->rcv_adv);
+        }
+        state->rcv_wnd = win;
+        emit(rcvWndSignal, state->rcv_wnd);
+        return (uint16_t)(state->ws_enabled ? state->rcv_wnd >> state->rcv_wnd_scale : state->rcv_wnd);
+    }
+
     win = state->freeRcvBuffer;
+
+    // With a receive buffer apart from the advertised window, the window also limits
+    // the offer: the advertised window less the in-order data that the application did
+    // not read. The out-of-order data uses only the buffer.
+    // With windowAutoTuning, the window that auto-tuning reached takes the place of the
+    // advertised window.
+    if (state->rcvBufferSize > 0) {
+        uint32_t window = state->rcv_ssthresh > 0 ? std::min(state->rcv_ssthresh, state->window_clamp) : state->maxRcvBuffer;
+        uint32_t unread = receiveQueue->getAcknowledgedDataLength();
+        win = std::min(win, window > unread ? window - unread : 0);
+    }
 
     // Following lines are based on [Stevens, W.R.: TCP/IP Illustrated, Volume 2, chapter 26.7, pages 878-879]:
     // Don't advertise less than one full-sized segment to avoid SWS
@@ -1916,7 +2742,8 @@ uint16_t TcpConnection::updateRcvWnd()
 
     // Do not shrink window
     // (rcv_adv minus rcv_nxt) is the amount of space still available to the sender that was previously advertised
-    if (win < state->rcv_adv - state->rcv_nxt)
+    // (rcv_nxt can be beyond rcv_adv after acceptBeyondBufferAtEmptyQueue)
+    if (seqGreater(state->rcv_adv, state->rcv_nxt) && win < state->rcv_adv - state->rcv_nxt)
         win = state->rcv_adv - state->rcv_nxt;
 
     // Observe upper limit for advertised window on this connection

@@ -109,6 +109,9 @@ void TcpSocket::listen(bool fork)
     openCmd->setFork(fork);
     openCmd->setAutoRead(autoRead);
     openCmd->setTcpAlgorithmClass(tcpAlgorithmClass.c_str());
+    openCmd->setAdvertisedWindow(advertisedWindow);
+    openCmd->setReceiveBufferSize(receiveBufferSize);
+    openCmd->setSynRetries(synRetries);
 
     request->setControlInfo(openCmd);
     sendToTcp(request);
@@ -149,6 +152,9 @@ void TcpSocket::connect(L3Address remoteAddress, int remotePort, bool fastOpen)
     openCmd->setAutoRead(autoRead);
     openCmd->setTcpAlgorithmClass(tcpAlgorithmClass.c_str());
     openCmd->setFastOpen(fastOpen);
+    openCmd->setAdvertisedWindow(advertisedWindow);
+    openCmd->setReceiveBufferSize(receiveBufferSize);
+    openCmd->setSynRetries(synRetries);
 
     request->setControlInfo(openCmd);
     sendToTcp(request);
@@ -304,6 +310,15 @@ void TcpSocket::setNoDelay(bool nodelay)
     auto request = new Request("setNoDelay", TCP_C_SETOPTION);
     auto *cmd = new TcpSetNoDelayCommand();
     cmd->setNodelay(nodelay);
+    request->setControlInfo(cmd);
+    sendToTcp(request);
+}
+
+void TcpSocket::setKeepAlive(bool enabled)
+{
+    auto request = new Request("setKeepAlive", TCP_C_SETOPTION);
+    auto *cmd = new TcpSetKeepAliveCommand();
+    cmd->setEnabled(enabled);
     request->setControlInfo(cmd);
     sendToTcp(request);
 }

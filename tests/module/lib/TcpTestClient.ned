@@ -18,6 +18,7 @@ simple TcpTestClient like IApp
         string localAddress;
         int localPort;
         bool active;
+        bool fork = default(false); // passive open: true = listen() (a new connection for each SYN), false = listenOnce()
         string connectAddress;
         int connectPort;
         string dataTransferMode @enum("bytecount","object","bytestream") = default("bytecount");
@@ -26,8 +27,33 @@ simple TcpTestClient like IApp
         int sendBytes @unit(B);
         string sendScript;
         double tClose @unit(s);
-        bool autoRead = default(true); // when false, the app never reads received data (fills the receive buffer -> zero window)
+        bool autoRead = default(true); // when false, the app reads received data only by the READ commands of readScript (fills the receive buffer -> zero window)
+        bool owned = default(true); // false: tell TCP that the application does not own the connection, as a Linux connection that waits for accept() (TcpSocket::setOwned())
+        int socketAdvertisedWindow = default(-1); // the advertised window of the first connection, in bytes (TcpSocket::setAdvertisedWindow()); -1: the parameters of the Tcp module
+        int socketReceiveBufferSize = default(-1); // the receive buffer of the first connection, in bytes (TcpSocket::setReceiveBufferSize()); -1: the parameter of the Tcp module
+        int socketSynRetries = default(-1); // the SYN retries of the first connection (TcpSocket::setSynRetries()); -1: the parameter of the Tcp module
+        string tcpParScript = default(""); // "time name value; ..." -- at each time, set a parameter of the Tcp module of this application, as a harness that changes a sysctl; the parameter must be @mutable
+        string keepAliveScript = default(""); // "time 1; time 0; ..." -- at each time, turn keepalive on (1) or off (0) for the first connection (TcpSocket::setKeepAlive()), also before its open
+        string writerBlockedScript = default(""); // "time 1; time 0; ..." -- at each time, tell TCP that the application writer is blocked on the send buffer (1) or not (0) (TcpSocket::setWriterBlocked())
+        int notsentLowat = default(-1); // the TCP_NOTSENT_LOWAT of the first connection, in bytes (TcpSocket::setNotsentLowat()), sent after its open; -1: none
+        bool timestamping = default(false); // ask TCP for the time of the delivery of the data (SO_TIMESTAMPING, TcpSocket::setTimestamping()), which logIndications logs
+        bool zerocopy = default(false); // the SENDs of the first connection ask for a completion (MSG_ZEROCOPY, TcpSocket::sendZerocopy()), which logIndications logs
+        string readScript = default(""); // with autoRead=false: "time bytes; time bytes; ..." -- at each time, issue a READ of at most that many bytes
         string statusRequestScript = default(""); // comma-separated list of times ("1.5,3.0") at which to issue a TCP_C_STATUS query on the socket; the reply is logged as a "STATUS:" line
+        bool logIndications = default(false); // log each indication of TCP (with the number of bytes of its data) in the "testing" category
+        bool fastOpen = default(false); // active open: request TCP Fast Open (RFC 7413) for the connection
+        double tOpen2 @unit(s) = default(-1s); // the open of a second connection of this application (and Tcp module), for example to use the Fast Open cookie that the first connection got; -1s: no second connection
+        bool active2 = default(false); // the second connection: active open (to connectAddress:connectPort), or passive open (listenOnce())
+        int localPort2 = default(-1); // the local port of the second connection
+        double tSend2 @unit(s) = default(-1s); // the time of the SEND of the second connection
+        int sendBytes2 @unit(B) = default(0B); // the number of bytes of the SEND of the second connection; 0B: no SEND
+        bool fastOpen2 = default(false); // the second connection: request TCP Fast Open
+        double tOpen3 @unit(s) = default(-1s); // a third connection, as the second one
+        bool active3 = default(false);
+        int localPort3 = default(-1);
+        double tSend3 @unit(s) = default(-1s);
+        int sendBytes3 @unit(B) = default(0B);
+        bool fastOpen3 = default(false);
         @display("i=block/app");
     gates:
         input socketIn;

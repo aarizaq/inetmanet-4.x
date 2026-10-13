@@ -51,6 +51,12 @@ void Tcp::initialize(int stage)
         lastEphemeralPort = EPHEMERAL_PORTRANGE_START;
 
         msl = par("msl");
+        alignOptions = par("alignOptions");
+        accEcnBareTimeWaitAck = par("accEcnBareTimeWaitAck");
+        accEcnOptionLinux = !strcmp(par("accEcnOptionPolicy").stringValue(), "linux");
+        sendMssOption = par("sendMssOption");
+        ecnMarkAll = par("ecnMarkAll");
+        fastOpenCookieCacheSize = par("fastopenCookieCacheSize");
 
         WATCH(checksumMode);
         WATCH(lastEphemeralPort);
@@ -398,6 +404,218 @@ void Tcp::addForkedConnection(TcpConnection *conn, TcpConnection *newConn, L3Add
 
     // newConn will live on with the new socketId
     tcpAppConnMap[newConn->socketId] = newConn;
+}
+
+// SipHash-2-4 (Aumasson and Bernstein, "SipHash: a fast short-input PRF"): two
+// compression rounds for each 8-byte word, four finalization rounds, words in
+// little-endian order, and the length of the input in the top byte of the last word
+static uint64_t sipHash24(const uint8_t key[16], const uint8_t *data, size_t length)
+{
+    auto le64 = [] (const uint8_t *p) {
+        uint64_t v = 0;
+        for (int i = 7; i >= 0; i--)
+            v = (v << 8) | p[i];
+        return v;
+    };
+    auto rotl = [] (uint64_t x, int b) { return (x << b) | (x >> (64 - b)); };
+    uint64_t k0 = le64(key), k1 = le64(key + 8);
+    uint64_t v0 = 0x736f6d6570736575ULL ^ k0;
+    uint64_t v1 = 0x646f72616e646f6dULL ^ k1;
+    uint64_t v2 = 0x6c7967656e657261ULL ^ k0;
+    uint64_t v3 = 0x7465646279746573ULL ^ k1;
+    auto round = [&] () {
+        v0 += v1; v1 = rotl(v1, 13); v1 ^= v0; v0 = rotl(v0, 32);
+        v2 += v3; v3 = rotl(v3, 16); v3 ^= v2;
+        v0 += v3; v3 = rotl(v3, 21); v3 ^= v0;
+        v2 += v1; v1 = rotl(v1, 17); v1 ^= v2; v2 = rotl(v2, 32);
+    };
+    size_t words = length / 8;
+    for (size_t w = 0; w < words; w++) {
+        uint64_t m = le64(data + w * 8);
+        v3 ^= m; round(); round(); v0 ^= m;
+    }
+    uint8_t last[8] = {};
+    for (size_t i = words * 8; i < length; i++)
+        last[i % 8] = data[i];
+    last[7] = (uint8_t)(length & 0xff);
+    uint64_t m = le64(last);
+    v3 ^= m; round(); round(); v0 ^= m;
+    v2 ^= 0xff;
+    round(); round(); round(); round();
+    return v0 ^ v1 ^ v2 ^ v3;
+}
+
+static void appendAddressBytes(std::vector<uint8_t>& bytes, const L3Address& address)
+{
+    if (address.getType() == L3Address::IPv4) {
+        uint32_t a = address.toIpv4().getInt();
+        for (int b = 3; b >= 0; b--)
+            bytes.push_back((uint8_t)(a >> (8 * b))); // network byte order
+    }
+    else if (address.getType() == L3Address::IPv6) {
+        const uint32_t *words = address.toIpv6().words();
+        for (int w = 0; w < 4; w++)
+            for (int b = 3; b >= 0; b--)
+                bytes.push_back((uint8_t)(words[w] >> (8 * b)));
+    }
+    else {
+        for (char c : address.str())
+            bytes.push_back((uint8_t)c);
+    }
+}
+
+std::vector<uint8_t> Tcp::generateFastOpenCookie(const L3Address& localAddr, const L3Address& remoteAddr, int cookieBytes)
+{
+    // the key: from fastopenKey, in the format of Linux net.ipv4.tcp_fastopen_key
+    // (four 32-bit words in hexadecimal, each in little-endian byte order), or
+    // else from the RNG
+    uint8_t key[16];
+    const char *keyString = par("fastopenKey");
+    if (*keyString != '\0') {
+        unsigned int words[4];
+        if (sscanf(keyString, "%8x-%8x-%8x-%8x", &words[0], &words[1], &words[2], &words[3]) != 4)
+            throw cRuntimeError("fastopenKey must have the format xxxxxxxx-xxxxxxxx-xxxxxxxx-xxxxxxxx, but it is '%s'", keyString);
+        for (int i = 0; i < 4; i++)
+            for (int b = 0; b < 4; b++)
+                key[i * 4 + b] = (uint8_t)(words[i] >> (8 * b));
+    }
+    else {
+        if (!fastOpenKeySet) {
+            for (int i = 0; i < 4; i++) {
+                uint32_t r = getRNG(0)->intRand();
+                for (int b = 0; b < 4; b++)
+                    fastOpenKey[i * 4 + b] = (uint8_t)(r >> (8 * b));
+            }
+            fastOpenKeySet = true;
+        }
+        memcpy(key, fastOpenKey, sizeof(key));
+    }
+
+    // the input is the source address of the SYN (the client) and then its
+    // destination address (this server), as Linux makes it; the result is
+    // little-endian. A cookie longer than 8 bytes continues with the MAC of the
+    // same input and one more byte.
+    std::vector<uint8_t> input;
+    appendAddressBytes(input, remoteAddr);
+    appendAddressBytes(input, localAddr);
+    std::vector<uint8_t> cookie;
+    for (uint8_t block = 0; (int)cookie.size() < cookieBytes; block++) {
+        std::vector<uint8_t> blockInput = input;
+        if (block > 0)
+            blockInput.push_back(block);
+        uint64_t h = sipHash24(key, blockInput.data(), blockInput.size());
+        for (int b = 0; b < 8 && (int)cookie.size() < cookieBytes; b++)
+            cookie.push_back((uint8_t)(h >> (8 * b)));
+    }
+    return cookie;
+}
+
+bool Tcp::getFastOpenCookie(const L3Address& remoteAddr, std::vector<uint8_t>& cookie) const
+{
+    auto it = fastOpenCookieCache.find(remoteAddr);
+    // an entry can hold only an MSS (see updateFastOpenCachedMss())
+    if (it == fastOpenCookieCache.end() || it->second.cookie.empty())
+        return false;
+    cookie = it->second.cookie;
+    return true;
+}
+
+void Tcp::setFastOpenCookie(const L3Address& remoteAddr, const std::vector<uint8_t>& cookie, uint32_t peerMss)
+{
+    if (fastOpenCookieCache.find(remoteAddr) == fastOpenCookieCache.end()
+        && (int)fastOpenCookieCache.size() >= fastOpenCookieCacheSize)
+    {
+        // the cache is full: remove an arbitrary entry (the first of the map), not
+        // the least recently used one
+        fastOpenCookieCache.erase(fastOpenCookieCache.begin());
+    }
+    auto& entry = fastOpenCookieCache[remoteAddr];
+    entry.cookie = cookie;
+    entry.peerMss = peerMss;
+}
+
+void Tcp::updateFastOpenCachedMss(const L3Address& remoteAddr, uint32_t peerMss)
+{
+    if (peerMss == 0)
+        return;
+    auto it = fastOpenCookieCache.find(remoteAddr);
+    if (it != fastOpenCookieCache.end())
+        it->second.peerMss = peerMss;
+    else
+        setFastOpenCookie(remoteAddr, std::vector<uint8_t>(), peerMss); // an entry without a cookie, as Linux tcp_metrics keeps the MSS of each peer
+}
+
+uint32_t Tcp::getFastOpenCachedMss(const L3Address& remoteAddr) const
+{
+    auto it = fastOpenCookieCache.find(remoteAddr);
+    return it == fastOpenCookieCache.end() ? 0 : it->second.peerMss;
+}
+
+bool Tcp::getFastOpenUseExpOption(const L3Address& remoteAddr) const
+{
+    auto it = fastOpenCookieCache.find(remoteAddr);
+    if (it == fastOpenCookieCache.end())
+        return false;
+    return it->second.cookie.empty() ? it->second.tryExp == 1 : it->second.exp;
+}
+
+void Tcp::setFastOpenCookieExpForm(const L3Address& remoteAddr, bool exp)
+{
+    auto it = fastOpenCookieCache.find(remoteAddr);
+    if (it != fastOpenCookieCache.end())
+        it->second.exp = exp;
+}
+
+void Tcp::noteFastOpenCookieRequestUnanswered(const L3Address& remoteAddr, bool usedExpOption)
+{
+    if (fastOpenCookieCache.find(remoteAddr) == fastOpenCookieCache.end())
+        setFastOpenCookie(remoteAddr, std::vector<uint8_t>(), 0);
+    auto& entry = fastOpenCookieCache[remoteAddr];
+    // a cached cookie decides the option; the count never goes back
+    // (Linux tcp_fastopen_cache_set())
+    if (!entry.cookie.empty())
+        return;
+    uint8_t tryExp = usedExpOption ? 2 : 1;
+    if (tryExp > entry.tryExp)
+        entry.tryExp = tryExp;
+}
+
+void Tcp::clearFastOpenCookieCache()
+{
+    EV_INFO << "Fast Open: removing " << fastOpenCookieCache.size() << " cached cookies\n";
+    fastOpenCookieCache.clear();
+}
+
+int Tcp::getNumPendingFastOpenRequests(const L3Address& localAddr, int localPort) const
+{
+    int count = 0;
+    for (const auto& entry : tcpAppConnMap) {
+        const TcpConnection *conn = entry.second;
+        if (conn->getState() != nullptr && conn->getState()->fastopenAccelerated && conn->getFsmState() == TCP_S_SYN_RCVD
+            && conn->getLocalPort() == localPort && (localAddr.isUnspecified() || conn->getLocalAddress() == localAddr))
+            count++;
+    }
+    return count;
+}
+
+bool Tcp::isActiveFastOpenDisabled() const
+{
+    return simTime() < fastOpenDisabledUntil;
+}
+
+void Tcp::recordFastOpenBlackhole()
+{
+    simtime_t timeout = par("fastopenBlackholeTimeout");
+    if (timeout == SIMTIME_ZERO)
+        return;
+    fastOpenBlackholeCount++;
+    fastOpenDisabledUntil = simTime() + timeout * (1 << std::min(fastOpenBlackholeCount - 1, 6));
+    EV_INFO << "Fast Open: suspected blackhole " << fastOpenBlackholeCount << ", no Fast Open until t=" << fastOpenDisabledUntil << "\n";
+}
+
+void Tcp::resetFastOpenBlackhole()
+{
+    fastOpenBlackholeCount = 0;
 }
 
 void Tcp::addSockPair(TcpConnection *conn, L3Address localAddr, L3Address remoteAddr, int localPort, int remotePort)
