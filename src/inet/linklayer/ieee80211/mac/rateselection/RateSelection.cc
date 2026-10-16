@@ -101,27 +101,27 @@ const IIeee80211Mode *RateSelection::getMode(Packet *packet, const Ptr<const Iee
 // frame in the frame exchange sequence (as defined in 9.7), if this rate belongs to the PHY mandatory rates, or
 // else at the highest possible rate belonging to the PHY rates in the BSSBasicRateSet.
 //
-const IIeee80211Mode *RateSelection::computeResponseAckFrameMode(Packet *packet, const Ptr<const Ieee80211DataOrMgmtHeader>& dataOrMgmtHeader)
+const IIeee80211Mode *RateSelection::computeResponseAckFrameMode(Packet *packet, const Ptr<const Ieee80211DataOrMgmtHeader>& dataOrMgmtHeader, ResponseQueryRole role)
 {
     if (responseAckFrameMode)
-        return getPeerCompatibleMode(dataOrMgmtHeader->getTransmitterAddress(), responseAckFrameMode);
+        return getPeerCompatibleResponseMode(dataOrMgmtHeader, responseAckFrameMode, role);
     else {
         auto mode = getMode(packet, dataOrMgmtHeader);
         ASSERT(modeSet->containsMode(mode));
         auto responseMode = modeSet->getIsMandatory(mode) ? mode : modeSet->getSlowerMandatoryMode(mode); // TODO BSSBasicRateSet
-        return getPeerCompatibleMode(dataOrMgmtHeader->getTransmitterAddress(), responseMode);
+        return getPeerCompatibleResponseMode(dataOrMgmtHeader, responseMode, role);
     }
 }
 
-const IIeee80211Mode *RateSelection::computeResponseCtsFrameMode(Packet *packet, const Ptr<const Ieee80211RtsFrame>& rtsFrame)
+const IIeee80211Mode *RateSelection::computeResponseCtsFrameMode(Packet *packet, const Ptr<const Ieee80211RtsFrame>& rtsFrame, ResponseQueryRole role)
 {
     if (responseCtsFrameMode)
-        return getPeerCompatibleMode(rtsFrame->getTransmitterAddress(), responseCtsFrameMode);
+        return getPeerCompatibleResponseMode(rtsFrame, responseCtsFrameMode, role);
     else {
         auto mode = getMode(packet, rtsFrame);
         ASSERT(modeSet->containsMode(mode));
         auto responseMode = modeSet->getIsMandatory(mode) ? mode : modeSet->getSlowerMandatoryMode(mode); // TODO BSSBasicRateSet
-        return getPeerCompatibleMode(rtsFrame->getTransmitterAddress(), responseMode);
+        return getPeerCompatibleResponseMode(rtsFrame, responseMode, role);
     }
 }
 
@@ -219,6 +219,15 @@ void RateSelection::emitDatarateSelected(cComponent *emitter, const Ptr<const Ie
         emitter->emit(IRateSelection::datarateSelectedSignal, rate);
 }
 
+const IIeee80211Mode *RateSelection::getPeerCompatibleResponseMode(const Ptr<const Ieee80211TwoAddressHeader>& header,
+        const IIeee80211Mode *mode, ResponseQueryRole role) const
+{
+    const auto& peerAddress = role == ResponseQueryRole::PREDICT ? header->getReceiverAddress() : header->getTransmitterAddress();
+    if (mode == nullptr || peerAddress.isMulticast() || mib == nullptr || mode->getHtMcsIndex() < 0)
+        return mode;
+    return selectPeerCompatibleResponseMode(modeSet, mib->findPeerHtState(peerAddress), mode, peerAddress, role);
+}
+
 const IIeee80211Mode *RateSelection::getPeerCompatibleMode(const MacAddress& peerAddress, const IIeee80211Mode *mode) const
 {
     if (mode == nullptr || peerAddress.isMulticast() || !mib || mode->getHtMcsIndex() < 0)
@@ -228,4 +237,3 @@ const IIeee80211Mode *RateSelection::getPeerCompatibleMode(const MacAddress& pee
 
 } // namespace ieee80211
 } // namespace inet
-

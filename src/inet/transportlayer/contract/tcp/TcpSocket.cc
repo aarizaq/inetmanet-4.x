@@ -109,6 +109,9 @@ void TcpSocket::listen(bool fork)
     openCmd->setFork(fork);
     openCmd->setAutoRead(autoRead);
     openCmd->setTcpAlgorithmClass(tcpAlgorithmClass.c_str());
+    openCmd->setAdvertisedWindow(advertisedWindow);
+    openCmd->setReceiveBufferSize(receiveBufferSize);
+    openCmd->setSynRetries(synRetries);
 
     request->setControlInfo(openCmd);
     sendToTcp(request);
@@ -124,6 +127,11 @@ void TcpSocket::accept(int socketId)
 }
 
 void TcpSocket::connect(L3Address remoteAddress, int remotePort)
+{
+    connect(remoteAddress, remotePort, false);
+}
+
+void TcpSocket::connect(L3Address remoteAddress, int remotePort, bool fastOpen)
 {
     if (sockstate != NOT_BOUND && sockstate != BOUND)
         throw cRuntimeError("TcpSocket::connect(): connect() or listen() already called (need renewSocket()?)");
@@ -143,6 +151,10 @@ void TcpSocket::connect(L3Address remoteAddress, int remotePort)
     openCmd->setRemotePort(remotePrt);
     openCmd->setAutoRead(autoRead);
     openCmd->setTcpAlgorithmClass(tcpAlgorithmClass.c_str());
+    openCmd->setFastOpen(fastOpen);
+    openCmd->setAdvertisedWindow(advertisedWindow);
+    openCmd->setReceiveBufferSize(receiveBufferSize);
+    openCmd->setSynRetries(synRetries);
 
     request->setControlInfo(openCmd);
     sendToTcp(request);
@@ -172,6 +184,20 @@ void TcpSocket::send(Packet *msg)
 
     msg->setKind(TCP_C_SEND);
     sendToTcp(msg);
+}
+
+void TcpSocket::send(Packet *msg, bool eor)
+{
+    if (eor)
+        msg->addTagIfAbsent<TcpSendEorReq>();
+
+    send(msg);
+}
+
+void TcpSocket::sendZerocopy(Packet *msg)
+{
+    msg->addTagIfAbsent<TcpSendZerocopyReq>();
+    send(msg);
 }
 
 void TcpSocket::sendCommand(Request *msg)
@@ -248,6 +274,111 @@ void TcpSocket::setTos(short dscp)
     auto request = new Request("setTOS", TCP_C_SETOPTION);
     auto *cmd = new TcpSetTosCommand();
     cmd->setTos(dscp);
+    request->setControlInfo(cmd);
+    sendToTcp(request);
+}
+
+void TcpSocket::setTimestamping(bool enabled)
+{
+    auto request = new Request("setTimestamping", TCP_C_SETOPTION);
+    auto *cmd = new TcpSetTimestampingCommand();
+    cmd->setEnabled(enabled);
+    request->setControlInfo(cmd);
+    sendToTcp(request);
+}
+
+void TcpSocket::setNotsentLowat(int value)
+{
+    auto request = new Request("setNotsentLowat", TCP_C_SETOPTION);
+    auto *cmd = new TcpSetNotsentLowatCommand();
+    cmd->setValue(value);
+    request->setControlInfo(cmd);
+    sendToTcp(request);
+}
+
+void TcpSocket::setMaxSeg(int value)
+{
+    auto request = new Request("setMaxSeg", TCP_C_SETOPTION);
+    auto *cmd = new TcpSetMaxSegCommand();
+    cmd->setValue(value);
+    request->setControlInfo(cmd);
+    sendToTcp(request);
+}
+
+void TcpSocket::setPathMtu(int value)
+{
+    auto request = new Request("setPathMtu", TCP_C_SETOPTION);
+    auto *cmd = new TcpSetPathMtuCommand();
+    cmd->setValue(value);
+    request->setControlInfo(cmd);
+    sendToTcp(request);
+}
+
+void TcpSocket::setNoDelay(bool nodelay)
+{
+    auto request = new Request("setNoDelay", TCP_C_SETOPTION);
+    auto *cmd = new TcpSetNoDelayCommand();
+    cmd->setNodelay(nodelay);
+    request->setControlInfo(cmd);
+    sendToTcp(request);
+}
+
+void TcpSocket::setKeepAlive(bool enabled)
+{
+    auto request = new Request("setKeepAlive", TCP_C_SETOPTION);
+    auto *cmd = new TcpSetKeepAliveCommand();
+    cmd->setEnabled(enabled);
+    request->setControlInfo(cmd);
+    sendToTcp(request);
+}
+
+void TcpSocket::setOwned(bool owned)
+{
+    auto request = new Request("setOwned", TCP_C_SETOPTION);
+    auto *cmd = new TcpSetOwnedCommand();
+    cmd->setOwned(owned);
+    request->setControlInfo(cmd);
+    sendToTcp(request);
+}
+
+void TcpSocket::setWriterBlocked(bool blocked)
+{
+    auto request = new Request("setWriterBlocked", TCP_C_SETOPTION);
+    auto *cmd = new TcpSetWriterBlockedCommand();
+    cmd->setBlocked(blocked);
+    request->setControlInfo(cmd);
+    sendToTcp(request);
+}
+
+void TcpSocket::setReceiveBufferSize(int receiveBufferSize)
+{
+    this->receiveBufferSize = receiveBufferSize;
+    if (receiveBufferSize >= 0 && (sockstate == LISTENING || sockstate == CONNECTING || sockstate == CONNECTED || sockstate == PEER_CLOSED)) {
+        auto request = new Request("setReceiveBufferSize", TCP_C_SETOPTION);
+        auto *cmd = new TcpSetRcvBufCommand();
+        cmd->setValue(receiveBufferSize);
+        request->setControlInfo(cmd);
+        sendToTcp(request);
+    }
+}
+
+void TcpSocket::setSynRetries(int synRetries)
+{
+    this->synRetries = synRetries;
+    if (sockstate == LISTENING || sockstate == CONNECTING || sockstate == CONNECTED || sockstate == PEER_CLOSED) {
+        auto request = new Request("setSynRetries", TCP_C_SETOPTION);
+        auto *cmd = new TcpSetSynRetriesCommand();
+        cmd->setValue(synRetries);
+        request->setControlInfo(cmd);
+        sendToTcp(request);
+    }
+}
+
+void TcpSocket::setCork(bool cork)
+{
+    auto request = new Request("setCork", TCP_C_SETOPTION);
+    auto *cmd = new TcpSetCorkCommand();
+    cmd->setCork(cork);
     request->setControlInfo(cmd);
     sendToTcp(request);
 }
@@ -394,6 +525,22 @@ void TcpSocket::processMessage(cMessage *msg)
                 cb->socketStatusArrived(this, status);
             delete msg;
             break;
+
+        case TCP_I_SEND_MSG: {
+            auto *tcpCommand = check_and_cast<TcpCommand *>(msg->getControlInfo());
+            if (cb)
+                cb->socketSendMsgArrived(this, tcpCommand);
+            delete msg;
+            break;
+        }
+
+        case TCP_I_ZEROCOPY_COMPLETION: {
+            auto *completionInfo = check_and_cast<TcpZerocopyCompletionInfo *>(msg->getControlInfo());
+            if (cb)
+                cb->socketZerocopyCompletion(this, completionInfo->getZerocopyId());
+            delete msg;
+            break;
+        }
 
         default:
             throw cRuntimeError("TcpSocket: invalid msg kind %d, one of the TCP_I_xxx constants expected", msg->getKind());

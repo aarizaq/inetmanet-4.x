@@ -81,7 +81,6 @@ void Dcf::channelGranted(IChannelAccess *channelAccess)
     ASSERT(this->channelAccess == channelAccess);
     if (!frameSequenceHandler->isSequenceRunning()) {
         frameSequenceHandler->startFrameSequence(new DcfFs(), buildContext(), this);
-        emit(IFrameSequenceHandler::frameSequenceStartedSignal, frameSequenceHandler->getContext());
     }
 }
 
@@ -104,15 +103,15 @@ void Dcf::transmitControlResponseFrame(Packet *responsePacket, const Ptr<const I
     responsePacket->insertAtBack(makeShared<Ieee80211MacTrailer>());
     const IIeee80211Mode *responseMode = nullptr;
     if (auto rtsFrame = dynamicPtrCast<const Ieee80211RtsFrame>(receivedHeader))
-        responseMode = rateSelection->computeResponseCtsFrameMode(receivedPacket, rtsFrame);
+        responseMode = rateSelection->computeResponseCtsFrameMode(receivedPacket, rtsFrame, ResponseQueryRole::RESPOND);
     else if (auto dataOrMgmtHeader = dynamicPtrCast<const Ieee80211DataOrMgmtHeader>(receivedHeader))
-        responseMode = rateSelection->computeResponseAckFrameMode(receivedPacket, dataOrMgmtHeader);
+        responseMode = rateSelection->computeResponseAckFrameMode(receivedPacket, dataOrMgmtHeader, ResponseQueryRole::RESPOND);
     else
         throw cRuntimeError("Unknown received frame type");
     RateSelection::setFrameMode(responsePacket, responseHeader, responseMode);
     RateSelection::emitDatarateSelected(this, responseHeader, responseMode);
     EV_DEBUG << "Datarate for " << responsePacket->getName() << " is set to " << responseMode->getDataMode()->getNetBitrate() << ".\n";
-    tx->transmitFrame(responsePacket, responseHeader, modeSet->getSifsTime(), this);
+    tx->transmitFrame(responsePacket, responseHeader, modeSet->getSifsTime(), false, this);
     delete responsePacket;
 }
 
@@ -183,7 +182,13 @@ void Dcf::processLowerFrame(Packet *packet, const Ptr<const Ieee80211MacHeader>&
     }
 }
 
-void Dcf::transmitFrame(Packet *packet, simtime_t ifs)
+void Dcf::frameSequenceStarted()
+{
+    Enter_Method("frameSequenceStarted");
+    emit(IFrameSequenceHandler::frameSequenceStartedSignal, frameSequenceHandler->getContext());
+}
+
+bool Dcf::transmitFrame(Packet *packet, simtime_t ifs)
 {
     Enter_Method("transmitFrame");
     const auto& header = packet->peekAtFront<Ieee80211MacHeader>();
@@ -197,7 +202,8 @@ void Dcf::transmitFrame(Packet *packet, simtime_t ifs)
     updatedHeader->setDurationField(duration);
     EV_DEBUG << "Duration for " << packet->getName() << " is set to " << duration << " s.\n";
     packet->insertAtFront(updatedHeader);
-    tx->transmitFrame(packet, packet->peekAtFront<Ieee80211MacHeader>(), ifs, this);
+    tx->transmitFrame(packet, packet->peekAtFront<Ieee80211MacHeader>(), ifs, true, this);
+    return true;
 }
 
 /*
@@ -264,8 +270,10 @@ void Dcf::transmissionComplete(Packet *packet, const Ptr<const Ieee80211MacHeade
     if (frameSequenceHandler->isSequenceRunning()) {
         frameSequenceHandler->transmissionComplete();
     }
-    else
+    else {
         recipientProcessTransmittedControlResponseFrame(packet, header);
+        mac->sendDownPendingRadioConfigMsg();
+    }
 }
 
 bool Dcf::hasFrameToTransmit()
@@ -429,4 +437,3 @@ Dcf::~Dcf()
 
 } // namespace ieee80211
 } // namespace inet
-

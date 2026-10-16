@@ -73,9 +73,9 @@ protected:
 
 
   virtual void startTransmission(Packet *macFrame, IRadioSignal::SignalPart part) override;
-  virtual void continueTransmission() override;
-  virtual void endTransmission() override;
-  virtual void abortTransmission() override;
+  virtual void continueTransmission(cMessage *timer) override;
+  virtual void endTransmission(cMessage *timer) override;
+  virtual void abortTransmission(cMessage *timer) override;
 
   virtual WirelessSignal *createSignal(Packet *packet) const override;
 
@@ -112,12 +112,6 @@ public:
 
   virtual ReceptionState getReceptionState() const override { return receptionState; }
   virtual TransmissionState getTransmissionState() const override { return transmissionState; }
-
-  virtual const ITransmission *getTransmissionInProgress() const override;
-  virtual const ITransmission *getReceptionInProgress() const override;
-
-  virtual IRadioSignal::SignalPart getTransmittedSignalPart() const override;
-  virtual IRadioSignal::SignalPart getReceivedSignalPart() const override;
 
   virtual void decapsulate(Packet *packet) const override;
 

@@ -20,6 +20,7 @@
 
 #include "inet/common/INETDefs.h"
 #include "inet/networklayer/ipsec/IPsecRule.h"
+#include "inet/networklayer/ipsec/rangelist.h"
 
 namespace inet {
 namespace ipsec {
@@ -31,8 +32,10 @@ namespace ipsec {
  * do not occur here due to simplifications in the model.
  * For example, the choice of AH/ESP cryptographic algorithm,
  * their parameters, keys, etc. are omitted because the model
- * does not perform actual cryptography. SA lifetime is omitted
- * because all SAs are statically configured, etc.
+ * does not perform actual cryptography. Of the lifetime, only the
+ * hard lifetime is kept, in time and in bytes: with no key
+ * management, no soft lifetime can start a replacement, and an SA
+ * whose hard lifetime has ended is not used any more.
  */
 class INET_API SecurityAssociation
 {
@@ -40,6 +43,13 @@ class INET_API SecurityAssociation
     IPsecRule rule;
     unsigned int spi = 0;
     unsigned int seqNum = 0;
+    simtime_t hardLifetimeEnd = SIMTIME_MAX; // the time when the hard lifetime ends
+    int64_t hardLifetimeBytes = -1; // -1: no byte lifetime
+    int64_t bytesProcessed = 0; // the bytes that AH or ESP processing has protected with this SA
+    rangelist<unsigned int> dscps; // the DSCP values of the SA; empty: any value (RFC 4301 section 4.4.2.1)
+    simtime_t dummyPacketInterval = SIMTIME_ZERO; // 0: no dummy packets (RFC 4303 section 2.6)
+    L3Address lastLocalAddress; // the addresses of the last packet that the SA protected,
+    L3Address lastRemoteAddress; // which a dummy packet of the SA uses
 
   public:
     typedef IPsecRule::Action Action;
@@ -69,8 +79,33 @@ class INET_API SecurityAssociation
     unsigned int getMaxTfcPadLength() const { return rule.getMaxTfcPadLength(); }
     void setMaxTfcPadLength(unsigned int maxTfcPadLength) { rule.setMaxTfcPadLength(maxTfcPadLength); }
     unsigned int getSeqNum() const { return seqNum; }
-    unsigned int getAndIncSeqNum() { return seqNum++; }
+    /**
+     * Increments the sequence counter and returns the new value, for the next packet. The
+     * counter starts at 0, so the first packet of an SA carries 1 (RFC 4302 section 3.3.2,
+     * RFC 4303 section 3.3.3).
+     */
+    unsigned int incrementAndGetSeqNum() { return ++seqNum; }
     void setSeqNum(unsigned int seqNum = 0) { this->seqNum = seqNum; }
+    simtime_t getHardLifetimeEnd() const { return hardLifetimeEnd; }
+    void setHardLifetimeEnd(simtime_t hardLifetimeEnd) { this->hardLifetimeEnd = hardLifetimeEnd; }
+    int64_t getHardLifetimeBytes() const { return hardLifetimeBytes; }
+    void setHardLifetimeBytes(int64_t hardLifetimeBytes) { this->hardLifetimeBytes = hardLifetimeBytes; }
+    int64_t getBytesProcessed() const { return bytesProcessed; }
+    void addBytesProcessed(int64_t bytes) { bytesProcessed += bytes; }
+    /**
+     * True when the SA may protect a packet of the given length: its hard lifetime has not ended,
+     * in time, or in bytes with this packet (RFC 4301 section 4.4.2.1).
+     */
+    bool isUsable(simtime_t now, int64_t bytes) const { return now < hardLifetimeEnd && (hardLifetimeBytes < 0 || bytesProcessed + bytes <= hardLifetimeBytes); }
+    const rangelist<unsigned int>& getDscps() const { return dscps; }
+    void setDscps(const rangelist<unsigned int>& dscps) { this->dscps = dscps; }
+    /** True when the SA may carry a packet with this DSCP (RFC 4301 section 4.1). */
+    bool matchesDscp(unsigned int dscp) const { return dscps.empty() || dscps.contains(dscp); }
+    simtime_t getDummyPacketInterval() const { return dummyPacketInterval; }
+    void setDummyPacketInterval(simtime_t dummyPacketInterval) { this->dummyPacketInterval = dummyPacketInterval; }
+    const L3Address& getLastLocalAddress() const { return lastLocalAddress; }
+    const L3Address& getLastRemoteAddress() const { return lastRemoteAddress; }
+    void setLastAddresses(const L3Address& localAddress, const L3Address& remoteAddress) { lastLocalAddress = localAddress; lastRemoteAddress = remoteAddress; }
     std::string str() const;
 };
 

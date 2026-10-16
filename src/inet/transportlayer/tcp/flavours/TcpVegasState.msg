@@ -6,15 +6,14 @@
 //
 
 import inet.common.INETDefs;
-import inet.transportlayer.tcp.flavours.TcpBaseAlgState;
-import inet.transportlayer.tcp.flavours.TcpSegmentTransmitInfoList;
+import inet.transportlayer.tcp.flavours.TcpAlgorithmBaseState;
 
 namespace inet::tcp;
 
 ///
 /// State variables for TcpVegas.
 ///
-struct TcpVegasStateVariables extends TcpBaseAlgStateVariables
+struct TcpVegasStateVariables extends TcpAlgorithmBaseStateVariables
 {
     @descriptor(readonly);
 
@@ -24,14 +23,12 @@ struct TcpVegasStateVariables extends TcpBaseAlgStateVariables
     simtime_t v_baseRTT = SIMTIME_MAX;
     simtime_t v_sumRTT = SIMTIME_ZERO; // sum of rtt's measured within one RTT
     int v_cntRTT = 0; // # of rtt's measured within one RTT
-    uint32_t v_begseq = 0; // register next pkt to be sent,for rtt calculation in receivedDataAck
+    uint32_t v_begseq = 0; // register next pkt to be sent,for rtt calculation in receivedAckForUnackedData
     simtime_t v_begtime = 0; // register time for rtt calculation
 
     simtime_t v_rtt_timeout = 1000.0; // vegas fine-grained timeout
     simtime_t v_sa; // average for vegas fine-grained timeout
     simtime_t v_sd; // deviation for vegas fine-grained timeout
-
-    TcpSegmentTransmitInfoList regions;
 
     uint32_t ssthresh = 65536; ///< slow start threshold
 
@@ -39,6 +36,10 @@ struct TcpVegasStateVariables extends TcpBaseAlgStateVariables
     bool v_incr_ss = false; // to control no incr. cwnd if during slowstart ssthresh has been exceeded before the rtt is over
     int32_t v_incr = 0; // incr/decr
     uint32_t v_worried = 0; // pkts a to retransmit due to vegas fine-grained timeout
+
+    uint32_t v_alpha = 2; // the lower threshold of the extra segments in congestion avoidance (the alpha parameter)
+    uint32_t v_beta = 4; // the upper threshold of the extra segments in congestion avoidance (the beta parameter)
+    uint32_t v_gamma = 1; // the threshold of the extra segments that ends slow start (the gamma parameter)
 };
 
 cplusplus(TcpVegasStateVariables) {{

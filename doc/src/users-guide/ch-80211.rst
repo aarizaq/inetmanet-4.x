@@ -455,6 +455,14 @@ own, with its own queue, inter-frame space and contention window:
      - ``edcaf[3]``
      - 2, (aCWmin+1)/4-1, (aCWmin+1)/2-1
 
+Each access category has a positive, finite QoS DATA lifetime. The parameter ``mac.hcf.edca.edcaf[*].msduLifetime`` defaults to 0.512 seconds for AP and non-AP stations. HCF starts the timer at MAC acceptance, so queue residence counts toward the lifetime. This rule applies with Block Ack support enabled or disabled. For example, DATA that waits for channel access beyond 0.512 seconds expires under the default.
+
+HCF records lifetime disposal in ``packetDropLifetimeExpired``. These results separate lifetime disposal from queue overflow and retry-limit disposal. Each discarded MAC frame contributes to the results, including individual fragments and aggregate MPDUs. The results do not count the original source MSDUs separately. The :ned:`inet.linklayer.ieee80211.mac.coordinationfunction.Hcf` reference supplies the recorder declaration.
+
+Set ``**.mac.hcf.edca.edcaf[*].msduLifetime = 1s`` to permit a one-second lifetime. A long finite value, such as 100 seconds for a ten-second run, prevents lifetime expiration during that run. Queue loss, acknowledgment, and retry limits can still resolve DATA earlier. A large lifetime also postpones recovery paths that depend on expiration. HCF rejects zero, negative, and nonfinite values. HCF also rejects a value that rounds to zero at the simulation time resolution.
+
+A-MSDU construction restarts the aggregate timer at each MSDU addition. Fragments retain the source MSDU deadline. Retransmission and ACK-policy changes do not restart the timer. HCF checks the proposed transmission start, including its interframe space, before Tx submission. An accepted exchange can complete after expiration, but expired DATA cannot cause another attempt.
+
 The classifier submodule assigns the user priority. The default classifier
 is omitted, so every packet has priority 0 and goes to ``AC_BE``. Replace it
 to get differentiated traffic:
@@ -503,6 +511,109 @@ helps against hidden nodes at the cost of overhead. The CTS timeout,
 .. code-block:: ini
 
    **.wlan[*].mac.dcf.rtsPolicy.rtsThreshold = 500B
+
+Single protection and continuation admission
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Single protection estimates the next reservation without a commitment to that future selection. With Block Ack support disabled, HCF selects the current exchange after feedback from the previous exchange. It retains the selected DATA mode through RTS/CTS. A later exchange selects its mode again.
+
+With Block Ack support disabled, HCF checks the complete expected exchange cost before each additional exchange. This cost includes holder PPDUs, expected responses, and internal SIFS intervals. It excludes the SIFS before the first transmission. The exchange cost must be strictly less than remaining TXNAV. The initial SIFS plus exchange cost must fit the remaining positive TXOP limit. TXNAV is the holder's transmitted reservation timer, which Rx shares among access categories.
+
+HCF checks both budgets after the previous exchange completes, before the next SIFS. Equality refuses the TXNAV check but passes the positive TXOP check. This decision time is INET's interpretation of IEEE Std 802.11-2024, Clause 10.23.2.8. The clause does not explicitly name the timer sample instant. HCF retains its contention block through the active sequence, even if TXNAV expires before ACK reception.
+
+For example, a hypothetical next DATA/ACK exchange needs 180 us, plus 16 us SIFS. The preceding ACK's round-trip propagation consumes 0.4 us, which leaves 195.6 us of TXNAV from the nominal estimate. The exchange proceeds because 180 us is less than 195.6 us, with at least 196 us of positive TXOP time. If a new mode increases the exchange cost to 200 us, HCF ends the TXOP before DATA. The unsent frame remains available for a fresh grant. Refusal does not cause a retry increment, failed-rate feedback, or response timeout.
+
+When the next exchange needs RTS/CTS, the preceding frame's successor term contains RTS airtime, one SIFS, and CTS airtime. It does not contain the protected DATA or its response. HCF checks the complete RTS/CTS/DATA/response cost before it sends the RTS. With unchanged estimates, that cost exceeds the remaining TXNAV, so single protection does not burst into the RTS/CTS exchange.
+
+For example, after DATA A and its ACK, queued DATA B needs RTS/CTS. HCF refuses B before RTS and retains B for a fresh grant after TXNAV expires. An initial exchange can still use RTS/CTS.
+
+The TXNAV check does not require the initial SIFS plus exchange cost to fit the previous reservation. This permits continuation with positive propagation when the selected exchange retains its forecast cost. If airtime estimates are exact and field conversion adds no margin, unchanged DATA/ACK forecasts require round-trip propagation shorter than SIFS. The positive TXOP limit remains a separate constraint. Response airtime remains estimated; admission does not guarantee the peer's exact completion time.
+
+The first exchange proceeds even when its cost exceeds a positive TXOP limit. This compatibility fallback preserves queue progress. It does not implement the standard's required fragmentation from the TXOP budget. For example, a hypothetical 1500-byte frame at 6 Mbit/s needs 2084 us with ACK. The initial exchange proceeds under the default 1504 us voice limit. An additional exchange with that cost must pass the separate budgets.
+
+A zero limit permits the initial exchange and its existing RTS/CTS and immediate response. Each later fragment or unrelated unit needs a fresh TXOP. Prepared fragments and A-MSDUs use the same complete-cost check under positive limits.
+
+``isBlockAckSupported = true`` disables complete-cost continuation admission, even without a Block Ack agreement. Multiple protection also retains its separate admission policy. Both paths use shared TXNAV. Basic Block Ack admission, BAR forecasts, zero-limit companion rules, and optional overrun exceptions remain outside this repair.
+
+All single protection paths classify group frames before the current-frame ACK equation. With Block Ack support disabled, the current one-frame group sequence advertises zero. With support enabled, its legacy forecast can reserve a queued successor that the sequence cannot transmit. This limit applies to group management and non-QoS DATA too.
+
+Multiple protection in an EDCA TXOP
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A transmission opportunity (TXOP) lets one access category send frame exchanges after one channel
+access. To reserve time for several frames, select multiple
+protection on that category's ``txopProcedure``. The holder retains the selection until the TXOP
+ends. Other stations use each transmitted Duration/ID field to set their network allocation vector
+(NAV). The NAV records a reservation of the medium.
+
+.. code-block:: ini
+
+   *.host.wlan[0].mac.qosStation = true
+   *.host.wlan[0].mac.hcf.edca.edcaf[2].txopProcedure.txopLimit = 1024us
+   *.host.wlan[0].mac.hcf.edca.edcaf[2].txopProcedure.protectionMechanism = "multiple"
+
+Index 2 selects video traffic by default. Use your network's host and interface paths. See
+:ned:`TxopProcedure` for the protection selector contract. An invalid value causes an initialization
+error. Nominal timing uses the mode set's short interframe space (SIFS) unchanged after the first
+transmission step. The first step adds no interframe space.
+
+For a positive limit, the holder reserves the upper bound from IEEE Std 802.11-2024, 9.2.5.2. For
+example, a hypothetical 200 us PPDU within a 1024 us TXOP advertises 824 us. A PPDU is one PHY
+transmission, with its PHY overhead. Later fields subtract the actual holder gap and the current
+PPDU airtime from the time left. HCF applies ceiling to whole microseconds and rejects a holder
+field above 32767 us. Recipient CTS, ACK, and immediate Basic Block Ack fields use response
+subtraction, zero clamp, and ceiling.
+
+Fractional elapsed time can make ceiling extend the advertised endpoint beyond the TXOP deadline. The
+holder then ends the sequence normally before another exchange starts. Pending DATA remains available for
+another grant; retry counters do not change. A later RTS also needs a start on the deadline's
+microsecond grid, because its legacy airtime is integral. The holder declines that whole exchange
+before RTS when the start fails this check.
+
+For example, a hypothetical burst uses a 1024 us limit, 100 us DATA, 44 us ACK, and 0.2 us propagation
+each way. The first DATA starts at zero and advertises 924 us. After ACK, the next nominal 16 us SIFS
+places DATA at 176.4 us. Its raw field is 747.6 us, which HCF converts to 748 us. The reservation now
+ends at 1024.4 us. HCF stops before the third exchange without a transmission failure or retry increment.
+
+For a zero limit, the initial field estimates the selected exchange, with its required response and
+optional RTS/CTS. For example, a hypothetical 96-byte MPDU uses 9 Mbps during the RTS estimate but 6
+Mbps when DATA transmits. With 6 Mbps control responses, the reservation ends at 296 us, while the
+actual ACK ends at 340 us. Later mode queries can change the airtime, so the estimate does not
+guarantee protection through the actual response.
+
+Rate queries retain the adaptive rate controller's existing effects. A failed CTS does not undo a
+rate increase from the estimate. One conventional fragment under a zero limit reserves only its
+selected exchange.
+
+Unused reservation time remains busy because this implementation sends no CF-End to release it. The
+current group sequence sends one group frame per grant, even with a positive limit. For the 200 us
+group example above, all 824 us of advertised reservation remains unused. The holder's other access
+categories and other stations remain blocked until reservation expiry. An early end clears the
+category's maximum advertised endpoint but retains Rx's shared TXNAV. Each successful holder frame
+replaces TXNAV with its PPDU end plus its encoded Duration/ID. A shorter successful field can reduce
+TXNAV below the maximum advertised endpoint. A failed holder frame does not update TXNAV.
+
+Received NAV remains separate. Active TXNAV blocks contention but does not itself prevent CTS to an
+addressed RTS when no access category owns the channel. Recipient responses do not update TXNAV or
+extend local NAV. An unrelated received reservation still suppresses CTS. For example, a hypothetical
+TXOP ends at 300 us with TXNAV due at 500 us. Local contention waits for expiry and normal AIFS and
+backoff, but an eligible addressed RTS at 350 us can receive CTS.
+
+HCF also blocks local contention through its active sequence. For example, an initial DATA transmission receives no ACK and creates no successful TXNAV. Other access categories still wait for HCF to release the channel after failure. Normal AIFS and backoff follow that release. This exclusion does not create a transmitted reservation or change the CTS medium query.
+
+The supported EDCA path requires an effective AIFSN of at least 1 for the response ownership rule.
+AIFSN specifies the slot count that supplements SIFS to determine the arbitration interframe space.
+The standard separately requires AIFSN of at least 1 for APs and at least 2 for non-AP stations. For
+example, a non-AP station with AIFSN 1 meets the ownership condition but violates the standard's
+minimum.
+
+Multiple protection does not check a complete exchange against the remaining budget.
+For example, its admission policy can start a 120 us exchange with only
+100 us left. The reference scope assumes whole-microsecond positive limits, integral initial PPDU
+airtime, and integral legacy RTS airtime. It adds no A-MPDU, Compressed Block Ack, new
+fragmentation, CTS-to-self, dual CTS, PIFS recovery, or TXOP sharing. It also adds no reverse
+direction, beamforming, S1G, multi-user, or general MAC lifecycle support. It does not repair
+general rate selection, recipient response timing, or TXOP overruns.
 
 .. _ug:sec:80211:fragmentation:
 
@@ -774,9 +885,9 @@ mode; the interface does not set it. Set :par:`bandName` on the radio for
      - ``"2.4 GHz"``
      - MCS 0 to 31 at 20 MHz, with long and short guard interval
    * - ``"ac"``
-     - VHT
-     - ``"5 GHz (20 MHz)"``
-     - VHT MCS at 20 MHz
+     - VHT, HT, and legacy OFDM
+     - ``"5 GHz (mapped 20 MHz)"``
+     - Existing VHT modes plus HT MCS 0 through 31; advertised HT operation remains 20 MHz
    * - ``"p"``
      - OFDM with 10 MHz channels
      - ``"5.9 GHz"``
@@ -790,9 +901,7 @@ channel spacing. Radios on different channels do not hear each other in the
 scalar model. Only the dimensional model computes the partial overlap of
 adjacent channels.
 
-Channel widths above 20 MHz are not modeled at packet level: 802.11n and
-802.11ac stations always use 20 MHz channels, and the number of spatial
-streams is bounded by the antenna count of the radio.
+The radio advertises and negotiates only 20 MHz HT operation, despite the 40 MHz catalog entries. Wider VHT mode requests use one channel center; MAC mode requests do not prove wider PHY reception. See :ref:`ug:sec:80211:limitations` for the model limits.
 
 .. code-block:: ini
 
@@ -800,6 +909,45 @@ streams is bounded by the antenna count of the radio.
    **.wlan[*].radio.bandName = "5 GHz"
    **.wlan[*].radio.channelNumber = 8
    **.wlan[*].bitrate = 24Mbps
+
+.. _ug:sec:80211:ac-ht:
+
+HT operation with ac interfaces
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``opMode = "ac"`` exposes existing HT behavior alongside VHT and legacy OFDM. The MIB derives HT capability from the mode catalog, antenna count, and PHY limits, with at most four spatial streams. One antenna permits MCS 0 through 7.
+
+Full management installs negotiated peer HT state after successful association; simplified management installs that state without an on-air exchange. Teardown removes peer HT state. VHT candidates bypass HT negotiation.
+
+Use :ned:`Ieee80211Radio` with a compatible scalar, dimensional, or unit-disk radio medium. The bit-level :ned:`Ieee80211OfdmRadio` lacks the required HT capability queries.
+
+For example, this configuration selects mapped index 0, standard channel 36, at 5180 MHz:
+
+.. code-block:: ini
+
+   **.wlan[*].opMode = "ac"
+   **.wlan[*].radio.bandName = "5 GHz (mapped 20 MHz)"
+   **.wlan[*].radio.channelNumber = 0
+   **.wlan[*].radio.centerFrequency = 5.18GHz
+
+Indices 1, 2, and 3 select standard channels 40, 44, and 48 at 5200, 5220, and 5240 MHz. HT40 pair validation permits 36/40 and 44/48 in either direction; it rejects 40/44. The subset follows IEEE Std 802.11-2024, Table E-4 and Equation (17-27); it supplies no complete regulatory-domain model. HT management requires explicit standard channel conversion, including simplified AP management; arithmetic 5 GHz bands lack this conversion.
+
+Normal HT unicast selection checks negotiated MCS, 20 MHz width, and receiver guard interval capabilities. Absent or invalid peer HT state selects a legacy fallback. Direct PHY requests bypass this check. The radio advertises short guard interval support only at 20 MHz.
+
+Fixed-rate selection prefers VHT when equivalent entries satisfy the same constraints; a unique supported HT rate can select HT. AARF and Onoe can take steps between equal-rate formats. For one stream at 20 MHz with a long guard interval, VHT MCS 0 and HT MCS 0 both supply 6.5 Mbps. The effect on throughput and convergence remains unmeasured. Rate-control notifications report candidates before the peer check; use actual transmitted modes for performance comparisons.
+
+.. _ug:sec:80211:response-prediction:
+
+Response prediction
+^^^^^^^^^^^^^^^^^^^
+
+For approximately 14.444 Mbps VHT input, compatible peers retain a 13 Mbps HT ACK/CTS candidate; absent HT state selects 12 Mbps legacy OFDM. Prediction checks peer transmission against local reception; actual response selection checks local transmission against peer reception. Exact agreement requires:
+
+- Both stations use identical mode catalogs and response configuration.
+- Peer advertisements, HT Operation state, and selected capabilities are consistent and stable across the exchange.
+- The responder advertises a defined transmit MCS set equal to its receive MCS set.
+
+Unknown responder transmission support can produce a legacy prediction while the actual response uses HT. That prediction is not a proven upper bound on response duration. Unknown support alone does not invalidate association or force a legacy response. See :doc:`../migration-guide/index` for external response signatures and channel migration.
 
 Radio parameters
 ~~~~~~~~~~~~~~~~
@@ -882,7 +1030,9 @@ The model does not contain:
 
 -  Compressed and multi-TID block acknowledgement.
 
--  Channel widths above 20 MHz for 802.11n and 802.11ac.
+-  Operational HT widths above 20 MHz, and a primary/secondary channel relationship for wider VHT modes.
+
+-  VHT capability negotiation, VHT management elements, and automatic VHT-to-HT fallback.
 
 -  Security: authentication frames are exchanged, but no keys or
    encryption are modeled.
@@ -890,6 +1040,10 @@ The model does not contain:
 -  Power save mode, mesh networks, and 802.11ax and later amendments.
 
 -  Beacons in ad hoc mode.
+
+Control responses retain format violations under IEEE Std 802.11-2024, Clause 10.6.6.1. Ordinary HT ACK and HT Basic Block Ack responses lack the required exceptions. HT RTS requires HT CTS; VHT RTS without an HT Control field does not require a VHT response. An HT BAR alone does not permit HT Block Ack.
+
+HT short guard interval modes use the correct bitrate but retain the long symbol interval for duration. These limits prevent full VHT conformance under IEEE Std 802.11-2024, Clauses 11.38.1 and 21.1.1.
 
 Two behaviours differ from a real device. Management frames of a QoS
 station always use the voice access category. And when a node is shut down

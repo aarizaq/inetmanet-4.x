@@ -2,34 +2,24 @@
 
 > **Kind:** what · **Status:** current · **Seal:** none · **Owns:** — · **Stands on:** [derive-tests-from-a-standard.md](../../../guide/derive-tests-from-a-standard.md)
 
-Step 2 artifact of the standards test workflow. This document maps the family of standards
-around IP security, records which document governs each contested clause, and pins the set
-that the next pass tests against. IPsec has one architecture document and two traffic
-security protocols that the architecture document governs: the Authentication Header (AH)
-and the Encapsulating Security Payload (ESP). A third area, cryptographic algorithms and key
-management, is a family of its own that the architecture document deliberately keeps
-separate (`rfc4301.txt:293-296`: "the use of cryptographic key management procedures and
-protocols"; `rfc4301.txt:305-308`: "IPsec security protocols (AH and ESP, and to a lesser
-extent, IKE) are designed to be cryptographic algorithm independent").
+Step 2 artifact of the standards test workflow. This document maps the family of standards around IP security, records which document governs each contested clause, and pins the set that the next pass tests against. IPsec has one architecture document and two traffic security protocols that the architecture document governs: the Authentication Header (AH) and the Encapsulating Security Payload (ESP). A third area, cryptographic algorithms and key management, is a family of its own that the architecture document deliberately keeps separate (`rfc4301.txt:293-296`: "the use of cryptographic key management procedures and protocols"; `rfc4301.txt:305-308`: "IPsec security protocols (AH and ESP, and to a lesser extent, IKE) are designed to be cryptographic algorithm independent").
 
-The relationships come from the RFC-editor metadata
-(`https://www.rfc-editor.org/rfc/rfcNNNN.json`), retrieved 2026-09-23.
+The relationships come from the RFC-editor metadata (`https://www.rfc-editor.org/rfc/rfcNNNN.json`), retrieved 2026-09-23.
 
 ## Target level
 
-**Level 1 — Survey** (see [the levels of the guide](../../../guide/derive-tests-from-a-standard.md#levels-of-depth)).
-This pass maps the family, pins the in-scope set that a level 2 pass needs, and records the
-claims of the model. It writes no catalog, no feature map and no test.
+**Level 2 — Core** (see [the levels of the guide](../../../guide/derive-tests-from-a-standard.md#levels-of-depth)). The level 1 pass of 2026-09-23 mapped the family, pinned the in-scope set and recorded the claims of the model. The level 2 pass of 2026-09-24 writes the catalogs of the three documents, the feature map, the checks and the tests of the normal path.
+
+The level 2 pass added four parts to the sections that the level 1 pass listed, because the normal path needs them: the Security Association and its two modes (RFC 4301 §4 to §4.3, with the rule that a host supports both modes, `rfc4301.txt:873-875`), the introduction to the databases (§4.4), the location of each header in a packet (§3.1 of RFC 4302 and RFC 4303, with the algorithms of §3.2), and the conformance sections (RFC 4301 §10, RFC 4302 §5, RFC 4303 §5), which say what an implementation must support.
 
 | To reach | Add to the in-scope set | Why |
 | --- | --- | --- |
-| level 2, Core | RFC 4301 §3.1 to §3.2, §4.4.1, §4.4.2, §5.1, §5.2; RFC 4302 §2, §3.3, §3.4; RFC 4303 §2, §3.3, §3.4 | the normal path: what a Security Policy and a Security Association are, how the SPD and the SAD select one, how AH and ESP each build their header and trailer on egress, and how each is verified and removed on ingress |
+| level 2, Core | RFC 4301 §3.1 to §3.2, §4 to §4.4.2, §5.1, §5.2, §10; RFC 4302 §2 to §3.4, §5; RFC 4303 §2 to §3.4, §5 | the normal path: what an SA is and its two modes, what a Security Policy and a Security Association are, how the SPD and the SAD select one, how AH and ESP each build their header and trailer on egress, and how each is verified and removed on ingress |
 | level 3, Edge | nothing new | RFC 4301 §5.1.1 (a packet that must be discarded), RFC 4302 §3.4.3 to §3.4.4 and RFC 4303 §3.4.3 to §3.4.4 (a sequence number or an Integrity Check Value that fails verification) are already inside the base documents above |
 | level 4, Dynamics | nothing new | RFC 4302 §3.4.3 and Appendix B, and RFC 4303 §3.4.3, hold the anti-replay window, the one control loop of the family |
 | level 5, Complete | RFC 8221, RFC 2405, RFC 2451, RFC 3602, RFC 4106, RFC 4309, RFC 7634, RFC 4543, RFC 6040, RFC 7619 | the cryptographic algorithms themselves, tunnel-mode ECN-field construction (a single field of RFC 4301 §5.1.2), and the IKEv2 authentication method that establishes a Security Association |
 
-What a pass actually reached is not recorded here. It is in
-[`model/ipsec/coverage.md`](../../model/ipsec/coverage.md#achieved-level).
+What a pass actually reached is not recorded here. It is in [`model/ipsec/coverage.md`](../../model/ipsec/coverage.md#achieved-level).
 
 ## Document list
 
@@ -52,21 +42,13 @@ What a pass actually reached is not recorded here. It is in
 
 Source of the texts:
 
-- `rfc4301.txt` in [`standards/RFC/`](../../../../../../standards/RFC/rfc4301.txt) —
-  <https://www.rfc-editor.org/rfc/rfc4301.txt>, downloaded 2026-09-23.
-- `rfc4302.txt` in [`standards/RFC/`](../../../../../../standards/RFC/rfc4302.txt) —
-  <https://www.rfc-editor.org/rfc/rfc4302.txt>, downloaded 2026-09-23.
-- `rfc4303.txt` in [`standards/RFC/`](../../../../../../standards/RFC/rfc4303.txt) —
-  <https://www.rfc-editor.org/rfc/rfc4303.txt>, downloaded 2026-09-23.
+- `rfc4301.txt` in [`standards/RFC/`](../../../../../../standards/RFC/rfc4301.txt) — <https://www.rfc-editor.org/rfc/rfc4301.txt>, downloaded 2026-09-23.
+- `rfc4302.txt` in [`standards/RFC/`](../../../../../../standards/RFC/rfc4302.txt) — <https://www.rfc-editor.org/rfc/rfc4302.txt>, downloaded 2026-09-23.
+- `rfc4303.txt` in [`standards/RFC/`](../../../../../../standards/RFC/rfc4303.txt) — <https://www.rfc-editor.org/rfc/rfc4303.txt>, downloaded 2026-09-23.
 
-RFC 4301 obsoletes RFC 2401 as a whole (`December 2005`, superseding the `November 1998`
-edition); RFC 4302 obsoletes RFC 2402, and RFC 4303 obsoletes RFC 2406, in the same
-December 2005 round. No predecessor of the three current documents is downloaded.
+RFC 4301 obsoletes RFC 2401 as a whole (`December 2005`, superseding the `November 1998` edition); RFC 4302 obsoletes RFC 2402, and RFC 4303 obsoletes RFC 2406, in the same December 2005 round. No predecessor of the three current documents is downloaded.
 
-The three documents use the keywords of RFC 2119 throughout: RFC 4301 has "MUST" on 93
-lines, "SHOULD" on 42 and "MAY" on 36; RFC 4302 has 37, 18 and 8; RFC 4303 has 59, 29 and
-16 (`grep -c '\bMUST\b'` and so on). Unlike RIP or ARP, this family is recent and keyword-
-dense; few statements are expected to carry the `description` strength.
+The three documents use the keywords of RFC 2119 throughout: RFC 4301 has "MUST" on 93 lines, "SHOULD" on 42 and "MAY" on 36; RFC 4302 has 37, 18 and 8; RFC 4303 has 59, 29 and 16 (`grep -c '\bMUST\b'` and so on). Unlike RIP or ARP, this family is recent and keyword- dense; few statements are expected to carry the `description` strength.
 
 ## Override table
 
@@ -81,9 +63,9 @@ The set that a level 2 pass tests against:
 
 | Document | Version | Catalog file |
 | --- | --- | --- |
-| RFC 4301 | December 2005, Proposed Standard; §3.1 to §3.2, §4.4.1, §4.4.2, §5.1, §5.2 | none yet; level 2 writes `standard/rfc4301/catalog.md` |
-| RFC 4302 | December 2005, Proposed Standard; §2, §3.3, §3.4 | none yet; level 2 writes `standard/rfc4302/catalog.md` |
-| RFC 4303 | December 2005, Proposed Standard; §2, §3.3, §3.4 | none yet; level 2 writes `standard/rfc4303/catalog.md` |
+| RFC 4301 | December 2005, Proposed Standard; §3.1 to §3.2, §4 to §4.4.2, §5.1, §5.2, §10 | [`standard/rfc4301/catalog.md`](../../standard/rfc4301/catalog.md) |
+| RFC 4302 | December 2005, Proposed Standard; §2 to §3.4, §5 | [`standard/rfc4302/catalog.md`](../../standard/rfc4302/catalog.md) |
+| RFC 4303 | December 2005, Proposed Standard; §2 to §3.4, §5 | [`standard/rfc4303/catalog.md`](../../standard/rfc4303/catalog.md) |
 
 Out of scope, with the reason:
 

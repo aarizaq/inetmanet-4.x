@@ -14,7 +14,7 @@
 // 
 
 #include "inet/flora/lorabase/LoRaGWRadio.h"
-
+#include "inet/common/stlutils.h"
 #include "inet/flora/lorabase/LoRaTagInfo_m.h"
 #include "inet/flora/loraphy/LoRaMedium.h"
 #include "inet/flora/loraphy/LoRaPhyPreamble_m.h"
@@ -186,7 +186,7 @@ void LoRaGWRadio::startReception(cMessage *timer, IRadioSignal::SignalPart part)
             if(iAmGateway) {
                 concurrentReceptions.push_back(timer);
             }
-            receptionTimer = timer;
+            attemptedReceptionTimers.push_back(timer);
         }
     }
     else
@@ -208,25 +208,22 @@ void LoRaGWRadio::continueReception(cMessage *timer)
     auto radioFrame = static_cast<WirelessSignal *>(timer->getControlInfo());
     auto arrival = radioFrame->getArrival();
     auto reception = radioFrame->getReception();
-    if(iAmGateway) {
-        std::list<cMessage *>::iterator it;
-        for (it=concurrentReceptions.begin(); it!=concurrentReceptions.end(); it++) {
-            if(*it == timer) receptionTimer = timer;
-        }
-    }
-    if (timer == receptionTimer && isReceiverMode(radioMode) && arrival->getEndTime(previousPart) == simTime() && iAmTransmiting == false) {
+    auto receptionTimer = contains(attemptedReceptionTimers, timer);
+
+    if (!iAmGateway)
+        throw cRuntimeError("This radio must be used only for wateways");
+
+    if (receptionTimer && isReceiverMode(radioMode) && arrival->getEndTime(previousPart) == simTime() && iAmTransmiting == false) {
         auto transmission = radioFrame->getTransmission();
         bool isReceptionSuccessful = medium->isReceptionSuccessful(this, transmission, previousPart);
         EV_INFO << "LoRaGWRadio Reception ended: " << (isReceptionSuccessful ? "successfully" : "unsuccessfully") << " for " << (IWirelessSignal *)radioFrame << " " << IRadioSignal::getSignalPartName(previousPart) << " as " << reception << endl;
         if (!isReceptionSuccessful) {
-            receptionTimer = nullptr;
-            if(iAmGateway) concurrentReceptions.remove(timer);
+            remove(attemptedReceptionTimers, timer);
         }
         auto isReceptionAttempted = medium->isReceptionAttempted(this, transmission, nextPart);
         EV_INFO << "LoRaGWRadio Reception started: " << (isReceptionAttempted ? "attempting" : "not attempting") << " " << (IWirelessSignal *)radioFrame << " " << IRadioSignal::getSignalPartName(nextPart) << " as " << reception << endl;
         if (!isReceptionAttempted) {
-            receptionTimer = nullptr;
-            if(iAmGateway) concurrentReceptions.remove(timer);
+            remove(attemptedReceptionTimers, timer);
         }
     }
     else {
@@ -246,13 +243,13 @@ void LoRaGWRadio::endReception(cMessage *timer)
     auto radioFrame = static_cast<WirelessSignal *>(timer->getControlInfo());
     auto arrival = radioFrame->getArrival();
     auto reception = radioFrame->getReception();
-    std::list<cMessage *>::iterator it;
-    if(iAmGateway) {
-        for (it=concurrentReceptions.begin(); it!=concurrentReceptions.end(); it++) {
-            if(*it == timer) receptionTimer = timer;
-        }
-    }
-    if (timer == receptionTimer && isReceiverMode(radioMode) && arrival->getEndTime() == simTime() && iAmTransmiting == false) {
+    if (!iAmGateway)
+        throw cRuntimeError("This radio must be used only for wateways");
+
+
+    auto receptionTimer = contains(attemptedReceptionTimers, timer);
+
+    if (receptionTimer && isReceiverMode(radioMode) && arrival->getEndTime() == simTime() && iAmTransmiting == false) {
         auto transmission = radioFrame->getTransmission();
 // TODO: this would draw twice from the random number generator in isReceptionSuccessful: auto isReceptionSuccessful = medium->isReceptionSuccessful(this, transmission, part);
         auto isReceptionSuccessful = medium->getReceptionDecision(this, radioFrame->getListening(), transmission, part)->isReceptionSuccessful();
@@ -267,13 +264,12 @@ void LoRaGWRadio::endReception(cMessage *timer)
             EV << macFrame->getCompleteStringRepresentation(evFlags) << endl;
             sendUp(macFrame);
         }
-        receptionTimer = nullptr;
-        if(iAmGateway) concurrentReceptions.remove(timer);
     }
     else
         EV_INFO << "LoRaGWRadio Reception ended: ignoring " << (IWirelessSignal *)radioFrame << " " << IRadioSignal::getSignalPartName(part) << " as " << reception << endl;
     //updateTransceiverState();
     //updateTransceiverPart();
+    remove(allReceptionTimers, timer);
     radioMode = RADIO_MODE_TRANSCEIVER;
     check_and_cast<RadioMedium *>(medium.get())->emit(IRadioMedium::signalArrivalEndedSignal, check_and_cast<const cObject *>(reception));
     delete timer;
@@ -281,16 +277,9 @@ void LoRaGWRadio::endReception(cMessage *timer)
 
 void LoRaGWRadio::abortReception(cMessage *timer)
 {
-    auto radioFrame = static_cast<WirelessSignal *>(timer->getControlInfo());
-    auto part = (IRadioSignal::SignalPart)timer->getKind();
-    auto reception = radioFrame->getReception();
-    EV_INFO << "LoRaGWRadio Reception aborted: for " << (IWirelessSignal *)radioFrame << " " << IRadioSignal::getSignalPartName(part) << " as " << reception << endl;
-    if (timer == receptionTimer) {
-        if(iAmGateway) concurrentReceptions.remove(timer);
-        receptionTimer = nullptr;
-    }
-    updateTransceiverState();
-    updateTransceiverPart();
+    if (!iAmGateway)
+        throw cRuntimeError("This radio must be used only for wateways");
+    NarrowbandRadioBase::abortReception(timer);
 }
 
 void LoRaGWRadio::setPower(W newPower)
@@ -303,7 +292,8 @@ void LoRaGWRadio::setBitrate(bps newBitrate)
 {
     LoRaTransmitter *flatTransmitter = const_cast<LoRaTransmitter *>(check_and_cast<const LoRaTransmitter *>(transmitter));
     flatTransmitter->setBitrate(newBitrate);
-    receptionTimer = nullptr;
+    while (!attemptedReceptionTimers.empty())
+        abortReception(attemptedReceptionTimers.front());
 }
 
 

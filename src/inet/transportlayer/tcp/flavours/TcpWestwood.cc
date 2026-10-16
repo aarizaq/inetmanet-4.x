@@ -9,16 +9,17 @@
 #include <algorithm> // min,max
 
 #include "inet/transportlayer/tcp/Tcp.h"
+#include "inet/transportlayer/tcp/TcpSimsignals.h"
 
 namespace inet {
 namespace tcp {
 
-Register_Class(TcpWestwood);
+Define_Module(TcpWestwood);
 
 std::string TcpWestwoodStateVariables::str() const
 {
     std::stringstream out;
-    out << TcpBaseAlgStateVariables::str();
+    out << TcpAlgorithmBaseStateVariables::str();
     out << " ssthresh=" << ssthresh;
     return out.str();
 }
@@ -26,14 +27,14 @@ std::string TcpWestwoodStateVariables::str() const
 std::string TcpWestwoodStateVariables::detailedInfo() const
 {
     std::stringstream out;
-    out << TcpBaseAlgStateVariables::detailedInfo();
+    out << TcpAlgorithmBaseStateVariables::detailedInfo();
     out << "ssthresh = " << ssthresh << "\n";
     out << "w_RTTmin = " << w_RTTmin << "\n";
     return out.str();
 }
 
 TcpWestwood::TcpWestwood()
-    : TcpBaseAlg(), state((TcpWestwoodStateVariables *&)TcpAlgorithm::state)
+    : TcpAlgorithmBase(), state((TcpWestwoodStateVariables *&)TcpAlgorithm::state)
 {
 }
 
@@ -65,7 +66,7 @@ void TcpWestwood::recalculateBWE(uint32_t cumul_ack)
 
 void TcpWestwood::processRexmitTimer(TcpEventCode& event)
 {
-    TcpBaseAlg::processRexmitTimer(event);
+    TcpAlgorithmBase::processRexmitTimer(event);
 
     if (event == TCP_E_ABORT)
         return;
@@ -97,12 +98,12 @@ void TcpWestwood::processRexmitTimer(TcpEventCode& event)
     conn->retransmitOneSegment(true);
 }
 
-void TcpWestwood::receivedDataAck(uint32_t firstSeqAcked)
+void TcpWestwood::receivedAckForUnackedData(uint32_t firstSeqAcked)
 {
-    TcpBaseAlg::receivedDataAck(firstSeqAcked);
+    TcpAlgorithmBase::receivedAckForUnackedData(firstSeqAcked);
 
-    state->regions.clearTo(state->snd_una);
-    const TcpSegmentTransmitInfoList::Item *found = state->regions.get(firstSeqAcked);
+    state->sentInfo.clearTo(state->snd_una);
+    const TcpSegmentTransmitInfoList::Item *found = state->sentInfo.get(firstSeqAcked);
 
     if (found != nullptr) {
         simtime_t currentTime = simTime();
@@ -192,7 +193,7 @@ void TcpWestwood::receivedDataAck(uint32_t firstSeqAcked)
 
 void TcpWestwood::receivedDuplicateAck()
 {
-    TcpBaseAlg::receivedDuplicateAck();
+    TcpAlgorithmBase::receivedDuplicateAck();
 
     {
         // BWE calculation: dupack counts 1
@@ -262,24 +263,7 @@ void TcpWestwood::receivedDuplicateAck()
     }
 }
 
-void TcpWestwood::dataSent(uint32_t fromseq)
-{
-    TcpBaseAlg::dataSent(fromseq);
 
-    // save time when packet is sent
-    // fromseq is the seq number of the 1st sent byte
-
-    simtime_t sendtime = simTime();
-    state->regions.clearTo(state->snd_una);
-    state->regions.set(fromseq, state->snd_max, sendtime);
-}
-
-void TcpWestwood::segmentRetransmitted(uint32_t fromseq, uint32_t toseq)
-{
-    TcpBaseAlg::segmentRetransmitted(fromseq, toseq);
-
-    state->regions.set(fromseq, toseq, simTime());
-}
 
 } // namespace tcp
 } // namespace inet

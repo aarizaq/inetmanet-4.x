@@ -122,12 +122,30 @@ uint32_t TcpReceiveQueue::getQueueLength()
     return reorderBuffer.getNumRegions();
 }
 
+bool TcpReceiveQueue::findFirstDuplicateRange(uint32_t fromSeqNum, uint32_t toSeqNum, uint32_t& dupStart, uint32_t& dupEnd) const
+{
+    b fs = seqToOffset(fromSeqNum);
+    b ts = fs + B(toSeqNum - fromSeqNum);
+
+    for (int i = 0; i < reorderBuffer.getNumRegions(); i++) {
+        b s = std::max(reorderBuffer.getRegionStartOffset(i), fs);
+        b e = std::min(reorderBuffer.getRegionEndOffset(i), ts);
+        if (s < e) {
+            dupStart = offsetToSeq(s);
+            dupEnd = offsetToSeq(e);
+            return true;
+        }
+    }
+
+    return false;
+}
+
 void TcpReceiveQueue::getQueueStatus()
 {
     EV_DEBUG << "receiveQLength=" << reorderBuffer.getNumRegions() << " " << str() << "\n";
 }
 
-uint32_t TcpReceiveQueue::getLE(uint32_t fromSeqNum)
+uint32_t TcpReceiveQueue::getLE(uint32_t fromSeqNum) const
 {
     B fs = seqToOffset(fromSeqNum);
 
@@ -139,7 +157,7 @@ uint32_t TcpReceiveQueue::getLE(uint32_t fromSeqNum)
     return fromSeqNum;
 }
 
-uint32_t TcpReceiveQueue::getRE(uint32_t toSeqNum)
+uint32_t TcpReceiveQueue::getRE(uint32_t toSeqNum) const
 {
     B fs = seqToOffset(toSeqNum);
 
@@ -156,6 +174,12 @@ uint32_t TcpReceiveQueue::getFirstSeqNo()
     if (reorderBuffer.getNumRegions() == 0)
         return rcv_nxt;
     return seqMin(offsetToSeq(reorderBuffer.getRegionStartOffset(0)), rcv_nxt);
+}
+
+bool TcpReceiveQueue::hasOutOfOrderData() const
+{
+    int numRegions = reorderBuffer.getNumRegions();
+    return numRegions != 0 && seqGreater(offsetToSeq(reorderBuffer.getRegionEndOffset(numRegions - 1)), rcv_nxt);
 }
 
 } // namespace tcp

@@ -4,7 +4,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 
-
 #include "inet/linklayer/ieee80211/mac/framesequence/TxOpFs.h"
 
 #include "inet/linklayer/ieee80211/mac/framesequence/PrimitiveFrameSequences.h"
@@ -57,6 +56,9 @@ int TxOpFs::selectTxOpSequence(AlternativesFs *frameSequence, FrameSequenceConte
         if (context->getQoSContext()->blockAckAgreementHandler)
             agreement = context->getQoSContext()->blockAckAgreementHandler->getAgreement(dataHeaderToTransmit->getReceiverAddress(), dataHeaderToTransmit->getTid());
         auto ackPolicy = context->getQoSContext()->ackPolicy->computeAckPolicy(frameToTransmit, dataHeaderToTransmit, agreement);
+        auto updatedHeader = frameToTransmit->removeAtFront<Ieee80211DataHeader>();
+        updatedHeader->setAckPolicy(ackPolicy);
+        frameToTransmit->insertAtFront(updatedHeader);
         if (ackPolicy == AckPolicy::BLOCK_ACK)
             return 0;
         else if (ackPolicy == AckPolicy::NORMAL_ACK)
@@ -79,4 +81,3 @@ bool TxOpFs::isBlockAckReqRtsCtsNeeded(OptionalFs *frameSequence, FrameSequenceC
 
 } // namespace ieee80211
 } // namespace inet
-

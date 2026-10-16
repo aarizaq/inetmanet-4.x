@@ -20,6 +20,7 @@
 #include "inet/networklayer/mpls/ConstType.h"
 #include "inet/networklayer/mpls/IIngressClassifier.h"
 #include "inet/networklayer/mpls/LibTable.h"
+#include "inet/networklayer/ipv4/Icmp.h"
 #include "inet/networklayer/mpls/MplsPacket_m.h"
 
 namespace inet {
@@ -40,6 +41,7 @@ class INET_API Mpls : public SimpleModule, public DefaultProtocolRegistrationLis
     ModuleRefByPar<LibTable> lt;
     ModuleRefByPar<IInterfaceTable> ift;
     ModuleRefByPar<IIngressClassifier> pct;
+    ModuleRefByPar<Icmp> icmp;
 
   protected:
     virtual void initialize(int stage) override;
@@ -51,16 +53,30 @@ class INET_API Mpls : public SimpleModule, public DefaultProtocolRegistrationLis
     virtual void processPacketFromL2(Packet *msg);
     virtual void processMplsPacketFromL2(Packet *mplsPacket);
 
-    virtual bool tryLabelAndForwardIpv4Datagram(Packet *ipdatagram);
+    /**
+     * Labels the datagram when the classifier maps it to a FEC. A datagram that arrives from a
+     * link is forwarded by this LSR as an IP router, so its TTL is decremented first
+     * (RFC 3032 section 2.4.3); one with TTL 1 or less is left to the network layer.
+     */
+    virtual bool tryLabelAndForwardIpv4Datagram(Packet *ipdatagram, bool fromLink = false);
     virtual void labelAndForwardIpv4Datagram(Packet *ipdatagram);
 
+    virtual void sendToLink(Packet *packet, const NetworkInterface *networkInterface);
+    virtual void processTooBigDatagram(Packet *packet, const NetworkInterface *networkInterface, int mtu);
     virtual void sendToL2(Packet *msg);
     virtual void sendToL3(Packet *msg);
 
     void pushLabel(Packet *packet, Ptr<MplsHeader>& newMplsHeader);
     void swapLabel(Packet *packet, Ptr<MplsHeader>& newMplsHeader);
     void popLabel(Packet *packet);
-    virtual void doStackOps(Packet *packet, const LabelOpVector& outLabel);
+    void setTopLabelTtl(Packet *packet, int ttl);
+    void setIpv4Ttl(Packet *packet, int ttl);
+
+    /**
+     * Applies the label operations. The outgoing TTL is that of RFC 3032 section 2.4.1; -1 means
+     * the packet arrived unlabeled, and the pushed entries copy the TTL of the IP header.
+     */
+    virtual void doStackOps(Packet *packet, const LabelOpVector& outLabel, int outgoingTtl = -1);
 
     // IInterfaceRegistrationListener:
     virtual void handleRegisterInterface(const NetworkInterface& interface, cGate *in, cGate *out) override;

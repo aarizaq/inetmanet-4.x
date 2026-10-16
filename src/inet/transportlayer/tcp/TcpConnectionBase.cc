@@ -14,6 +14,7 @@
 #include "inet/transportlayer/tcp/TcpConnection.h"
 #include "inet/transportlayer/tcp/TcpReceiveQueue.h"
 #include "inet/transportlayer/tcp/TcpSackRexmitQueue.h"
+#include "inet/transportlayer/tcp/flavours/Rfc6675Recovery.h"
 #include "inet/transportlayer/tcp/TcpSendQueue.h"
 #include "inet/transportlayer/tcp_common/TcpHeader.h"
 
@@ -22,25 +23,7 @@ namespace tcp {
 
 Define_Module(TcpConnection);
 
-simsignal_t TcpConnection::stateSignal = registerSignal("state"); // FSM state
-simsignal_t TcpConnection::sndWndSignal = registerSignal("sndWnd"); // snd_wnd
-simsignal_t TcpConnection::rcvWndSignal = registerSignal("rcvWnd"); // rcv_wnd
-simsignal_t TcpConnection::rcvAdvSignal = registerSignal("rcvAdv"); // current advertised window (=rcv_adv)
 simsignal_t TcpConnection::sndNxtSignal = registerSignal("sndNxt"); // sent seqNo
-simsignal_t TcpConnection::sndAckSignal = registerSignal("sndAck"); // sent ackNo
-simsignal_t TcpConnection::rcvSeqSignal = registerSignal("rcvSeq"); // received seqNo
-simsignal_t TcpConnection::rcvAckSignal = registerSignal("rcvAck"); // received ackNo (=snd_una)
-simsignal_t TcpConnection::unackedSignal = registerSignal("unacked"); // number of bytes unacknowledged
-simsignal_t TcpConnection::dupAcksSignal = registerSignal("dupAcks"); // current number of received dupAcks
-simsignal_t TcpConnection::pipeSignal = registerSignal("pipe"); // current sender's estimate of bytes outstanding in the network
-simsignal_t TcpConnection::sndSacksSignal = registerSignal("sndSacks"); // number of sent Sacks
-simsignal_t TcpConnection::rcvSacksSignal = registerSignal("rcvSacks"); // number of received Sacks
-simsignal_t TcpConnection::rcvOooSegSignal = registerSignal("rcvOooSeg"); // number of received out-of-order segments
-simsignal_t TcpConnection::rcvNASegSignal = registerSignal("rcvNASeg"); // number of received not acceptable segments
-simsignal_t TcpConnection::sackedBytesSignal = registerSignal("sackedBytes"); // current number of received sacked bytes
-simsignal_t TcpConnection::tcpRcvQueueBytesSignal = registerSignal("tcpRcvQueueBytes"); // current amount of used bytes in tcp receive queue
-simsignal_t TcpConnection::tcpRcvQueueDropsSignal = registerSignal("tcpRcvQueueDrops"); // number of drops in tcp receive queue
-simsignal_t TcpConnection::tcpRcvPayloadBytesSignal = registerSignal("tcpRcvPayloadBytes"); // amount of payload bytes received (including duplicates, out of order etc) for TCP throughput
 
 TcpStateVariables::~TcpStateVariables()
 {
@@ -121,11 +104,13 @@ void TcpConnection::initConnection(Tcp *_mod, int _socketId)
     connEstabTimer = new cMessage("CONN-ESTAB");
     finWait2Timer = new cMessage("FIN-WAIT-2");
     synRexmitTimer = new cMessage("SYN-REXMIT");
+    rackReoTimer = new cMessage("RACK-REO");
 
     the2MSLTimer->setContextPointer(this);
     connEstabTimer->setContextPointer(this);
     finWait2Timer->setContextPointer(this);
     synRexmitTimer->setContextPointer(this);
+    rackReoTimer->setContextPointer(this);
 
     WATCH(socketId);
     WATCH(listeningSocketId);
@@ -160,7 +145,7 @@ TcpConnection::~TcpConnection()
     delete sendQueue;
     delete rexmitQueue;
     delete receiveQueue;
-    delete tcpAlgorithm;
+    // the algorithm is a submodule: deleteModule() deleted it before this destructor
     delete state;
 
     if (the2MSLTimer)
@@ -171,6 +156,8 @@ TcpConnection::~TcpConnection()
         delete cancelEvent(finWait2Timer);
     if (synRexmitTimer)
         delete cancelEvent(synRexmitTimer);
+    if (rackReoTimer)
+        delete cancelEvent(rackReoTimer);
 }
 
 void TcpConnection::handleMessage(cMessage *msg)
@@ -196,12 +183,29 @@ bool TcpConnection::processTimer(cMessage *msg)
         process_TIMEOUT_2MSL();
     }
     else if (msg == connEstabTimer) {
-        event = TCP_E_TIMEOUT_CONN_ESTAB;
-        process_TIMEOUT_CONN_ESTAB();
+        if (state->fastopenSynDeferred) {
+            // TCP Fast Open: no SEND came for the SYN that waits for one. The SYN
+            // goes out now without data (with the cookie, which RFC 7413 allows),
+            // and the handshake gets its full time.
+            EV_DETAIL << "Fast Open: no SEND, sending the SYN without data\n";
+            sendSyn();
+            state->fastopenSynDeferred = false;
+            startSynRexmitTimer();
+            scheduleAfter(TCP_TIMEOUT_CONN_ESTAB, connEstabTimer);
+            event = TCP_E_IGNORE;
+        }
+        else {
+            event = TCP_E_TIMEOUT_CONN_ESTAB;
+            process_TIMEOUT_CONN_ESTAB();
+        }
     }
     else if (msg == finWait2Timer) {
         event = TCP_E_TIMEOUT_FIN_WAIT_2;
         process_TIMEOUT_FIN_WAIT_2();
+    }
+    else if (msg == rackReoTimer) {
+        event = TCP_E_IGNORE;
+        processRackReoTimeout();
     }
     else if (msg == synRexmitTimer) {
         event = TCP_E_IGNORE;
@@ -430,11 +434,12 @@ bool TcpConnection::performStateTransition(const TcpEventCode& event)
                     break;
 
                 case TCP_E_TIMEOUT_CONN_ESTAB:
-                    FSM_Goto(fsm, state->active ? TCP_S_CLOSED : TCP_S_LISTEN);
-                    break;
-
                 case TCP_E_RCV_RST:
-                    FSM_Goto(fsm, state->active ? TCP_S_CLOSED : TCP_S_LISTEN);
+                    // RFC 9293 returns a passive open to LISTEN. A forked connection
+                    // is the child of a listener that still exists (a Linux child
+                    // socket): it closes, else there would be two listeners. A TCP
+                    // Fast Open connection closes too: the application has it.
+                    FSM_Goto(fsm, (state->active || state->forked || state->fastopenAccelerated) ? TCP_S_CLOSED : TCP_S_LISTEN);
                     break;
 
                 case TCP_E_RCV_ACK:
@@ -629,6 +634,45 @@ bool TcpConnection::performStateTransition(const TcpEventCode& event)
     return fsm.getState() != TCP_S_CLOSED;
 }
 
+void TcpConnection::rescheduleRackReoTimer(simtime_t delay)
+{
+    if (rackReoTimer == nullptr)
+        return;
+    if (rackReoTimer->isScheduled())
+        cancelEvent(rackReoTimer);
+    // Jiffy quantization (Linux tcp_rack_mark_lost: usecs_to_jiffies(timeout)+1):
+    // a positive sub-tick deadline fires whole ticks later on a real kernel --
+    // which is what lets a dupthresh-worth of further SACKs enter recovery
+    // inline before the timer, instead of the timer marking a burst's holes a
+    // fraction of a millisecond after the first SACK. The zero-delay act-now
+    // defer (ACK-path marks) is left untouched.
+    if (delay > SIMTIME_ZERO) {
+        simtime_t granularity = tcpMain->par("rackReoTimerGranularity");
+        if (granularity > SIMTIME_ZERO)
+            delay = (std::ceil(delay / granularity) + 1) * granularity;
+    }
+    if (delay >= SIMTIME_ZERO)
+        scheduleAfter(delay, rackReoTimer);
+}
+
+void TcpConnection::processRackReoTimeout()
+{
+    // The reordering-window deadline of some still-unacked segment matured with no
+    // ACK arriving to re-run detection -- re-run it now and let the recovery
+    // strategy act on any newly lost marks (enter recovery / retransmit). Guarded:
+    // the timer can be stale if the connection moved on (recovery completed and the
+    // queue drained, algorithm torn down mid-close).
+    if (!state || !state->sack_enabled || state->lossDetectionMode != 1
+            || rexmitQueue == nullptr || tcpAlgorithm == nullptr)
+        return;
+    auto recovery = dynamic_cast<Rfc6675Recovery *>(tcpAlgorithm->getRecovery());
+    if (recovery == nullptr)
+        return;
+    recovery->rackDetectAndMarkLost(/*fromReoTimer=*/true);
+    if (rexmitQueue->getLost() > 0)
+        recovery->reoTimeout();
+}
+
 void TcpConnection::stateEntered(int state, int oldState, TcpEventCode event)
 {
     // cancel timers
@@ -678,7 +722,10 @@ void TcpConnection::stateEntered(int state, int oldState, TcpEventCode event)
             break;
 
         case TCP_S_CLOSED:
-            if (oldState != TCP_S_TIME_WAIT && event != TCP_E_ABORT)
+            // A forked connection that the app has not accepted is unknown to the
+            // app, so it gets no indication with its own socket id. RFC 9293 section
+            // 3.10.7.3: "The user need not be informed."
+            if (oldState != TCP_S_TIME_WAIT && event != TCP_E_ABORT && !isToBeAccepted())
                 sendIndicationToApp(TCP_I_CLOSED);
             // all timers need to be cancelled
             if (the2MSLTimer)

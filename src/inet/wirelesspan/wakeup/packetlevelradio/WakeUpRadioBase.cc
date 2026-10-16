@@ -14,7 +14,7 @@
 #include "inet/physicallayer/wireless/common/base/packetlevel/FlatReceiverBase.h"
 #include "inet/physicallayer/wireless/common/base/packetlevel/FlatTransmitterBase.h"
 #include "inet/wirelesspan/wakeup/packetlevelradio/WakeUpPreamble_m.h"
-
+#include "inet/common/stlutils.h"
 namespace inet {
 namespace wirelesspan {
 namespace physicallayer {
@@ -165,7 +165,7 @@ void WakeUpRadioBase::handleSelfMessage(cMessage *message)
     if (message == awake) {
         if (radioMode == IRadio::RADIO_MODE_OFF || radioMode == IRadio::RADIO_MODE_SLEEP)
             setState(IRadio::RADIO_MODE_RECEIVER);
-        if (receptionTimer && !inmediateAwake) {
+        if (attemptedReceptionTimers.size() > 0 && !inmediateAwake) {
             // energy detected
             controllerRadioAwakeReceiver();
             cancelScanning();
@@ -212,11 +212,12 @@ void WakeUpRadioBase::receiveSignal(cComponent *source, simsignal_t signalID, cO
 
 void WakeUpRadioBase::updateTransceiverState()
 {
+    auto receptionTimer = attemptedReceptionTimers.size() > 0;
     // reception state
     ReceptionState newRadioReceptionState;
     if (radioMode == RADIO_MODE_OFF || radioMode == RADIO_MODE_SWITCHING || radioMode == RADIO_MODE_SLEEP || radioMode == RADIO_MODE_TRANSMITTER)
         newRadioReceptionState = RECEPTION_STATE_UNDEFINED;
-    else if (receptionTimer && receptionTimer->isScheduled())
+    else if (receptionTimer)
         newRadioReceptionState = RECEPTION_STATE_RECEIVING;
     else if (isListeningPossible())
         newRadioReceptionState = RECEPTION_STATE_BUSY;
@@ -229,9 +230,11 @@ void WakeUpRadioBase::updateTransceiverState()
     }
     // transmission state
     TransmissionState newRadioTransmissionState;
+    auto transmissionTimer = transmissionTimers.size() > 0;
+
     if (radioMode == RADIO_MODE_OFF || radioMode == RADIO_MODE_SWITCHING || radioMode == RADIO_MODE_SLEEP || radioMode == RADIO_MODE_RECEIVER)
         newRadioTransmissionState = TRANSMISSION_STATE_UNDEFINED;
-    else if (transmissionTimer->isScheduled())
+    else if (transmissionTimer)
         newRadioTransmissionState = TRANSMISSION_STATE_TRANSMITTING;
     else
         newRadioTransmissionState = TRANSMISSION_STATE_IDLE;
@@ -263,7 +266,7 @@ void WakeUpRadioBase::startReception(cMessage *timer, IRadioSignal::SignalPart p
                 auto isReceptionAttempted = medium->isReceptionAttempted(this, transmission, part);
                 EV_INFO << "Reception started: " << (isReceptionAttempted ? "\x1b[1mattempting\x1b[0m" : "\x1b[1mnot attempting\x1b[0m") << " " << (IWirelessSignal*) signal << " " << IRadioSignal::getSignalPartName(part)  << " as " << reception << endl;
                 if (isReceptionAttempted) {
-                    receptionTimer = timer;
+                    attemptedReceptionTimers.push_back(timer);
                     emit(receptionStartedSignal, check_and_cast<const cObject*>(reception));
                     if (inmediateAwake) {
                         controllerRadioAwakeReceiver();
@@ -284,7 +287,7 @@ void WakeUpRadioBase::startReception(cMessage *timer, IRadioSignal::SignalPart p
             auto isReceptionAttempted = medium->isReceptionAttempted(this, transmission, part);
             EV_INFO << "Reception started: " << (isReceptionAttempted ? "\x1b[1mattempting\x1b[0m" : "\x1b[1mnot attempting\x1b[0m") << " " << (IWirelessSignal *)signal << " " << IRadioSignal::getSignalPartName(part) << " as " << reception << endl;
             if (isReceptionAttempted) {
-                receptionTimer = timer;
+                attemptedReceptionTimers.push_back(timer);
                 emit(receptionStartedSignal, check_and_cast<const cObject *>(reception));
             }
         }
@@ -302,7 +305,7 @@ void WakeUpRadioBase::startReception(cMessage *timer, IRadioSignal::SignalPart p
 void WakeUpRadioBase::sendBeacon(int code)
 {
     cancelScanning();
-    if (transmissionTimer->isScheduled())
+    if (transmissionTimers.size() > 0)
         return;
     Packet *packet = new Packet();
     auto preamble = makeShared<WakeUpPreamble>();
@@ -315,6 +318,8 @@ void WakeUpRadioBase::sendBeacon(int code)
     encapsulate(packet);
     WirelessSignal *signal = check_and_cast<WirelessSignal *>(medium->transmitPacket(this, packet));
     auto transmission = signal->getTransmission();
+    auto transmissionTimer = getIdleTransmissionTimer();
+
     transmissionTimer->setKind(IRadioSignal::SignalPart::SIGNAL_PART_WHOLE);
     transmissionTimer->setContextPointer(const_cast<WirelessSignal *>(signal));
 
@@ -410,7 +415,8 @@ void WakeUpRadioBase::endReception(cMessage *timer)
     auto signal = static_cast<WirelessSignal *>(timer->getControlInfo());
     auto arrival = signal->getArrival();
     auto reception = signal->getReception();
-    if (timer == receptionTimer && isReceiverMode(radioMode) && arrival->getEndTime() == simTime()) {
+
+    if (contains(attemptedReceptionTimers, timer) && isReceiverMode(radioMode) && arrival->getEndTime() == simTime()) {
         auto transmission = signal->getTransmission();
 // TODO: this would draw twice from the random number generator in isReceptionSuccessful: auto isReceptionSuccessful = medium->isReceptionSuccessful(this, transmission, part);
         auto isReceptionSuccessful = medium->getReceptionDecision(this, signal->getListening(), transmission, part)->isReceptionSuccessful();
@@ -424,8 +430,8 @@ void WakeUpRadioBase::endReception(cMessage *timer)
         EV_INFO << "Reception ended: \x1b[1mignoring\x1b[0m " << (IWirelessSignal *)signal << " " << IRadioSignal::getSignalPartName(part) << " as " << reception << endl;
     updateTransceiverState();
     updateTransceiverPart();
-    if(timer == receptionTimer)
-        receptionTimer = nullptr;
+
+    remove(allReceptionTimers, timer);
     delete timer;
 
     // TODO: move to radio medium

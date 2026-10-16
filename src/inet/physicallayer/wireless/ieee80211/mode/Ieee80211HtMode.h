@@ -245,6 +245,9 @@ class INET_API Ieee80211HtMode : public Ieee80211ModeBase
 
     virtual const Ieee80211HtDataMode *getDataMode() const override { return dataMode; }
     virtual int getHtMcsIndex() const override { return dataMode->getMcsIndex(); }
+    virtual bps getNonHtReferenceRate() const override;
+    virtual ModulationClass getModulationClass() const override { return ModulationClass::HT; }
+    virtual PreambleType getLegacyPreambleType() const override { return PreambleType::NOT_APPLICABLE; }
     virtual bool isHtShortGuardInterval() const override { return dataMode->getGuardIntervalType() == Ieee80211HtModeBase::HT_GUARD_INTERVAL_SHORT; }
     virtual const Ieee80211HtPreambleMode *getPreambleMode() const override { return preambleMode; }
     virtual const Ieee80211HtSignalMode *getHeaderMode() const override { return preambleMode->getSignalMode(); }
@@ -462,7 +465,8 @@ class INET_API Ieee80211HtCompliantModes
   protected:
     static OPP_THREAD_LOCAL const Ieee80211HtCompliantModes singleton;
 
-    mutable std::map<std::tuple<Hz, unsigned int, Ieee80211HtModeBase::GuardIntervalType>, const Ieee80211HtMode *> modeCache;
+    mutable std::map<std::tuple<Hz, unsigned int, Ieee80211HtMode::BandMode,
+            Ieee80211HtPreambleMode::HighTroughputPreambleFormat, Ieee80211HtModeBase::GuardIntervalType>, const Ieee80211HtMode *> modeCache;
 
   public:
     Ieee80211HtCompliantModes();
@@ -475,4 +479,3 @@ class INET_API Ieee80211HtCompliantModes
 } /* namespace inet */
 
 #endif
-

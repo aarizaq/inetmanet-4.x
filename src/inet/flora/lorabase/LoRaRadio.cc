@@ -21,6 +21,7 @@
 #include "inet/flora/loraphy/LoRaReceiver.h"
 #include "inet/flora/loraphy/LoRaTransmitter.h"
 #include "inet/common/LayeredProtocolBase.h"
+#include "inet/common/stlutils.h"
 //#include "inet/common/lifecycle/NodeOperations.h"
 #include "inet/common/ModuleAccess.h"
 #include "inet/physicallayer/wireless/common/radio/packetlevel/Radio.h"
@@ -62,32 +63,6 @@ std::ostream& LoRaRadio::printToStream(std::ostream& stream, int level, int evFl
     return stream;
 }
 
-
-const ITransmission *LoRaRadio::getTransmissionInProgress() const
-{
-    if (!transmissionTimer->isScheduled())
-        return nullptr;
-    else
-        return static_cast<WirelessSignal *>(transmissionTimer->getContextPointer())->getTransmission();
-}
-
-const ITransmission *LoRaRadio::getReceptionInProgress() const
-{
-    if (receptionTimer == nullptr)
-        return nullptr;
-    else
-        return static_cast<WirelessSignal *>(receptionTimer->getControlInfo())->getTransmission();
-}
-
-IRadioSignal::SignalPart LoRaRadio::getTransmittedSignalPart() const
-{
-    return transmittedSignalPart;
-}
-
-IRadioSignal::SignalPart LoRaRadio::getReceivedSignalPart() const
-{
-    return receivedSignalPart;
-}
 
 void LoRaRadio::handleMessageWhenDown(cMessage *message)
 {
@@ -137,13 +112,13 @@ void LoRaRadio::handleSelfMessage(cMessage *message)
 void LoRaRadio::handleTransmissionTimer(cMessage *message)
 {
     if (message->getKind() == IRadioSignal::SIGNAL_PART_WHOLE)
-        endTransmission();
+        endTransmission(message);
     else if (message->getKind() == IRadioSignal::SIGNAL_PART_PREAMBLE)
-        continueTransmission();
+        continueTransmission(message);
     else if (message->getKind() == IRadioSignal::SIGNAL_PART_HEADER)
-        continueTransmission();
+        continueTransmission(message);
     else if (message->getKind() == IRadioSignal::SIGNAL_PART_DATA)
-        endTransmission();
+        endTransmission(message);
     else
         throw cRuntimeError("Unknown self message");
 }
@@ -182,6 +157,9 @@ void LoRaRadio::handleUpperPacket(Packet *packet)
 {
     emit(packetReceivedFromUpperSignal, packet);
     if (isTransmitterMode(radioMode)) {
+        if (!allowConcurrentTransmissions && !getTransmissionsInProgress().empty())
+            throw cRuntimeError("Received frame from upper layer while already transmitting.");
+
         auto tag = packet->removeTag<flora::LoRaTag>();
         auto preamble = makeShared<LoRaPhyPreamble>();
 
@@ -200,8 +178,6 @@ void LoRaRadio::handleUpperPacket(Packet *packet)
         preamble->setChunkLength(b(16));
         packet->insertAtFront(preamble);
 
-        if (transmissionTimer->isScheduled())
-            throw cRuntimeError("Received frame from upper layer while already transmitting.");
         if (separateTransmissionParts)
             startTransmission(packet, IRadioSignal::SIGNAL_PART_PREAMBLE);
         else
@@ -267,9 +243,9 @@ void LoRaRadio::startTransmission(Packet *macFrame, IRadioSignal::SignalPart par
     */
 }
 
-void LoRaRadio::continueTransmission()
+void LoRaRadio::continueTransmission(cMessage *msg)
 {
-    NarrowbandRadioBase::continueTransmission();
+    NarrowbandRadioBase::continueTransmission(msg);
     /*
     auto previousPart = (IRadioSignal::SignalPart)transmissionTimer->getKind();
     auto nextPart = (IRadioSignal::SignalPart)(previousPart + 1);
@@ -284,9 +260,9 @@ void LoRaRadio::continueTransmission()
     */
 }
 
-void LoRaRadio::endTransmission()
+void LoRaRadio::endTransmission(cMessage *msg)
 {
-    NarrowbandRadioBase::endTransmission();
+    NarrowbandRadioBase::endTransmission(msg);
     /*
     auto part = (IRadioSignal::SignalPart)transmissionTimer->getKind();
     auto radioFrame = static_cast<Signal *>(transmissionTimer->getContextPointer());
@@ -304,9 +280,9 @@ void LoRaRadio::endTransmission()
 
 }
 
-void LoRaRadio::abortTransmission()
+void LoRaRadio::abortTransmission(cMessage *msg)
 {
-    NarrowbandRadioBase::abortTransmission();
+    NarrowbandRadioBase::abortTransmission(msg);
  /*   auto part = (IRadioSignal::SignalPart)transmissionTimer->getKind();
     auto radioFrame = static_cast<Signal *>(transmissionTimer->getContextPointer());
     auto transmission = radioFrame->getTransmission();
@@ -404,10 +380,10 @@ void LoRaRadio::endReception(cMessage *timer)
 {
 
     auto part = (IRadioSignal::SignalPart)timer->getKind();
-    auto signal = static_cast<WirelessSignal *>(timer->getControlInfo());
-    auto arrival = signal->getArrival();
-    auto reception = signal->getReception();
-    if (timer == receptionTimer && isReceiverMode(radioMode) && arrival->getEndTime() == simTime()) {
+     auto signal = static_cast<WirelessSignal *>(timer->getControlInfo());
+     auto arrival = signal->getArrival();
+     auto reception = signal->getReception();
+     if (contains(attemptedReceptionTimers, timer) && isReceiverMode(radioMode) && arrival->getEndTime() == simTime()) {
         auto transmission = signal->getTransmission();
         // TODO: this would draw twice from the random number generator in isReceptionSuccessful: auto isReceptionSuccessful = medium->isReceptionSuccessful(this, transmission, part);
         auto isReceptionSuccessful = medium->getReceptionDecision(this, signal->getListening(), transmission, part)->isReceptionSuccessful();
@@ -421,7 +397,6 @@ void LoRaRadio::endReception(cMessage *timer)
             emit(LoRaRadio::droppedPacket, 0);
             delete macFrame;
         }
-        receptionTimer = nullptr;
         emit(receptionEndedSignal, check_and_cast<const cObject *>(reception));
     }
     else
@@ -539,7 +514,8 @@ void LoRaRadio::setBitrate(bps newBitrate)
 {
     LoRaTransmitter *flatTransmitter = const_cast<LoRaTransmitter *>(check_and_cast<const LoRaTransmitter *>(transmitter));
     flatTransmitter->setBitrate(newBitrate);
-    receptionTimer = nullptr;
+    while (!attemptedReceptionTimers.empty())
+        abortReception(attemptedReceptionTimers.front());
 }
 
 

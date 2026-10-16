@@ -5,11 +5,12 @@
 # The judgment rules — CR-SCOPE-POSITION, CR-SCOPE-ABOUT, CR-DEPTH-FIX, CR-GROUP-* — are
 # T4 agent review, and so is whether an inert claim is true.
 #
-#   CR-TAG-TRAILER   — every commit ends with one Change: line
+#   CR-TAG-TRAILER   — every commit ends with one Change: line; a note for a commit that predates the rule
 #   CR-TAG-FORM      — three fields separated by |, an optional fourth, and a known value in each
 #   CR-TAG-SUBJECT   — the subject carries the kind, and every prefix agrees with the trailer
 #   CR-SCOPE-AREA    — the claimed area matches the paths the commit touches
 #   CR-DEPTH-ONE     — one commit reaches one depth level
+#   CR-DEPTH-DIRECTION — note: a mixed direction asks whether its parts can stand alone
 #   CR-OBL-INERT     — a commit below the behavior level moves no recorded expectation
 #
 # Usage (from the INET repository root):
@@ -31,6 +32,9 @@ DEPTHS="comment format location name refactor behavior"
 DIRS="add change remove"
 OBLS="fingerprint statistical expected test whatsnew migration"
 AREAS="src tests doc examples build plan"
+# The rule entered the tree on this day, in 3e741f4773, and it does not reach back: a commit
+# authored before it has no trailer for an honest reason. The author date is the one a rebase keeps.
+RULE_DATE=2026-09-11
 
 COMMITS=$(git log --format=%H --reverse "$RANGE")
 echo "== the series: $RANGE =="
@@ -47,7 +51,15 @@ ok=1
 while read -r sha; do
   [ -z "$sha" ] && continue
   t=$(git log -1 --format='%(trailers:key=Change,valueonly)' "$sha" | tr -d '\n')
-  if [ -z "$t" ]; then flag "${sha:0:9} has no Change: line"; ok=0; continue; fi
+  if [ -z "$t" ]; then
+    authored=$(git log -1 --format=%as "$sha")
+    if [[ "$authored" < "$RULE_DATE" ]]; then
+      note "${sha:0:9} has no Change: line, and it predates the rule (authored $authored)"
+    else
+      flag "${sha:0:9} has no Change: line"
+    fi
+    ok=0; continue
+  fi
   nf=$(awk -F'|' '{print NF}' <<< "$t")
   if [ "$nf" -lt 3 ] || [ "$nf" -gt 4 ]; then
     flag "${sha:0:9} Change: has $nf field(s), not 3 or 4: $t"; ok=0; continue
@@ -77,6 +89,20 @@ while read -r sha; do
   [ "$n" -gt 1 ] && { flag "${sha:0:9} claims $n depth levels: $kind"; ok=0; }
 done <<< "$COMMITS"
 [ "$ok" -eq 1 ] && echo "  ok"
+
+echo
+echo "== CR-DEPTH-DIRECTION: a mixed direction asks whether the parts divide (notes only) =="
+# A note never changes the exit status. 'name+refactor' is two depths, and CR-DEPTH-ONE fails it;
+# 'behavior.add+change' is one depth with two directions, which is one change only when the parts
+# cannot stand alone.
+quiet=1
+while read -r sha; do
+  [ -z "$sha" ] && continue
+  kind=$(git log -1 --format='%(trailers:key=Change,valueonly)' "$sha" | awk -F'|' '{gsub(/ /,"");print $2}')
+  case "$kind" in behavior.*+*) ;; *) continue ;; esac
+  note "${sha:0:9} claims $kind: can a part stand alone? $(git log -1 --format=%s "$sha")"; quiet=0
+done <<< "$COMMITS"
+[ "$quiet" -eq 1 ] && echo "  ok"
 
 echo
 echo "== CR-TAG-SUBJECT: the subject carries the kind and agrees with the trailer =="
@@ -123,7 +149,7 @@ while read -r sha; do
   grep -qE '^tests/'                    <<< "$files" && seen="$seen tests"
   grep -qE '^(doc/|WHATSNEW)'           <<< "$files" && seen="$seen doc"
   grep -qE '^(examples|showcases|tutorials)/' <<< "$files" && seen="$seen examples"
-  grep -qE '^(python/|\.github/|Makefile|configure)' <<< "$files" && seen="$seen build"
+  grep -qE '^(bin/|python/|\.github/|Makefile|configure)' <<< "$files" && seen="$seen build"
   grep -q '^plan/'                      <<< "$files" && seen="$seen plan"
   case " $seen " in *" $claimed "*) ;; *) flag "${sha:0:9} claims area '$claimed' and touches:$seen"; ok=0 ;; esac
 done <<< "$COMMITS"
@@ -135,6 +161,8 @@ ok=1
 while read -r sha; do
   [ -z "$sha" ] && continue
   kind=$(git log -1 --format='%(trailers:key=Change,valueonly)' "$sha" | awk -F'|' '{gsub(/ /,"");print $2}')
+  # no claim, nothing to compare: CR-TAG-TRAILER reports the missing line
+  [ -z "$kind" ] && continue
   case "$kind" in *behavior*) continue ;; esac
   n=$(git show --name-only --format='' "$sha" | grep -cE 'tests/(fingerprint|statistical)/.*\.(csv|json|sca)$')
   [ "$n" -gt 0 ] && { flag "${sha:0:9} claims '$kind' and moves $n recorded expectation(s)"; ok=0; }

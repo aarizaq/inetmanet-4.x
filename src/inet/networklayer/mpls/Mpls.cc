@@ -11,8 +11,12 @@
 
 #include "inet/common/ModuleAccess.h"
 #include "inet/common/ProtocolTag_m.h"
+#include "inet/common/ProtocolUtils.h"
+#include "inet/common/Simsignals.h"
 #include "inet/common/packet/Packet.h"
 #include "inet/linklayer/common/InterfaceTag_m.h"
+#include "inet/linklayer/common/MacAddressTag_m.h"
+#include "inet/networklayer/ipv4/Ipv4Header_m.h"
 #include "inet/networklayer/ldp/Ldp.h"
 #include "inet/networklayer/mpls/IIngressClassifier.h"
 #include "inet/networklayer/rsvpte/Utils.h"
@@ -34,6 +38,7 @@ void Mpls::initialize(int stage)
         lt.reference(this, "libTableModule", true);
         ift.reference(this, "interfaceTableModule", true);
         pct.reference(this, "classifierModule", true);
+        icmp.reference(this, "icmpModule", false);
 
         WATCH(delay1);
         WATCH(numReceived);
@@ -93,10 +98,8 @@ void Mpls::processPacketFromL3(Packet *msg)
     labelAndForwardIpv4Datagram(msg);
 }
 
-bool Mpls::tryLabelAndForwardIpv4Datagram(Packet *packet)
+bool Mpls::tryLabelAndForwardIpv4Datagram(Packet *packet, bool fromLink)
 {
-    const auto& ipv4Header = packet->peekAtFront<Ipv4Header>();
-    (void)ipv4Header; // unused variable
     LabelOpVector outLabel;
     std::string outInterface; // FIXME set based on interfaceID
     int color;
@@ -109,16 +112,26 @@ bool Mpls::tryLabelAndForwardIpv4Datagram(Packet *packet)
 
     ASSERT(outLabel.size() > 0);
 
+    if (fromLink) {
+        // the ingress forwards the datagram as an IP router: the TTL is decremented before
+        // the first label copies it (RFC 3032 section 2.4.3); an expiring datagram goes to
+        // the network layer, which reports it
+        int ttl = packet->peekAtFront<Ipv4Header>()->getTimeToLive();
+        if (ttl <= 1)
+            return false;
+        setIpv4Ttl(packet, ttl - 1);
+    }
+
     doStackOps(packet, outLabel);
 
     EV_INFO << "forwarding packet to " << outInterface << endl;
 
-    packet->addPar("color") = color;
+    if (packet->hasPar("color"))
+        packet->par("color") = color;
+    else
+        packet->addPar("color") = color;
 
-    packet->trim();
-    packet->removeTagIfPresent<DispatchProtocolReq>();
-    packet->addTagIfAbsent<InterfaceReq>()->setInterfaceId(outInterfaceId);
-    sendToL2(packet);
+    sendToLink(packet, ift->getInterfaceById(outInterfaceId));
 
     return true;
 }
@@ -139,7 +152,14 @@ void Mpls::labelAndForwardIpv4Datagram(Packet *ipdatagram)
 void Mpls::pushLabel(Packet *packet, Ptr<MplsHeader>& newMplsHeader)
 {
     packet->trimFront();
-    newMplsHeader->setS(packet->getTag<PacketProtocolTag>()->getProtocol()->getId() != Protocol::mpls.getId());
+    int protocolId = packet->getTag<PacketProtocolTag>()->getProtocol()->getId();
+    newMplsHeader->setS(protocolId != Protocol::mpls.getId());
+    // the Uniform Model (RFC 3443 section 3.6): a pushed entry copies the TTL of the entry below
+    // it, or of the IP header when it is the first label (RFC 3032 section 2.4.3)
+    if (protocolId == Protocol::mpls.getId())
+        newMplsHeader->setTtl(packet->peekAtFront<MplsHeader>()->getTtl());
+    else if (protocolId == Protocol::ipv4.getId())
+        newMplsHeader->setTtl(packet->peekAtFront<Ipv4Header>()->getTimeToLive());
     packet->insertAtFront(newMplsHeader);
     packet->addTagIfAbsent<PacketProtocolTag>()->setProtocol(&Protocol::mpls);
 }
@@ -150,7 +170,25 @@ void Mpls::swapLabel(Packet *packet, Ptr<MplsHeader>& newMplsHeader)
     packet->trimFront();
     auto oldMplsHeader = packet->removeAtFront<MplsHeader>();
     newMplsHeader->setS(oldMplsHeader->getS());
+    newMplsHeader->setTtl(oldMplsHeader->getTtl());
     packet->insertAtFront(newMplsHeader);
+}
+
+void Mpls::setTopLabelTtl(Packet *packet, int ttl)
+{
+    packet->trimFront();
+    auto mplsHeader = packet->removeAtFront<MplsHeader>();
+    mplsHeader->setTtl(ttl);
+    packet->insertAtFront(mplsHeader);
+}
+
+void Mpls::setIpv4Ttl(Packet *packet, int ttl)
+{
+    packet->trimFront();
+    auto ipv4Header = packet->removeAtFront<Ipv4Header>();
+    ipv4Header->setTimeToLive(ttl);
+    ipv4Header->updateChecksum();
+    packet->insertAtFront(ipv4Header);
 }
 
 void Mpls::popLabel(Packet *packet)
@@ -162,7 +200,7 @@ void Mpls::popLabel(Packet *packet)
     }
 }
 
-void Mpls::doStackOps(Packet *packet, const LabelOpVector& outLabel)
+void Mpls::doStackOps(Packet *packet, const LabelOpVector& outLabel, int outgoingTtl)
 {
     unsigned int n = outLabel.size();
 
@@ -171,12 +209,21 @@ void Mpls::doStackOps(Packet *packet, const LabelOpVector& outLabel)
     for (unsigned int i = 0; i < n; i++) {
         switch (outLabel[i].optcode) {
             case PUSH_OPER: {
+                // RFC 3032 section 2.1: the Implicit NULL label never appears in the encapsulation
+                if ((uint32_t)outLabel[i].label == mpls_constants::IMPLICIT_NULL_LABEL)
+                    break;
                 auto mplsHeader = makeShared<MplsHeader>();
                 mplsHeader->setLabel(outLabel[i].label);
                 pushLabel(packet, mplsHeader);
                 break;
             }
             case SWAP_OPER: {
+                // RFC 3032 section 2.1: an LSR that would replace the top label with the Implicit
+                // NULL label pops the stack instead
+                if ((uint32_t)outLabel[i].label == mpls_constants::IMPLICIT_NULL_LABEL) {
+                    popLabel(packet);
+                    break;
+                }
                 auto mplsHeader = makeShared<MplsHeader>();
                 mplsHeader->setLabel(outLabel[i].label);
                 swapLabel(packet, mplsHeader);
@@ -189,6 +236,16 @@ void Mpls::doStackOps(Packet *packet, const LabelOpVector& outLabel)
             default:
                 throw cRuntimeError("Unknown MPLS OptCode %d", outLabel[i].optcode);
                 break;
+        }
+        // RFC 3032 section 2.4.2: the top entry leaves with the outgoing TTL, whatever labels
+        // were pushed or popped; a pushed entry then copies it (RFC 3443 section 3.6), and a
+        // pop that empties the stack gives it to the IP header (RFC 3032 section 2.4.3)
+        if (outgoingTtl >= 0) {
+            int protocolId = packet->getTag<PacketProtocolTag>()->getProtocol()->getId();
+            if (protocolId == Protocol::mpls.getId())
+                setTopLabelTtl(packet, outgoingTtl);
+            else if (protocolId == Protocol::ipv4.getId())
+                setIpv4Ttl(packet, outgoingTtl);
         }
     }
 }
@@ -203,14 +260,13 @@ void Mpls::processPacketFromL2(Packet *packet)
         // Ipv4 datagram arrives at Ingress router. We'll try to classify it
         // and add an MPLS header
 
-        if (!tryLabelAndForwardIpv4Datagram(packet)) {
+        if (!tryLabelAndForwardIpv4Datagram(packet, true)) {
             sendToL3(packet);
         }
     }
     else {
-        throw cRuntimeError("Unknown message received");
-        // FIXME remove throw above
-        // sendToL3(packet);
+        // a packet of another protocol, for example ARP on an Ethernet link, is not for MPLS
+        sendToL3(packet);
     }
 }
 
@@ -233,6 +289,20 @@ void Mpls::processMplsPacketFromL2(Packet *packet)
         return;
     }
 
+    if (mplsHeader->getLabel() == mpls_constants::IPV4_EXPLICIT_NULL_LABEL && mplsHeader->getS()) {
+        // RFC 3032 section 2.1: the IPv4 Explicit NULL label at the bottom of the stack is
+        // popped, with no binding, and the IPv4 header decides the forwarding. The IP header
+        // gets the TTL of the label, and IPv4 decrements it (RFC 3443 section 3.5).
+        int ttl = mplsHeader->getTtl();
+        popLabel(packet);
+        setIpv4Ttl(packet, ttl);
+        auto dispatchProtocolReq = packet->addTagIfAbsent<DispatchProtocolReq>();
+        dispatchProtocolReq->setProtocol(&Protocol::ipv4);
+        dispatchProtocolReq->setServicePrimitive(SP_INDICATION);
+        sendToL3(packet);
+        return;
+    }
+
     LabelOpVector outLabel;
     std::string outInterface;
     int color;
@@ -247,7 +317,21 @@ void Mpls::processMplsPacketFromL2(Packet *packet)
 
     NetworkInterface *outgoingInterface = CHK(ift->findInterfaceByName(outInterface.c_str()));
 
-    doStackOps(packet, outLabel);
+    // RFC 3032 section 2.4.1: the outgoing TTL is one less than the TTL of the top entry
+    int incomingTtl = mplsHeader->getTtl();
+    int outgoingTtl = incomingTtl > 0 ? incomingTtl - 1 : 0;
+    if (outgoingTtl == 0) {
+        // RFC 3032 section 2.4.2: a packet whose outgoing TTL is zero is not forwarded, with or
+        // without its label stack
+        EV_WARN << "discarding packet, the outgoing TTL is zero" << endl;
+        PacketDropDetails details;
+        details.setReason(HOP_LIMIT_REACHED);
+        emit(packetDroppedSignal, packet, &details);
+        delete packet;
+        return;
+    }
+
+    doStackOps(packet, outLabel, outgoingTtl);
 
     if ((packet->getTag<PacketProtocolTag>()->getProtocol()->getId() == Protocol::mpls.getId())) {
         // forward labeled packet
@@ -261,10 +345,7 @@ void Mpls::processMplsPacketFromL2(Packet *packet)
         }
 
 //        ASSERT(labelIf[outgoingPort]);
-        packet->removeTagIfPresent<DispatchProtocolReq>();
-        packet->addTagIfAbsent<InterfaceReq>()->setInterfaceId(outgoingInterface->getInterfaceId());
-        packet->trim();
-        sendToL2(packet);
+        sendToLink(packet, outgoingInterface);
     }
     else {
         // last label popped, decapsulate and send out Ipv4 datagram
@@ -273,15 +354,100 @@ void Mpls::processMplsPacketFromL2(Packet *packet)
         ASSERT(packet->getTag<PacketProtocolTag>()->getProtocol()->getId() == Protocol::ipv4.getId());
 
         if (outgoingInterface) {
-            packet->trim();
-            packet->removeTagIfPresent<DispatchProtocolReq>();
-            packet->addTagIfAbsent<InterfaceReq>()->setInterfaceId(outgoingInterface->getInterfaceId());
-            sendToL2(packet);
+            sendToLink(packet, outgoingInterface);
         }
         else {
             sendToL3(packet);
         }
     }
+}
+
+void Mpls::sendToLink(Packet *packet, const NetworkInterface *networkInterface)
+{
+    packet->trim();
+    // RFC 3032 section 3.3: a labeled IP datagram that is longer than the payload of the link
+    // is too big (an MTU of 0 means no limit)
+    int mtu = networkInterface->getMtu();
+    if (mtu > 0 && packet->getByteLength() > mtu) {
+        const Protocol *protocol = packet->getTag<PacketProtocolTag>()->getProtocol();
+        if (protocol == &Protocol::mpls || protocol == &Protocol::ipv4) {
+            processTooBigDatagram(packet, networkInterface, mtu);
+            return;
+        }
+    }
+    packet->removeTagIfPresent<DispatchProtocolReq>();
+    packet->addTagIfAbsent<InterfaceReq>()->setInterfaceId(networkInterface->getInterfaceId());
+    if (networkInterface->isBroadcast() && !networkInterface->getMacAddress().isUnspecified() && packet->findTag<MacAddressReq>() == nullptr)
+        // a LIB entry holds no next hop, so a frame on a broadcast link goes to the broadcast
+        // address; on a point-to-point Ethernet link that is the one neighbor
+        packet->addTag<MacAddressReq>()->setDestAddress(MacAddress::BROADCAST_ADDRESS);
+    // the link layer protocol of the interface encapsulates the packet, as for an IPv4 datagram
+    if (auto networkInterfaceProtocol = networkInterface->getProtocol())
+        ensureEncapsulationProtocolReq(packet, networkInterfaceProtocol, true, false);
+    setDispatchProtocol(packet);
+    sendToL2(packet);
+}
+
+void Mpls::processTooBigDatagram(Packet *packet, const NetworkInterface *networkInterface, int mtu)
+{
+    // the label stack comes off, and each fragment gets a copy of it
+    std::vector<Ptr<MplsHeader>> labelStack; // top entry first
+    bool labeled = packet->getTag<PacketProtocolTag>()->getProtocol() == &Protocol::mpls;
+    while (labeled) {
+        auto mplsHeader = packet->removeAtFront<MplsHeader>();
+        labeled = !mplsHeader->getS();
+        labelStack.push_back(mplsHeader);
+    }
+    int stackLength = 0;
+    for (auto& mplsHeader : labelStack)
+        stackLength += B(mplsHeader->getChunkLength()).get();
+    int maxDatagramLength = mtu - stackLength;
+    const auto& ipv4Header = packet->peekAtFront<Ipv4Header>();
+
+    if (ipv4Header->getDontFragment()) {
+        // RFC 3032 section 3.4: the datagram is not forwarded, and its source gets an ICMP
+        // Destination Unreachable message whose Next-Hop MTU leaves room for the label stack
+        EV_WARN << "discarding a too-big datagram with the DF bit, sending ICMP_DESTINATION_UNREACHABLE" << endl;
+        PacketDropDetails details;
+        details.setReason(OTHER_PACKET_DROP);
+        emit(packetDroppedSignal, packet, &details);
+        if (icmp != nullptr)
+            icmp->sendPtbMessage(packet, maxDatagramLength);
+        delete packet;
+        return;
+    }
+
+    // RFC 3032 section 3.4: each fragment is at least as many octets shorter than the payload
+    // of the link as the label stack is long, and carries the same label stack
+    int headerLength = B(ipv4Header->getHeaderLength()).get();
+    int payloadLength = B(packet->getDataLength()).get() - headerLength;
+    int fragmentLength = ((maxDatagramLength - headerLength) / 8) * 8;
+    if (fragmentLength <= 0)
+        throw cRuntimeError("Cannot fragment datagram: MTU=%d too small for the label stack (%d bytes) and the header (%d bytes)", mtu, stackLength, headerLength);
+    int offsetBase = ipv4Header->getFragmentOffset();
+    EV_DETAIL << "Breaking a too-big datagram into " << (payloadLength + fragmentLength - 1) / fragmentLength << " fragments\n";
+    for (int offset = 0; offset < payloadLength; offset += fragmentLength) {
+        bool lastFragment = offset + fragmentLength >= payloadLength;
+        int thisFragmentLength = lastFragment ? payloadLength - offset : fragmentLength;
+        std::string fragmentName = std::string(packet->getName()) + "-frag-" + std::to_string(offset);
+        if (lastFragment)
+            fragmentName += "-last";
+        Packet *fragment = new Packet(fragmentName.c_str());
+        fragment->copyTags(*packet);
+        fragment->insertAtBack(packet->peekDataAt(B(headerLength + offset), B(thisFragmentLength)));
+        auto fragmentHeader = staticPtrCast<Ipv4Header>(ipv4Header->dupShared());
+        if (!lastFragment)
+            fragmentHeader->setMoreFragments(true);
+        fragmentHeader->setFragmentOffset(offsetBase + offset);
+        fragmentHeader->setTotalLengthField(B(headerLength + thisFragmentLength));
+        fragmentHeader->updateChecksum();
+        fragment->insertAtFront(fragmentHeader);
+        for (auto it = labelStack.rbegin(); it != labelStack.rend(); ++it)
+            fragment->insertAtFront(staticPtrCast<MplsHeader>((*it)->dupShared()));
+        fragment->addTagIfAbsent<PacketProtocolTag>()->setProtocol(labelStack.empty() ? &Protocol::ipv4 : &Protocol::mpls);
+        sendToLink(fragment, networkInterface);
+    }
+    delete packet;
 }
 
 void Mpls::sendToL2(Packet *msg)

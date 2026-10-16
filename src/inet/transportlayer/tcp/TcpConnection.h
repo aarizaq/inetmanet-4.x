@@ -9,6 +9,10 @@
 #ifndef __INET_TCPCONNECTION_H
 #define __INET_TCPCONNECTION_H
 
+#include <climits>
+#include <deque>
+#include <map>
+
 #include "inet/common/SimpleModule.h"
 #include "inet/networklayer/common/IcmpType_m.h"
 #include "inet/networklayer/common/Icmpv6Type_m.h"
@@ -31,15 +35,19 @@ class TcpAlgorithm;
 //@{
 #define TCP_TIMEOUT_CONN_ESTAB        75  // 75 seconds
 #define TCP_TIMEOUT_FIN_WAIT_2        600  // 10 minutes
-#define TCP_TIMEOUT_SYN_REXMIT        3  // initially 3 seconds
-#define TCP_TIMEOUT_SYN_REXMIT_MAX    240  // 4 mins (will only be used with SYN+ACK: with SYN CONN_ESTAB occurs sooner)
 //@}
 
-#define MAX_SYN_REXMIT_COUNT          12  // will only be used with SYN+ACK: with SYN CONN_ESTAB occurs sooner
+// the values of state->ecnMode, from the tcpEcnMode parameter
+#define TCP_ECN_MODE_OFF              0
+#define TCP_ECN_MODE_PASSIVE          1
+#define TCP_ECN_MODE_RFC3168          2
+#define TCP_ECN_MODE_ACCECN           3
+#define TCP_ECN_MODE_ACCECN_PASSIVE   4
+#define TFO_BLACKHOLE_REXMIT_COUNT    2   // TCP Fast Open: the retransmission of a Fast Open SYN that suggests a blackhole (the third transmission, as Linux)
 #define TCP_MAX_WIN                   65535lu  // 65535 bytes, largest value (16 bit) for (unscaled) window size
 #define TCP_MAX_WIN_SCALED            0x3fffffffL // 2^30-1 bytes, largest value for scaled window size
 #define MAX_SACK_BLOCKS               60  // will only be used with SACK
-#define PAWS_IDLE_TIME_THRESH         (24 * 24 * 3600)  // 24 days in seconds (RFC 1323)
+#define PAWS_IDLE_TIME_THRESH         (24 * 24 * 3600)  // 24 days in seconds (RFC 7323 section 5.5)
 
 /**
  * Manages a TCP connection. This class itself implements the TCP state
@@ -48,7 +56,7 @@ class TcpAlgorithm;
  * associated with TCP state changes.
  *
  * The implementation largely follows the functional specification at the end
- * of RFC 793. Code comments extensively quote RFC 793 to make it easier
+ * of RFC 9293. Code comments extensively quote RFC 9293 to make it easier
  * to understand.
  *
  * TcpConnection objects are not used alone -- they are instantiated and managed
@@ -92,27 +100,7 @@ class TcpAlgorithm;
 class INET_API TcpConnection : public SimpleModule
 {
   protected:
-    static simsignal_t tcpConnectionAddedSignal;
-    static simsignal_t stateSignal; // FSM state
-    static simsignal_t sndWndSignal; // snd_wnd
-    static simsignal_t rcvWndSignal; // rcv_wnd
-    static simsignal_t rcvAdvSignal; // current advertised window (=rcv_adv)
     static simsignal_t sndNxtSignal; // sent seqNo
-    static simsignal_t sndAckSignal; // sent ackNo
-    static simsignal_t rcvSeqSignal; // received seqNo
-    static simsignal_t rcvAckSignal; // received ackNo (=snd_una)
-    static simsignal_t unackedSignal; // number of bytes unacknowledged
-    static simsignal_t dupAcksSignal; // current number of received dupAcks
-    static simsignal_t pipeSignal; // current sender's estimate of bytes outstanding in the network
-    static simsignal_t sndSacksSignal; // number of sent Sacks
-    static simsignal_t rcvSacksSignal; // number of received Sacks
-    static simsignal_t rcvOooSegSignal; // number of received out-of-order segments
-    static simsignal_t rcvNASegSignal; // number of received not acceptable segments
-    static simsignal_t sackedBytesSignal; // current number of received sacked bytes
-    static simsignal_t tcpRcvQueueBytesSignal; // current amount of used bytes in tcp receive queue
-    static simsignal_t tcpRcvQueueDropsSignal; // number of drops in tcp receive queue
-    static simsignal_t tcpRcvPayloadBytesSignal; // amount of payload bytes received (including duplicates, out of order etc) for TCP throughput
-
     // connection identification by apps: socketId
     int socketId = -1; // identifies connection within the app
 
@@ -153,12 +141,80 @@ class INET_API TcpConnection : public SimpleModule
     cMessage *connEstabTimer = nullptr;
     cMessage *finWait2Timer = nullptr;
     cMessage *synRexmitTimer = nullptr; // for retransmitting SYN and SYN+ACK
+    cMessage *rackReoTimer = nullptr; // RACK reordering timer (Linux ICSK_TIME_REO_TIMEOUT): fires when a not-yet-lost segment's RACK.rtt+reo_wnd deadline matures between ACKs
+
+    bool sendingWindowProbe = false; // sendProbe() sends a window probe, which gets no ECT and no CWR (RFC 3168 section 6.1.6)
 
     // statistics
     long rcvdSegments = 0;
     long sentSegments = 0;
     uint32_t lastRcvdSeqNo = 0;
     uint32_t lastSentAck = 0;
+
+    // The receive buffer in the accounting of Linux, for windowShrinkAllowed: each
+    // received data segment costs the truesize of its skb (sk_rmem_alloc), until the
+    // application reads all of it, and the window counts the free buffer at the ratio
+    // of payload to truesize (scaling_ratio of tcp_measure_rcv_mss())
+    std::deque<std::pair<uint32_t, uint32_t>> rcvSkbChain; // the unread received segments: payload bytes and truesize
+    uint64_t rcvBufOccupancy = 0; // the sum of the truesizes in rcvSkbChain
+    uint8_t rcvScalingRatio = 128; // payload / truesize, in units of 1/256 (Linux TCP_DEFAULT_SCALING_RATIO)
+    uint32_t rcvMssEstimate = 536; // the estimate of the received MSS that gates the ratio (Linux icsk_ack.rcv_mss)
+    uint32_t rcvqSpace = 0; // windowAutoTuning: the first offer, which bounds the receive space of Linux (rcvq_space.space of tcp_init_buffer_space(), at most 10 MSS); INET has no DRS that grows it
+    uint32_t oooHighestEnd = 0; // the end of the highest out-of-order data (Linux ooo_last_skb)
+    // the advertised window and the receive buffer of this connection from its open
+    // command (TcpSocket::setAdvertisedWindow(), setReceiveBufferSize()); -1: the
+    // parameters of the Tcp module (D-4 of the staged landing: a socket option is
+    // not a module parameter)
+    int socketAdvertisedWindow = -1;
+    int socketReceiveBufferSize = -1;
+    int socketSynRetries = -1; // the SYN retries of this connection (TcpSocket::setSynRetries()); -1: the parameter
+    // MSG_ZEROCOPY: the pending completions, by the sequence number that ends the data
+    // of each zero-copy SEND, and the id of the next one (per connection from 0, as the
+    // ids of Linux SO_ZEROCOPY)
+    std::map<uint32_t, uint32_t> zerocopySeqNums;
+    uint32_t nextZerocopyId = 0;
+    // MSG_EOR: the record boundaries, that is the sequence numbers that end the data of
+    // each SEND with TcpSendEorReq, in sequence order. No segment spans a boundary.
+    std::deque<uint32_t> eorSeqNums;
+    // pushSegmentsOnWriteBoundary: the sequence numbers that end a segment with PSH, in
+    // sequence order: the end of each write without MSG_MORE and of the data of a Fast
+    // Open SYN (pushSeqNums), and the marks of forced_push() (forcedPushSeqNums)
+    std::deque<uint32_t> pushSeqNums;
+    std::deque<uint32_t> forcedPushSeqNums;
+    // SO_TIMESTAMPING: the delivered data carries the time of its delivery
+    // (TcpRxTimestampInd), as TcpSetTimestampingCommand asks; a member, because the
+    // command can come before the open
+    bool rxTimestampingEnabled = false;
+    // TCP_NOTSENT_LOWAT from TcpSetNotsentLowatCommand, which can come before the open;
+    // INT_MIN: no command, so the notsentLowat parameter
+    int notsentLowatSockopt = INT_MIN;
+    // the application writer waits for space in the send buffer (Linux SOCK_NOSPACE), as
+    // TcpSetWriterBlockedCommand tells; it drives the send buffer limited time
+    bool writerBlocked = false;
+    // the application owns the connection (Linux sk->sk_socket): false for a connection
+    // that the application did not accept yet, as TcpSetOwnedCommand tells
+    bool appOwned = true;
+    // an accepted segment ends beyond the right edge of the last offered window
+    // (acceptBeyondBufferAtEmptyQueue); adaptiveDelayedAcks then sends no ACK at once
+    bool overWindowAcceptPending = false;
+    // SO_KEEPALIVE of this connection (TcpSocket::setKeepAlive()), also from before the
+    // open; -1: the keepAliveEnabled parameter
+    int keepAliveSockopt = -1;
+    // TCP_NODELAY of this connection (TcpSocket::setNoDelay()), also from before the
+    // open; -1: the nagleEnabled parameter
+    int noDelaySockopt = -1;
+    // TCP_MAXSEG of this connection (TcpSocket::setMaxSeg()), also from before the open;
+    // -1: the mss parameter alone
+    int maxSegSockopt = -1;
+    // mss = -1: snd_mss takes the MSS of the address family when the peer is known
+    // (resolveAddressFamilyMss())
+    bool mssFromAddressFamily = false;
+    // the route MTU of this connection (TcpSocket::setPathMtu()), also from before the
+    // open; 0: the pathMtu parameter
+    int pathMtuSockopt = 0;
+    // TCP_CORK of this connection (TcpSocket::setCork()), also from before the open; -1: off
+    int corkSockopt = -1;
+    int rcvBufSockopt = -1; // SO_RCVBUF of the open connection (TcpSetRcvBufCommand); -1: none
 
   protected:
     /** @name FSM transitions: analysing events and executing state transitions */
@@ -209,11 +265,17 @@ class INET_API TcpConnection : public SimpleModule
     /** @name Processing of TCP options. Invoked from readHeaderOptions(). Return value indicates whether the option was valid. */
     //@{
     virtual bool processMSSOption(const Ptr<const TcpHeader>& tcpHeader, const TcpOptionMaxSegmentSize& option);
+    /** RFC 9293 MUST-15: without an MSS option in the SYN of the peer, use the default send MSS of its address family. */
+    virtual void applyDefaultSendMss(const Ptr<const TcpHeader>& tcpHeader, const L3Address& peerAddr);
     virtual bool processWSOption(const Ptr<const TcpHeader>& tcpHeader, const TcpOptionWindowScale& option);
     virtual bool processSACKPermittedOption(const Ptr<const TcpHeader>& tcpHeader, const TcpOptionSackPermitted& option);
-    virtual bool processSACKOption(const Ptr<const TcpHeader>& tcpHeader, const TcpOptionSack& option);
     virtual bool processTSOption(const Ptr<const TcpHeader>& tcpHeader, const TcpOptionTimestamp& option);
+    virtual bool processFastOpenOption(const Ptr<const TcpHeader>& tcpHeader, const TcpOptionTcpFastOpen& option);
+    virtual bool processFastOpenExpOption(const Ptr<const TcpHeader>& tcpHeader, const TcpOptionTcpFastOpenExp& option);
     //@}
+
+    /** TCP Fast Open (RFC 7413): processes the cookie of a Fast Open option of a SYN or a SYN-ACK. */
+    virtual bool processFastOpenCookieBytes(const std::vector<uint8_t>& cookie);
 
     /** @name Processing timeouts. Invoked from processTimer(). */
     //@{
@@ -221,7 +283,68 @@ class INET_API TcpConnection : public SimpleModule
     virtual void process_TIMEOUT_CONN_ESTAB();
     virtual void process_TIMEOUT_FIN_WAIT_2();
     virtual void process_TIMEOUT_SYN_REXMIT(TcpEventCode& event);
+
+    /**
+     * rackReoTimer expired: re-run RACK loss detection (time has advanced, so
+     * pending deadlines may have matured) and let the recovery strategy react
+     * (enter fast recovery / retransmit) via ITcpRecovery::reoTimeout().
+     */
+    virtual void processRackReoTimeout();
     //@}
+
+  public:
+    /**
+     * (Re)arms the RACK reordering timer for the given delay, or cancels it when
+     * delay is negative. Called by the recovery strategy from RACK loss detection.
+     */
+    virtual void rescheduleRackReoTimer(simtime_t delay);
+
+    /**
+     * Maps INET's independent loss-recovery bools onto Linux's tcp_ca_state
+     * ordinals (TCP_CA_Open=0, Disorder=1, CWR=2, Recovery=3, Loss=4), for
+     * TcpStatusInfo::caState.
+     */
+    virtual int deriveLinuxCaState() const;
+
+    /**
+     * The sequence number from which the advertised window and the bytes in flight
+     * count the data: snd_una, but the first data byte while a TCP Fast Open
+     * server sends data in SYN_RCVD. Its SYN-ACK is then not acknowledged, and
+     * snd_una stays at the ISS, but the SYN-ACK is not data (Linux starts the
+     * child socket at snd_una = ISS+1).
+     */
+    virtual uint32_t getDataSndUna() const;
+
+    /**
+     * Returns whether the last accepted segment ended beyond the right edge of the
+     * last offered window, and clears that mark. Linux sends no immediate ACK for
+     * such a segment (rcv_neg_window).
+     */
+    bool takeOverWindowAccept() { bool b = overWindowAcceptPending; overWindowAcceptPending = false; return b; }
+
+    /**
+     * Sends the partial segment that TCP_CORK or MSG_MORE holds: at an uncork, at
+     * TCP_NODELAY, and at the cork timer, which also asks for PSH (forcePush).
+     */
+    virtual void flushCorkedData(bool forcePush);
+
+    /**
+     * MSG_EOR: the last record boundary after snd_nxt and before the given sequence
+     * number, or snd_nxt if there is none.
+     */
+    virtual uint32_t getLastRecordBoundaryBefore(uint32_t seq) const;
+
+    /** MSG_ZEROCOPY: notifies the application of each zero-copy SEND whose data went out */
+    virtual void notifyZerocopyCompletions();
+
+    /**
+     * pushSegmentsOnWriteBoundary: the number of segments that Linux gives the NIC as
+     * one GSO burst (tcp_write_xmit(), tcp_tso_autosize()), at the given congestion
+     * window and bytes in flight.
+     */
+    virtual uint32_t getGsoBurstSegments(uint32_t congestionWindow, uint32_t bytesInFlight, uint32_t effectiveMss) const;
+
+  protected:
 
     /** Utility: clone a listening connection. Used for forking. */
     virtual TcpConnection *cloneListeningConnection();
@@ -230,6 +353,9 @@ class INET_API TcpConnection : public SimpleModule
 
     /** Utility: creates send/receive queues and tcpAlgorithm */
     virtual void initConnection(TcpOpenCommand *openCmd);
+
+    /** Utility: creates the submodule `algorithm` of the NED type that tcpAlgorithmClass names */
+    virtual TcpAlgorithm *createTcpAlgorithm(const char *tcpAlgorithmClass);
 
     /** Utility: set snd_mss, rcv_wnd and sack in newly created state variables block */
     virtual void configureStateVariables();
@@ -258,6 +384,12 @@ class INET_API TcpConnection : public SimpleModule
     /** Utility: get TSval from segments TS header option */
     virtual uint32_t getTSval(const Ptr<const TcpHeader>& tcpHeader) const;
 
+    /** Utility: sets TS.Recent from an acceptable segment (RFC 7323 section 5.3, R3) */
+    virtual void updateTsRecent(const Ptr<const TcpHeader>& tcpHeader);
+
+    /** Utility: the TS option of the segment, or nullptr */
+    virtual const TcpOptionTimestamp *findTSOption(const Ptr<const TcpHeader>& tcpHeader) const;
+
     /** Utility: get TSecr from segments TS header option */
     virtual uint32_t getTSecr(const Ptr<const TcpHeader>& tcpHeader) const;
 
@@ -276,8 +408,36 @@ class INET_API TcpConnection : public SimpleModule
     /** Utility: sends 1 bytes as "probe", called by the "persist" mechanism */
     virtual bool sendProbe();
 
+    /**
+     * Makes the octet of a zero-window probe that the receiver did not accept unsent
+     * data again: snd_max and snd_nxt go back to snd_una, and the retransmission queue
+     * forgets the octet. Only in the persist state, where the probe octet alone is in
+     * flight.
+     */
+    virtual void unsendWindowProbe();
+
+    /** Utility: sends a keepalive probe, a segment without data with SEG.SEQ = SND.UNA - 1, which the peer answers with an ACK (RFC 9293 section 3.8.4) */
+    virtual void sendKeepAliveProbe();
+
+    /** Utility: sends a segment without data with SEG.SEQ = SND.UNA - 1, which the peer answers with an ACK (Linux tcp_xmit_probe_skb()): the keepalive probe, and the zero-window probe of Linux */
+    virtual void sendSegmentBelowWindow(const char *name);
+
     /** Utility: retransmit one segment from snd_una */
     virtual void retransmitOneSegment(bool called_at_rto);
+
+    /**
+     * RFC 8985 section 7.3 loss probe: send one segment of new data if the data
+     * and the receive window allow it, else the FIN again, else the last segment
+     * again. Returns true if a segment was sent.
+     */
+    virtual bool sendTlpProbe();
+
+    /**
+     * Called at a retransmission timeout: marks the outstanding data lost in the
+     * retransmission queue, as Linux tcp_timeout_mark_lost() does. Without SACK,
+     * it also removes the inferred SACKs and the retransmitted marks.
+     */
+    virtual void markOutstandingLostOnRto();
 
     /** Utility: retransmit all from snd_una to snd_max */
     virtual void retransmitData();
@@ -285,9 +445,12 @@ class INET_API TcpConnection : public SimpleModule
     /** Utility: sends RST */
     virtual void sendRst(uint32_t seqNo);
     /** Utility: sends RST; does not use connection state */
-    virtual void sendRst(uint32_t seq, L3Address src, L3Address dest, int srcPort, int destPort);
+    virtual void sendRst(uint32_t seq, L3Address src, L3Address dest, int srcPort, int destPort, bool withTimestamp = false);
+
+    /** Utility: sends the RST of a user abort, with the TS option if it is enabled (RFC 7323 section 5.2) */
+    virtual void sendAbortRst();
     /** Utility: sends RST+ACK; does not use connection state */
-    virtual void sendRstAck(uint32_t seq, uint32_t ack, L3Address src, L3Address dest, int srcPort, int destPort);
+    virtual void sendRstAck(uint32_t seq, uint32_t ack, L3Address src, L3Address dest, int srcPort, int destPort, bool withTimestamp = false);
 
     /** Utility: sends FIN */
     virtual void sendFin();
@@ -299,8 +462,39 @@ class INET_API TcpConnection : public SimpleModule
      */
     virtual uint32_t sendSegment(uint32_t bytes);
 
+    /** Puts the data of a SEND command into the send queue, and starts the busy time of TCP_INFO. */
+    virtual void enqueueSendCommandData(Packet *packet);
+
     /** Utility: adds control info to segment and sends it to IP */
     virtual void sendToIP(Packet *tcpSegment, const Ptr<TcpHeader>& tcpHeader);
+
+    /** AccECN: the ACE value that feeds back an IP ECN codepoint in the handshake (RFC 9768 Tables 2 and 3) */
+    static uint8_t accEcnReflectedAce(int ipEcnCodepoint);
+
+    /** Utility: the IP ECN codepoint of a received segment, IP_ECN_NOT_ECT without one */
+    static int receivedEcnCodepoint(Packet *tcpSegment);
+
+    /** AccECN: reads the ACE field of an ACK that makes progress, and counts the CE marks that it reports (RFC 9768 section 3.2.2.5) */
+    virtual void processAccEcnAce(const Ptr<const TcpHeader>& tcpHeader);
+    /** AccECN receiver: counts the CE mark and the payload bytes of a received segment (RFC 9768 section 3.2). */
+    virtual void countAccEcnReceived(Packet *tcpSegment, int payloadLength);
+    /**
+     * AccECN (RFC 9768 section 3.2.3): whether the next segment after the handshake
+     * carries the AccECN option, and with which fields. order: 0 (kind 172) or 1
+     * (kind 174); wanted: the number of fields to send if they fit; required: the
+     * fewest fields to send, those that changed since the last option.
+     */
+    virtual bool getAccEcnOptionFields(int& order, int& wanted, int& required) const;
+    /** Appends the AccECN option with the fields that fit in the free option space. */
+    virtual void appendAccEcnOption(const Ptr<TcpHeader>& tcpHeader, int order, int wanted, int required);
+    /**
+     * AccECN: the option bytes in use, for the fit of the AccECN option: the real
+     * length, or with accEcnOptionPolicy="linux" the length of the Linux layout
+     * (NOP, NOP, TS and NOP, NOP, SACK).
+     */
+    virtual unsigned int getAccEcnOptionSpaceUsed(const Ptr<TcpHeader>& tcpHeader) const;
+    /** AccECN: whether an option of the given number of fields fits after the used option bytes. */
+    virtual bool accEcnOptionFits(unsigned int used, int numFields, bool sack) const;
 
     /** Utility: start SYN-REXMIT timer */
     virtual void startSynRexmitTimer();
@@ -343,8 +537,34 @@ class INET_API TcpConnection : public SimpleModule
     /** Utility: update receiver queue related variables and statistics - called before setting rcv_wnd */
     virtual void updateRcvQueueVars();
 
+    /**
+     * The truesize of the skb of a received TCP segment in Linux, from a tun device as
+     * packetdrill uses, and struct sk_buff (232 bytes): a small packet with
+     * skb_shared_info (320 bytes) in a power-of-two allocation, a larger one in a page
+     * and pages of the largest order up to 3 that the rest fills.
+     */
+    static uint32_t linuxSkbTruesize(uint32_t payloadBytes);
+    /**
+     * The time that the send buffer limits the sender (Linux TCP_CHRONO_SNDBUF_LIMITED):
+     * it runs while the application writer is blocked, no unsent data waits, and data
+     * is in flight. Called at each event that can change this condition.
+     */
+    virtual void updateSndbufLimitedChrono();
+    /** Charges the receive buffer with a received data segment (rcvSkbChain). */
+    virtual void chargeRcvBuffer(uint32_t payloadBytes);
+    /** Releases the receive buffer for the data that the application read. */
+    virtual void releaseRcvBuffer(uint64_t readBytes);
+    /** windowAutoTuning: the growth of the receive buffer with out-of-order data that end at endSeq */
+    virtual void growRcvBufferForOutOfOrderData(uint32_t endSeq);
+
     /** Utility: returns true when receive queue has enough space for store the tcpHeader */
     virtual bool hasEnoughSpaceForSegmentInReceiveQueue(Packet *tcpSegment, const Ptr<const TcpHeader>& tcpHeader);
+
+    /** Utility: the window that the receiver can offer now, from its free receive buffer,
+     *  before the rule that the window does not shrink (Linux __tcp_select_window()).
+     *  It changes no state.
+     */
+    virtual uint32_t selectRcvWnd();
 
     /** Utility: update receive window (rcv_wnd), and calculate scaled value if window scaling enabled.
      *  Returns the (scaled) receive window size.
@@ -352,7 +572,42 @@ class INET_API TcpConnection : public SimpleModule
     virtual uint16_t updateRcvWnd();
 
     /** Utility: update window information (snd_wnd, snd_wl1, snd_wl2) */
+    /**
+     * FlightSize for the ssthresh of fast retransmit (RFC 5681 equation (4)): the data
+     * that was sent but is not cumulatively acknowledged. Step 2 of RFC 5681 section
+     * 3.2 leaves out the data that Limited Transmit sent on the duplicate ACKs.
+     */
+    virtual uint32_t getFlightSize() const;
+
     virtual void updateWndInfo(const Ptr<const TcpHeader>& tcpHeader, bool doAlways = false);
+
+    /**
+     * The MSS that congestion control counts with: snd_mss less the space of the
+     * TCP options that every segment of the established connection carries.
+     */
+    virtual uint32_t calculateEffectiveMss();
+
+    /** mss = -1: snd_mss and the announced MSS take the MSS of the address family of the peer, 1460 for IPv4 and 1440 for IPv6 */
+    virtual void resolveAddressFamilyMss();
+
+    /** The path MTU search of RFC 4821 (mtuProbing): the MSS of the peer, limited by TCP_MAXSEG (Linux mss_clamp) */
+    virtual uint32_t getMssClamp() const;
+    /** The payload of a segment of this MTU, without the options of each segment, at most getMssClamp() (Linux tcp_mtu_to_mss()) */
+    virtual uint32_t mtuToMss(uint32_t mtu) const;
+    /** The MTU of a segment with this payload (Linux tcp_mss_to_mtu()) */
+    virtual uint32_t mssToMtu(uint32_t mss) const;
+    /** An ICMP error lowered the MSS in SYN_SENT: the next SYN announces it, and a SYN with data goes again at once (Linux tcp_v4_mtu_reduced()) */
+    virtual void retransmitSynAfterMtuReduction(uint32_t newMss);
+    /** A new route MTU bounds the path MTU search (Linux tcp_sync_mss()) */
+    virtual void limitMtuSearch(uint32_t mtu);
+    /** Arms the path MTU search when the MSS is settled (Linux tcp_mtup_init()) */
+    virtual void initMtuProbing();
+    /** The payload of the probe to send now; 0: wait for room for a probe; -1: no probe (Linux tcp_mtu_probe()) */
+    virtual int64_t getMtuProbeBytes(uint32_t buffered, uint32_t congestionWindow, uint32_t bytesInFlight) const;
+    /** The peer acknowledged the probe (Linux tcp_mtup_probe_success()) */
+    virtual void mtuProbeSucceeded();
+    /** The probe is lost (Linux tcp_mtup_probe_failed()) */
+    virtual void mtuProbeFailed();
 
   public:
     TcpConnection() {}
@@ -401,6 +656,12 @@ class INET_API TcpConnection : public SimpleModule
     TcpReceiveQueue *getReceiveQueueForUpdate() { return receiveQueue; }
     const TcpAlgorithm *getTcpAlgorithm() const { return tcpAlgorithm; }
     TcpAlgorithm *getTcpAlgorithmForUpdate() { return tcpAlgorithm; }
+
+    /**
+     * Cancels and deletes a timer of the algorithm. The connection owns the timers, so it
+     * deletes them in its own context: the algorithm module deletes itself in its context.
+     */
+    void deleteTimer(cMessage *timer) { Enter_Method_Silent(); delete cancelEvent(timer); }
 
     Tcp *getTcpMain() { return tcpMain; }
     //@}
@@ -457,6 +718,12 @@ class INET_API TcpConnection : public SimpleModule
     static bool isHardIcmpv6Error(int type, int code);
 
     /**
+     * Returns false if icmpSequenceCheck is on and the segment that the ICMP error quotes
+     * has a sequence number outside SND.UNA to SND.MAX (RFC 5927 section 4.1).
+     */
+    virtual bool isIcmpErrorInWindow(const Packet *originalPacket) const;
+
+    /**
      * Returns true if the ICMPv4 error is "Fragmentation Needed and DF Set"
      * (type=3, code=4), used for Path MTU Discovery (RFC 1191).
      */
@@ -467,47 +734,6 @@ class INET_API TcpConnection : public SimpleModule
      * (type=2), used for Path MTU Discovery (RFC 1981).
      */
     static bool isPacketTooBig(Icmpv6Type type, int code);
-
-    /**
-     * For SACK TCP. RFC 3517, page 3: "This routine returns whether the given
-     * sequence number is considered to be lost.  The routine returns true when
-     * either DupThresh discontiguous SACKed sequences have arrived above
-     * 'SeqNum' or (DupThresh * SMSS) bytes with sequence numbers greater
-     * than 'SeqNum' have been SACKed.  Otherwise, the routine returns
-     * false."
-     */
-    virtual bool isLost(uint32_t seqNum);
-
-    /**
-     * For SACK TCP. RFC 3517, page 3: "This routine traverses the sequence
-     * space from HighACK to HighData and MUST set the "pipe" variable to an
-     * estimate of the number of octets that are currently in transit between
-     * the TCP sender and the TCP receiver."
-     */
-    virtual void setPipe();
-
-    /**
-     * For SACK TCP. RFC 3517, page 3: "This routine uses the scoreboard data
-     * structure maintained by the Update() function to determine what to transmit
-     * based on the SACK information that has arrived from the data receiver
-     * (and hence been marked in the scoreboard).  NextSeg () MUST return the
-     * sequence number range of the next segment that is to be
-     * transmitted..."
-     * Returns true if a valid sequence number (for the next segment) is found and
-     * returns false if no segment should be send.
-     */
-    virtual bool nextSeg(uint32_t& seqNum);
-
-    /**
-     * Utility: send data during Loss Recovery phase (if SACK is enabled).
-     */
-    virtual void sendDataDuringLossRecoveryPhase(uint32_t congestionWindow);
-
-    /**
-     * Utility: send segment during Loss Recovery phase (if SACK is enabled).
-     * Returns the number of bytes sent.
-     */
-    virtual uint32_t sendSegmentDuringLossRecoveryPhase(uint32_t seqNum);
 
     /**
      * Utility: send one new segment from snd_max if allowed (RFC 3042).

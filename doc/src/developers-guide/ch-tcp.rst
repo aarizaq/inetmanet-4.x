@@ -109,12 +109,11 @@ The :ned:`Tcp` module has the following parameters:
 
 - :par:`advertisedWindow` in bytes, corresponds with the maximal
   receiver buffer capacity (Note: normally, NIC queues should be at
-  least this size, default is 14*mss)
+  least this size, default is 65535 bytes)
 
-- :par:`delayedAcksEnabled` delayed ACK algorithm (RFC 1122)
-  enabled/disabled
+- :par:`delayedAcksEnabled` delayed ACK algorithm (RFC 1122) enabled/disabled
 
-- :par:`nagleEnabled` Nagle’s algorithm (RFC 896) enabled/disabled
+- :par:`nagleEnabled` Nagle's algorithm (RFC 1122) enabled/disabled
 
 - :par:`limitedTransmitEnabled` Limited Transmit algorithm (RFC 3042)
   enabled/disabled (can be used for
@@ -123,33 +122,41 @@ The :ned:`Tcp` module has the following parameters:
 - :par:`increasedIWEnabled` Increased Initial Window (RFC 3390)
   enabled/disabled
 
-- :par:`sackSupport` Selective Acknowledgment (RFC 2018, 2883, 3517)
+- :par:`sackSupport` Selective Acknowledgment (RFC 2018, 2883, 6675)
   support (header option) (SACK will be enabled for a connection if
   both endpoints support it)
 
-- :par:`windowScalingSupport` Window Scale (RFC 1323) support (header
+- :par:`windowScalingSupport` Window Scale (RFC 7323) support (header
   option) (WS will be enabled for a connection if both endpoints
   support it)
 
-- :par:`timestampSupport` Timestamps (RFC 1323) support (header option)
+- :par:`timestampSupport` Timestamps (RFC 7323) support (header option)
   (TS will be enabled for a connection if both endpoints support it)
 
-- :par:`mss` Maximum Segment Size (RFC 793) (header option, default is
-  536)
+- :par:`mss` Maximum Segment Size (RFC 9293) (header option); the
+  default, -1, takes the MSS of the address family: 1460 bytes for IPv4
+  and 1440 bytes for IPv6
 
-- :par:`tcpAlgorithmClass` the name of the TCP flavour
+- :par:`tcpAlgorithmClass` the name of the TCP flavour, which is the NED
+  type of the submodule ``algorithm`` of each connection
 
-  Possible values are “TCPReno” (default), “TCPNewReno”, “TCPTahoe”,
-  “TCPNoCongestionControl” and “DumpTCP”. In the future, other classes
-  can be written which implement Vegas, LinuxTCP or other variants. See
-  section `1.3 <#sec:tcp_algorithms>`__ for detailed description of
-  implemented flavours.
+  Possible values are “TcpNewReno” (default), “TcpReno”, “TcpTahoe”,
+  “TcpCubic”, “TcpVegas”, “TcpWestwood”, “DcTcp”,
+  “TcpNoCongestionControl” and “DumbTcp”. See section
+  `1.3 <#sec:tcp_algorithms>`__ for detailed description of implemented
+  flavours.
 
   Note that TCPOpenCommand allows tcpAlgorithmClass to be chosen
   per-connection.
 
 - :par:`recordStats` if set to false it disables writing an excessive
   amount of output vectors
+
+The defaults of these parameters follow the RFCs. :ned:`LinuxTcp` and
+:ned:`LegacyTcp` extend :ned:`Tcp` and change only defaults:
+:ned:`LinuxTcp` sets the defaults of Linux, and :ned:`LegacyTcp` the
+defaults of :ned:`Tcp` before it took those of the RFCs. A change of a
+default of :ned:`Tcp` adds the old value to :ned:`LegacyTcp`.
 
 TCP connections
 ---------------
@@ -225,8 +232,8 @@ The application opens a connection to a remote server by sending the TCP
 a TCP_C_OPEN_ACTIVE command. The TCP creates a :cpp:`TcpConnection`
 object and sends a SYN segment. The initial sequence number is selected
 according to the simulation time: 0 at time 0, and increased by 1 each
-4 µs. If there is no response to the SYN segment, it retries after 3s,
-9s, 21s, and 45s. After 75s, a connection establishment
+4 µs. If there is no response to the SYN segment, it retries after 1s,
+3s, 7s, 15s, 31s, and 63s. After 75s, a connection establishment
 timeout (TCP_I_TIMEOUT) is reported to the application and the connection
 is closed.
 
@@ -244,7 +251,7 @@ receives a TCP_I_CONNECTION_REFUSED message.
    If you do an active OPEN, then send data and close before the connection
    has reached ESTABLISHED, the connection will go from SYN_SENT to CLOSED
    without actually sending the buffered data. This is consistent with
-   RFC 793 but may not be what you would expect.
+   RFC 9293 but may not be what you would expect.
 
 
 
@@ -375,8 +382,12 @@ numbers, windows of the receiver and sender, etc.
 TCP algorithms
 --------------
 
-The :cpp:`TcpAlgorithm` object controls retransmissions, congestion
+The :cpp:`TcpAlgorithm` module controls retransmissions, congestion
 control, and ACK sending: delayed ACKs, slow start, fast retransmit, etc.
+Each connection creates one as its submodule ``algorithm``. The module
+holds the parameters of the algorithm, and Qtenv shows them with its
+state variables. The connection calls the algorithm from C++, schedules
+its timers and emits its signals.
 They all extend the :cpp:`TcpAlgorithm` class. This simplifies the
 design of :cpp:`TcpConnection` and makes it a lot easier to implement
 TCP variations such as Tahoe, NewReno, Vegas, or LinuxTCP.
@@ -384,7 +395,10 @@ TCP variations such as Tahoe, NewReno, Vegas, or LinuxTCP.
 Currently implemented algorithm classes are :cpp:`TcpReno`,
 :cpp:`TcpTahoe`, :cpp:`TcpNewReno`, :cpp:`TcpNoCongestionControl`, and
 :cpp:`DumbTcp`. It is also possible to add new TCP variations by
-implementing :cpp:`TcpAlgorithm`.
+implementing :cpp:`TcpAlgorithm`. A new variation also needs a simple
+module type that extends :ned:`TcpAlgorithm`, with the C++ class in its
+``@class`` property: the connection creates the algorithm from its NED
+type, and stops with an error if there is none.
 
 .. graphviz:: figures/tcp_algorithms.dot
    :align: center
@@ -403,10 +417,10 @@ etc. Because this algorithm does not send duplicate ACKs when it receives
 out-of-order segments, it does not work well together with other
 algorithms.
 
-TcpBaseAlg
+TcpAlgorithmBase
 ~~~~~~~~~~
 
-The :cpp:`TcpBaseAlg` is the base class of the INET implementation of
+The :cpp:`TcpAlgorithmBase` is the base class of the INET implementation of
 Tahoe, Reno, and NewReno. It implements basic TCP algorithms for
 adaptive retransmissions, persistence timers, delayed ACKs, Nagle’s
 algorithm, Increased Initial Window – EXCLUDING congestion control.
@@ -416,7 +430,7 @@ Delayed ACK
 ^^^^^^^^^^^
 
 When the :par:`delayedAcksEnabled` parameter is set to true, the
-:cpp:`TcpBaseAlg` applies a 200ms delay before sending ACKs.
+:cpp:`TcpAlgorithmBase` applies a 200ms delay before sending ACKs.
 
 Nagle’s algorithm
 ^^^^^^^^^^^^^^^^^
@@ -438,12 +452,13 @@ the window becomes positive.
 Initial Congestion Window
 ^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Congestion window is set to 1 SMSS when the connection is established.
-If the :par:`increasedIWEnabled` parameter is true, then the initial
-window is increased to 4380 bytes, but at least 2 SMSS and at most 4
-SMSS. The congestion window is not updated afterwards; subclasses can
+When the connection is established, the :par:`initialWindow` parameter
+sets the congestion window. The default, ``rfc3390``, sets it to 4380
+bytes, but at least 2 SMSS and at most 4 SMSS (RFC 5681 section 3.1);
+``rfc2001`` sets it to 1 SMSS, and ``rfc6928`` to the ten segments of
+RFC 6928. The congestion window is not updated afterwards; subclasses can
 add congestion control by redefining virtual methods of the
-:cpp:`TcpBaseAlg` class in their own class implementation.
+:cpp:`TcpAlgorithmBase` class in their own class implementation.
 
 Duplicate ACKs
 ^^^^^^^^^^^^^^
@@ -457,7 +472,7 @@ RTO calculation
 
 Retransmission timeout (:math:`RTO`) is calculated according to Jacobson's
 algorithm (with :math:`\alpha=7/8`), and Karn’s modification is also
-applied. The initial value of the :math:`RTO` is 3s, its minimum is 1s,
+applied. The initial value of the :math:`RTO` is 1s, its minimum is 1s,
 maximum is 240s (2 MSL).
 
 TCPNoCongestion
@@ -469,7 +484,7 @@ Can be used to demonstrate the effect of lack of congestion control.
 TcpTahoe
 ~~~~~~~~
 
-The :cpp:`TcpTahoe` algorithm class extends :cpp:`TcpBaseAlg` with *Slow
+The :cpp:`TcpTahoe` algorithm class extends :cpp:`TcpAlgorithmBase` with *Slow
 Start*, *Congestion Avoidance*, and *Fast Retransmit* congestion control
 algorithms. This algorithm initiates a *Slow Start* when a packet loss
 is detected.
@@ -477,9 +492,9 @@ is detected.
 Slow Start
 ^^^^^^^^^^
 
-The congestion window is initially set to 1 SMSS or in case of
-:par:`increasedIWEnabled` to 4380 bytes (but no less than 2 SMSS and
-no more than 4 SMSS). The window is increased with each incoming ACK by 1
+The congestion window is initially set to the initial window
+(:par:`initialWindow`): by default 4380 bytes, but no less than 2 SMSS
+and no more than 4 SMSS. The window is increased with each incoming ACK by 1
 SMSS, so it is approximately doubled in each RTT.
 
 Congestion Avoidance

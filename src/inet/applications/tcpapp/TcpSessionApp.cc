@@ -124,8 +124,9 @@ void TcpSessionApp::handleTimer(cMessage *msg)
 void TcpSessionApp::sendData()
 {
     long numBytes = commands[commandIndex].numBytes;
-    EV_INFO << "sending data with " << numBytes << " bytes\n";
-    sendPacket(createDataPacket(numBytes));
+    bool eor = commands[commandIndex].eor;
+    EV_INFO << "sending data with " << numBytes << " bytes" << (eor ? " (eor)" : "") << "\n";
+    sendPacket(createDataPacket(numBytes), eor);
 
     if (++commandIndex < (int)commands.size()) {
         simtime_t tSend = commands[commandIndex].tSend;
@@ -147,8 +148,9 @@ Packet *TcpSessionApp::createDataPacket(long sendBytes)
 {
     const char *dataTransferMode = par("dataTransferMode");
     Ptr<Chunk> payload;
+    int packetData = par("packetData");
     if (!strcmp(dataTransferMode, "bytecount")) {
-        payload = makeShared<ByteCountChunk>(B(sendBytes));
+        payload = packetData == -1 ? makeShared<ByteCountChunk>(B(sendBytes)) : makeShared<ByteCountChunk>(B(sendBytes), packetData);
     }
     else if (!strcmp(dataTransferMode, "object")) {
         const auto& applicationPacket = makeShared<ApplicationPacket>();
@@ -160,7 +162,7 @@ Packet *TcpSessionApp::createDataPacket(long sendBytes)
         std::vector<uint8_t> vec;
         vec.resize(sendBytes);
         for (int i = 0; i < sendBytes; i++)
-            vec[i] = (bytesSent + i) & 0xFF;
+            vec[i] = packetData == -1 ? (bytesSent + i) & 0xFF : packetData;
         bytesChunk->setBytes(vec);
         payload = bytesChunk;
     }
@@ -236,9 +238,19 @@ void TcpSessionApp::parseScript(const char *script)
         while (isdigit(*s))
             s++;
 
+        // MSG_EOR: the keyword "eor" after the number of bytes ends a record with this SEND
+        while (isspace(*s))
+            s++;
+
+        bool eor = false;
+        if (strncmp(s, "eor", 3) == 0 && !isalnum(s[3])) {
+            eor = true;
+            s += 3;
+        }
+
         // add command
-        EV_DEBUG << " add command (" << tSend << "s, " << numBytes << "B)\n";
-        commands.push_back(Command(tSend, numBytes));
+        EV_DEBUG << " add command (" << tSend << "s, " << numBytes << "B" << (eor ? ", eor" : "") << ")\n";
+        commands.push_back(Command(tSend, numBytes, eor));
 
         // skip delimiter
         while (isspace(*s))

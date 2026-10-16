@@ -161,6 +161,26 @@ class INET_API Tcp : public TransportProtocolBase
     TcpAppConnMap tcpAppConnMap;
     TcpConnMap tcpConnMap;
 
+    // TCP Fast Open (RFC 7413): the key of the cookies that this module gives as a
+    // server, and the cookies that it keeps as a client (RFC 7413 section 4.1.3),
+    // with the MSS that each server announced. The key comes from the RNG at its
+    // first use, so a simulation without Fast Open draws no number.
+    bool fastOpenKeySet = false;
+    uint8_t fastOpenKey[16] = {};
+    // exp: the cached cookie came in the experimental option (kind 254). tryExp: the
+    // option for a cookie request, while no cookie is cached (Linux tcpm_fastopen
+    // try_exp): 0 = kind 34; 1 = a kind 34 request had no answer, so the next
+    // request uses kind 254; 2 = that request had no answer too, so kind 34 again.
+    // It never goes back, so kind 254 is tried once.
+    struct FastOpenCacheEntry { std::vector<uint8_t> cookie; uint32_t peerMss = 0; bool exp = false; uint8_t tryExp = 0; };
+    std::map<L3Address, FastOpenCacheEntry> fastOpenCookieCache;
+    int fastOpenCookieCacheSize = 0; // from the fastopenCookieCacheSize parameter
+    // TCP Fast Open, client: blackhole detection (RFC 7413 section 4.1.3.1). After a
+    // suspected blackhole, no connection of the module uses Fast Open for a time
+    // (as in Linux).
+    int fastOpenBlackholeCount = 0;
+    simtime_t fastOpenDisabledUntil = SIMTIME_ZERO;
+
     ushort lastEphemeralPort = static_cast<ushort>(-1);
     std::multiset<ushort> usedEphemeralPorts;
     long numSegmentsSent = 0;
@@ -182,6 +202,11 @@ class INET_API Tcp : public TransportProtocolBase
   public:
     ChecksumMode checksumMode = CHECKSUM_MODE_UNDEFINED;
     int msl;
+    bool alignOptions = true; // from the alignOptions parameter: align the options with NOPs
+    bool accEcnBareTimeWaitAck = false; // from the accEcnBareTimeWaitAck parameter
+    bool accEcnOptionLinux = false; // from the accEcnOptionPolicy parameter: "linux"
+    bool sendMssOption = true; // from the sendMssOption parameter: send the MSS option in the SYN and the SYN-ACK
+    bool ecnMarkAll = false; // from the ecnMarkAll parameter
 
   public:
     Tcp() {}
@@ -204,6 +229,58 @@ class INET_API Tcp : public TransportProtocolBase
      * during processing of OPEN_ACTIVE or OPEN_PASSIVE.
      */
     virtual void addSockPair(TcpConnection *conn, L3Address localAddr, L3Address remoteAddr, int localPort, int remotePort);
+
+    /**
+     * TCP Fast Open (RFC 7413 section 4.1.2): the cookie for a client, a SipHash-2-4
+     * MAC of the source and the destination address of its SYN (as Linux makes
+     * it) under the key of this module (fastopenKey, or a key from the RNG). The
+     * same addresses give the same cookie.
+     */
+    virtual std::vector<uint8_t> generateFastOpenCookie(const L3Address& localAddr, const L3Address& remoteAddr, int cookieBytes);
+
+    /** TCP Fast Open, client: the cached cookie of the server; false if there is none. */
+    virtual bool getFastOpenCookie(const L3Address& remoteAddr, std::vector<uint8_t>& cookie) const;
+
+    /** TCP Fast Open, client: caches the cookie and the MSS that the server sent in a SYN-ACK. */
+    virtual void setFastOpenCookie(const L3Address& remoteAddr, const std::vector<uint8_t>& cookie, uint32_t peerMss);
+
+    /** TCP Fast Open, client: caches the MSS of the server, and keeps its cookie. */
+    virtual void updateFastOpenCachedMss(const L3Address& remoteAddr, uint32_t peerMss);
+
+    /** TCP Fast Open, client: the cached MSS of the server; 0 if there is none. */
+    virtual uint32_t getFastOpenCachedMss(const L3Address& remoteAddr) const;
+
+    /**
+     * TCP Fast Open, client: true if the option for remoteAddr is the experimental
+     * option (kind 254, RFC 7413 appendix A): the option of the cached cookie, or,
+     * without a cookie, the second request (Linux tcp_fastopen_cache_get()).
+     */
+    virtual bool getFastOpenUseExpOption(const L3Address& remoteAddr) const;
+
+    /** TCP Fast Open, client: records the option in which the cached cookie came. */
+    virtual void setFastOpenCookieExpForm(const L3Address& remoteAddr, bool exp);
+
+    /** TCP Fast Open, client: a cookie request in the given option had no answer; the next request uses the other option once. */
+    virtual void noteFastOpenCookieRequestUnanswered(const L3Address& remoteAddr, bool usedExpOption);
+
+    /** TCP Fast Open, client: removes all cached cookies, as `ip tcp_metrics flush` does on Linux. */
+    virtual void clearFastOpenCookieCache();
+
+    /** TCP Fast Open, server: the number of Fast Open connections of the local port in SYN_RCVD (PendingFastOpenRequests of RFC 7413). */
+    virtual int getNumPendingFastOpenRequests(const L3Address& localAddr, int localPort) const;
+
+    /** TCP Fast Open, client: true while blackhole detection stops Fast Open. */
+    virtual bool isActiveFastOpenDisabled() const;
+
+    /**
+     * TCP Fast Open, client: a suspected blackhole stops Fast Open for the time of
+     * fastopenBlackholeTimeout, which doubles at each further blackhole, up to 64
+     * times (Linux tcp_fastopen_active_should_disable()).
+     */
+    virtual void recordFastOpenBlackhole();
+
+    /** TCP Fast Open, client: a Fast Open SYN got through, so the next blackhole stops Fast Open for the first time again. */
+    virtual void resetFastOpenBlackhole();
 
     virtual void removeConnection(TcpConnection *conn);
     virtual void sendToIp(Packet *segment);

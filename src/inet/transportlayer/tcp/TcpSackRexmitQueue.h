@@ -24,15 +24,39 @@ class INET_API TcpSackRexmitQueue
     struct Region {
         uint32_t beginSeqNum;
         uint32_t endSeqNum;
+        bool lost; // indicates whether region has been lost
         bool sacked; // indicates whether region has already been sacked by data receiver
+        bool everSacked = false; // SACKed at some time since it was sent; the RTO's reset of 'sacked' (RFC 2018 section 8) keeps it, as Linux keeps TCPCB_SACKED_ACKED
         bool rexmitted; // indicates whether region has already been retransmitted by data sender
+        simtime_t firstSentTime = 0; // time this region was first transmitted (RACK/Vegas: original send time)
+        simtime_t lastSentTime = 0; // time this region was most recently (re)transmitted (RACK: xmit time)
+        uint16_t transmitCount = 0; // number of times this region has been transmitted (1 = never retransmitted)
     };
 
     typedef std::list<Region> RexmitQueue;
     RexmitQueue rexmitQueue; // rexmitQueue is ordered by seqnum, and doesn't have overlapped Regions
+    std::set<uint32_t> xmitSegmentStarts; // begin seqnums of ORIGINAL transmissions (skb boundaries): lets RACK tell a whole small segment (advances the reference, Linux tags the skb) from a sub-MSS fragment split off a bigger segment by a byte-range SACK (never tagged, tcp_match_skb_to_sack fragments only at MSS boundaries)
+
+    bool isTransmissionStart(uint32_t seqNum) const { return xmitSegmentStarts.find(seqNum) != xmitSegmentStarts.end(); }
 
     uint32_t begin; // 1st sequence number stored
     uint32_t end; // last sequence number stored + 1
+
+  protected:
+    // getLost(), getSacked() and getRetrans() are read several times for each ACK, so
+    // one walk of the queue gives the three totals, which stay valid until a method
+    // changes the queue. Linux keeps lost_out, sacked_out and retrans_out up to date
+    // at each change instead.
+    mutable bool countersValid = false;
+    mutable uint32_t lostBytes = 0;
+    mutable uint32_t sackedBytes = 0;
+    mutable uint32_t retransBytes = 0;
+
+    /** Walks the queue once to update the three totals. */
+    virtual void updateCounters() const;
+
+    /** Each method that adds, removes or changes a region calls this first. */
+    void invalidateCounters() { countersValid = false; }
 
   public:
     /**
@@ -88,6 +112,13 @@ class INET_API TcpSackRexmitQueue
     virtual void discardUpTo(uint32_t seqNum);
 
     /**
+     * Forgets the transmission of the sequence numbers from seqNum to the end of the
+     * queue, which are unsent data again (the octet of a zero-window probe that the
+     * receiver did not accept).
+     */
+    virtual void discardFrom(uint32_t seqNum);
+
+    /**
      * Inserts sent data to the rexmit queue.
      */
     virtual void enqueueSentData(uint32_t fromSeqNum, uint32_t toSeqNum);
@@ -98,7 +129,12 @@ class INET_API TcpSackRexmitQueue
      * so they can be skipped if retransmitting segments as long as
      * REXMIT timer did not expired.
      */
-    virtual void setSackedBit(uint32_t fromSeqNum, uint32_t toSeqNum);
+    /**
+     * Marks [fromSeqNum, toSeqNum) as SACKed. Returns the lowest sequence number
+     * this call NEWLY marked (skipping ever-retransmitted regions, whose SACKs are
+     * ambiguous), or 0 if nothing was newly marked -- used for reordering detection.
+     */
+    virtual uint32_t setSackedBit(uint32_t fromSeqNum, uint32_t toSeqNum);
 
     /**
      * Returns SackedBit value of seqNum.
@@ -126,6 +162,19 @@ class INET_API TcpSackRexmitQueue
      * It is called before retransmitting data.
      */
     virtual uint32_t checkRexmitQueueForSackedOrRexmittedSegments(uint32_t fromSeq) const;
+
+    virtual void markHeadLost();
+
+    /**
+     * Resets lost bit of all segments in rexmit queue.
+     */
+    virtual void resetLostBit();
+
+    /**
+     * Marks the byte range [fromSeqNum, toSeqNum) as lost, except the SACKed
+     * bytes, and splits regions at the boundaries as needed.
+     */
+    virtual void markLost(uint32_t fromSeqNum, uint32_t toSeqNum);
 
     /**
      * Called when REXMIT timer expired.
@@ -159,6 +208,43 @@ class INET_API TcpSackRexmitQueue
      * SACK block starting at seqNum.
      */
     virtual void checkSackBlock(uint32_t seqNum, uint32_t& length, bool& sacked, bool& rexmitted) const;
+
+    /**
+     * Emulates SACK for a connection without it, as Linux tcp_add_reno_sack()
+     * does: called on a duplicate ACK, it marks the first segment after the
+     * head that is neither SACKed nor lost as SACKed.
+     */
+    virtual void addInferredSack();
+
+    /**
+     * Marks lost each region that is not SACKed and has at least DupThresh SACKed
+     * regions above it (the loss rule of RFC 6675, by segments).
+     */
+    virtual void updateLost();
+
+    /**
+     * Returns the total number of lost bytes in the queue.
+     */
+    virtual uint32_t getLost() const;
+
+    /**
+     * Returns the total number of sacked bytes in the queue.
+     */
+    virtual uint32_t getSacked() const;
+
+    /**
+     * Returns the total number of retransmitted bytes in the queue.
+     */
+    virtual uint32_t getRetrans() const;
+
+    /**
+     * Returns the region containing seqNum. seqNum must be within [begin, end).
+     * Used by RACK to read a segment's transmit time and count.
+     */
+    virtual const Region& getRegion(uint32_t seqNum) const;
+
+    /** RACK re-marked a lost RETRANSMISSION: clear the rexmitted flag on unsacked regions in the range (Linux tcp_mark_skb_lost clearing TCPCB_SACKED_RETRANS) so the recovery picker sends them again; the lost mark stays. */
+    virtual void clearRexmitted(uint32_t fromSeqNum, uint32_t toSeqNum);
 
   protected:
     /*

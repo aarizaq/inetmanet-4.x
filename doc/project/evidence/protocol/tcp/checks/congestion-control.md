@@ -2,18 +2,11 @@
 
 > **Kind:** procedure · **Status:** current · **Seal:** none · **Owns:** — · **Stands on:** [checks.md](../checks.md), [rfc5681/catalog.md](../../../standard/rfc5681/catalog.md)
 
-The common mockups, the scenario constants and the index are in [`checks.md`](../checks.md).
-The procedures come from the specification only. They name no simulation model and no code.
+The common mockups, the scenario constants and the index are in [`checks.md`](../checks.md). The procedures come from the specification only. They name no simulation model and no code.
 
-Congestion control is a sender-side control loop. Almost nothing of it appears on the wire
-as a field: the window is a limit on how much the sender may have outstanding, and a reader
-of the link sees the consequence rather than the value. Four of the five checks below read
-the window itself, and one reads the wire.
+Congestion control is a sender-side control loop. Almost nothing of it appears on the wire as a field: the window is a limit on how much the sender may have outstanding, and a reader of the link sees the consequence rather than the value. Four of the five checks below read the window itself, and one reads the wire.
 
-One point of scope governs every check here. RFC 5681 states the algorithms that a
-conforming sender uses. A sender that runs an algorithm which no RFC defines is outside
-this document, so a check of it establishes nothing about conformance. Each check below
-therefore names the algorithm it applies to as a scenario constant.
+One point of scope governs every check here. RFC 5681 states the algorithms that a conforming sender uses. A sender that runs an algorithm which no RFC defines is outside this document, so a check of it establishes nothing about conformance. Each check below therefore names the algorithm it applies to as a scenario constant.
 
 ## Initial window
 
@@ -21,14 +14,12 @@ Checks: **RFC5681-IW-1** (must, as an upper bound), **RFC5681-IW-2** (must not).
 
 ### Requirement
 
-RFC 5681 §3.1: the initial window is at most two, three or four segments, by the segment
-size. The SYN, the SYN-ACK and the acknowledgment of the SYN-ACK do not enlarge it.
+RFC 5681 §3.1: the initial window is at most two, three or four segments, by the segment size. The SYN, the SYN-ACK and the acknowledgment of the SYN-ACK do not enlarge it.
 
 ### Scenario constants
 
 - The plain mockup. Host A opens a connection and sends a block of data at once.
-- The segment size falls in one of the three bands of the table. A check may repeat the
-  procedure once per band.
+- The segment size falls in one of the three bands of the table. A check may repeat the procedure once per band.
 - The advertised window of host B is large, so it never limits the sender.
 
 ### Procedure
@@ -39,16 +30,12 @@ size. The SYN, the SYN-ACK and the acknowledgment of the SYN-ACK do not enlarge 
 ### Expected observations
 
 1. The window does not grow across the handshake.
-2. The window at the first data send is at most the bound of the table for the segment
-   size in use: two segments above 2190 bytes, three between 1096 and 2190, four at or
-   below 1095.
+2. The window at the first data send is at most the bound of the table for the segment size in use: two segments above 2190 bytes, three between 1096 and 2190, four at or below 1095.
 
 ### Notes
 
-- The table is an upper bound, not a value. A sender with a smaller initial window
-  conforms. The check fails only a window that is too large.
-- The check reads the window in segments, not in bytes, because the table bounds both and
-  the smaller bound governs.
+- The table is an upper bound, not a value. A sender with a smaller initial window conforms. The check fails only a window that is too large.
+- The check reads the window in segments, not in bytes, because the table bounds both and the smaller bound governs.
 
 ## Slow start growth
 
@@ -56,14 +43,13 @@ Checks: **RFC5681-SS-2** (upper bound); covers **RFC5681-SS-1**, **RFC5681-SSTH-
 
 ### Requirement
 
-RFC 5681 §3.1: below the threshold the window grows by at most one segment for each
-acknowledgment that covers new data. The initial threshold is set arbitrarily high.
+RFC 5681 §3.1: below the threshold the window grows by at most one segment for each acknowledgment that covers new data. The initial threshold is set arbitrarily high.
 
 ### Scenario constants
 
-- The plain mockup, with no loss and a receiver window large enough never to limit the
-  sender.
+- The plain mockup, with no loss and a receiver window large enough never to limit the sender.
 - Enough data to fill several windows, so the growth is visible over several round trips.
+- The sender runs the congestion control of RFC 5681 (Reno). CUBIC (RFC 9438) departs from RFC 5681 on purpose: its slow start follows HyStart++ (RFC 9406), which lets one acknowledgment raise the window by more than one segment, and it sets the threshold with its own factor.
 
 ### Procedure
 
@@ -74,15 +60,12 @@ acknowledgment that covers new data. The initial threshold is set arbitrarily hi
 ### Expected observations
 
 1. The threshold exceeds the largest window the receiver advertises.
-2. The window never grows by more than one segment between two consecutive
-   acknowledgments.
+2. The window never grows by more than one segment between two consecutive acknowledgments.
 3. The window roughly doubles over each round trip.
 
 ### Notes
 
-- Observation 3 is the shape of slow start, and it is weaker than observation 2. A model
-  that grows the window more slowly satisfies the `MUST` and misses the shape, which is a
-  deviation worth recording rather than a violation.
+- Observation 3 is the shape of slow start, and it is weaker than observation 2. A model that grows the window more slowly satisfies the `MUST` and misses the shape, which is a deviation worth recording rather than a violation.
 
 ## Timeout response
 
@@ -90,15 +73,13 @@ Checks: **RFC5681-LOSS-1** (must, as an upper bound), **RFC5681-LOSS-3** (must).
 
 ### Requirement
 
-RFC 5681 §3.1: a loss the retransmission timer detects sets the threshold to no more than
-half the data in flight, with a floor of two segments, and sets the window to one segment.
+RFC 5681 §3.1: a loss the retransmission timer detects sets the threshold to no more than half the data in flight, with a floor of two segments, and sets the window to one segment.
 
 ### Scenario constants
 
-- The plain mockup with a relay. The relay discards one data segment and everything after
-  it in that window, so no duplicate acknowledgment reaches the sender and only the timer
-  can detect the loss.
+- The plain mockup with a relay. The relay discards one data segment and everything after it in that window, so no duplicate acknowledgment reaches the sender and only the timer can detect the loss.
 - The window has grown well beyond one segment before the loss, so the drop is visible.
+- The sender runs the congestion control of RFC 5681 (Reno). CUBIC (RFC 9438) departs from RFC 5681 on purpose: its slow start follows HyStart++ (RFC 9406), which lets one acknowledgment raise the window by more than one segment, and it sets the threshold with its own factor.
 
 ### Procedure
 
@@ -114,31 +95,22 @@ half the data in flight, with a floor of two segments, and sets the window to on
 
 ### Notes
 
-- The formula uses the data in flight, not the congestion window. RFC 5681 names the
-  substitution of one for the other an easy mistake, so the check must compute the flight
-  size from the wire rather than read the window.
-- The loss must not produce three duplicate acknowledgments, or fast retransmit repairs it
-  and the timer never expires. That is why the relay discards the rest of the window too.
+- The formula uses the data in flight, not the congestion window. RFC 5681 names the substitution of one for the other an easy mistake, so the check must compute the flight size from the wire rather than read the window.
+- The loss must not produce three duplicate acknowledgments, or fast retransmit repairs it and the timer never expires. That is why the relay discards the rest of the window too.
 
 ## Fast retransmit and fast recovery
 
-Checks: **RFC5681-FR-1** (should), **RFC5681-FR-2** (must), **RFC5681-FR-3** (must),
-**RFC5681-FR-5** (must); covers **RFC5681-ACK-2**.
+Checks: **RFC5681-FR-1** (should), **RFC5681-FR-2** (must), **RFC5681-FR-3** (must), **RFC5681-FR-5** (must); covers **RFC5681-ACK-2**.
 
 ### Requirement
 
-RFC 5681 §3.2: three duplicate acknowledgments indicate a loss. The sender retransmits at
-once, sets the threshold by the same formula as a timeout, sets the window to the threshold
-plus three segments, and sets the window back to the threshold when the repair is
-acknowledged.
+RFC 5681 §3.2: three duplicate acknowledgments indicate a loss. The sender retransmits at once, sets the threshold by the same formula as a timeout, sets the window to the threshold plus three segments, and sets the window back to the threshold when the repair is acknowledged.
 
 ### Scenario constants
 
-- The plain mockup with a relay. The relay discards exactly one data segment in the middle
-  of a window and lets every later segment through, so the receiver answers each of them
-  with a duplicate acknowledgment.
-- The window holds at least four segments at the moment of the loss, so three duplicates
-  can arrive.
+- The plain mockup with a relay. The relay discards exactly one data segment in the middle of a window and lets every later segment through, so the receiver answers each of them with a duplicate acknowledgment.
+- The window holds at least four segments at the moment of the loss, so three duplicates can arrive.
+- The sender runs RFC 5681 as written: Reno, without SACK (which brings the recovery of RFC 6675), with loss detection by three duplicate acknowledgments (not RACK-TLP, RFC 8985), and without Proportional Rate Reduction (RFC 6937), which replaces the window of steps 3 to 5.
 
 ### Procedure
 
@@ -151,19 +123,15 @@ acknowledged.
 ### Expected observations
 
 1. Host B answers each segment after the gap with a duplicate acknowledgment, at once.
-2. Host A retransmits the missing segment after the third duplicate, and well before the
-   retransmission timer would expire.
-3. After the third duplicate the threshold falls, and the window equals the threshold plus
-   three segments.
+2. Host A retransmits the missing segment after the third duplicate, and well before the retransmission timer would expire.
+3. After the third duplicate the threshold falls, and the window equals the threshold plus three segments, plus one segment for each further duplicate. The window is observed by what it limits: no segment of new data that host A sends before the acknowledgment of new data takes FlightSize past that window.
 4. After the acknowledgment of new data the window equals the threshold.
 
 ### Notes
 
-- The five statements are one episode, in order. A check that stops at observation 2 shows
-  the retransmission and says nothing about the window, which is the half that RFC 5681
-  adds over a plain retransmission.
-- Observation 2 needs a second bound: the retransmission must arrive before the timer would
-  have fired, or a slow timer and fast retransmit look the same.
+- The five statements are one episode, in order. A check that stops at observation 2 shows the retransmission and says nothing about the window, which is the half that RFC 5681 adds over a plain retransmission.
+- Observation 2 needs a second bound: the retransmission must arrive before the timer would have fired, or a slow timer and fast retransmit look the same.
+- Observation 3 reads the window through FlightSize, because an implementation may keep the window in another form. Linux, for example, does not inflate the window; it takes each duplicate out of the data it counts in flight instead. Both forms allow the same segments, and only the segments are on the link.
 
 ## Window after a lost SYN
 
@@ -171,13 +139,11 @@ Checks: **RFC5681-IW-3** (must).
 
 ### Requirement
 
-RFC 5681 §3.1: when the SYN or the SYN-ACK is lost, the initial window after the correctly
-transmitted SYN is one segment.
+RFC 5681 §3.1: when the SYN or the SYN-ACK is lost, the initial window after the correctly transmitted SYN is one segment.
 
 ### Scenario constants
 
-- The plain mockup with a relay. The relay discards the first SYN and lets the retry
-  through.
+- The plain mockup with a relay. The relay discards the first SYN and lets the retry through.
 
 ### Procedure
 
@@ -191,5 +157,4 @@ transmitted SYN is one segment.
 
 ### Notes
 
-- This check and the timeout check of RFC6298-SYN-1 share one scenario. A lost SYN changes
-  both control loops, and the two answers are read at the same instant.
+- This check and the timeout check of RFC6298-SYN-1 share one scenario. A lost SYN changes both control loops, and the two answers are read at the same instant.

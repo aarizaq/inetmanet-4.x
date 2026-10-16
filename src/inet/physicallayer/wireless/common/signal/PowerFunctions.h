@@ -31,6 +31,7 @@ class INET_API FrequencyDependentAttenuationFunction : public FunctionBase<doubl
 {
   protected:
     const IRadioMedium *radioMedium = nullptr;
+    const Ptr<const IReceptionPathLoss> receptionPathLoss;
     const double transmitterAntennaGain;
     const double receiverAntennaGain;
     const Coord transmissionPosition;
@@ -38,15 +39,14 @@ class INET_API FrequencyDependentAttenuationFunction : public FunctionBase<doubl
     const m distance;
 
   public:
-    FrequencyDependentAttenuationFunction(const IRadioMedium *radioMedium, const double transmitterAntennaGain, const double receiverAntennaGain, const Coord& transmissionPosition, const Coord& receptionPosition) :
-        radioMedium(radioMedium), transmitterAntennaGain(transmitterAntennaGain), receiverAntennaGain(receiverAntennaGain), transmissionPosition(transmissionPosition), receptionPosition(receptionPosition), distance(m(transmissionPosition.distance(receptionPosition)))
+    FrequencyDependentAttenuationFunction(const IRadioMedium *radioMedium, const Ptr<const IReceptionPathLoss>& receptionPathLoss, const double transmitterAntennaGain, const double receiverAntennaGain, const Coord& transmissionPosition, const Coord& receptionPosition) :
+        radioMedium(radioMedium), receptionPathLoss(receptionPathLoss), transmitterAntennaGain(transmitterAntennaGain), receiverAntennaGain(receiverAntennaGain), transmissionPosition(transmissionPosition), receptionPosition(receptionPosition), distance(m(transmissionPosition.distance(receptionPosition)))
     {
     }
 
     virtual double getValue(const Point<simsec, Hz>& p) const override {
         Hz frequency = std::get<1>(p);
-        auto propagationSpeed = radioMedium->getPropagation()->getPropagationSpeed();
-        auto pathLoss = radioMedium->getPathLoss()->computePathLoss(propagationSpeed, frequency, distance);
+        auto pathLoss = receptionPathLoss->computePathLoss(frequency);
         auto obstacleLoss = radioMedium->getObstacleLoss() ? radioMedium->getObstacleLoss()->computeObstacleLoss(frequency, transmissionPosition, receptionPosition) : 1;
         double gain = transmitterAntennaGain * receiverAntennaGain * pathLoss * obstacleLoss;
         ASSERT(!std::isnan(gain));
@@ -58,14 +58,27 @@ class INET_API FrequencyDependentAttenuationFunction : public FunctionBase<doubl
         return gain;
     }
 
+    virtual void partition(const Interval<simsec, Hz>& i, const std::function<void(const Interval<simsec, Hz>&, const IFunction<double, Domain<simsec, Hz>> *)> f) const override {
+        // the value does not depend on time: with a fixed frequency it is constant over the interval
+        if ((i.getFixed() & 0b01) == 0b01) {
+            ConstantFunction<double, Domain<simsec, Hz>> g(getValue(i.getLower()));
+            f(i, &g);
+        }
+        else
+            FunctionBase::partition(i, f);
+    }
+
     virtual bool isFinite(const Interval<simsec, Hz>& i) const override { return true; }
 
     virtual void printStructure(std::ostream& os, int level = 0) const override {
         os << "(FrequencyDependentAttenuation" << EV_FIELD(distance) << EV_FIELD(transmitterAntennaGain) << EV_FIELD(receiverAntennaGain);
         os << "\n" << std::string(level + 2, ' ');
-        os << "(" << *radioMedium->getPathLoss() << ")";
-        os << "\n" << std::string(level + 2, ' ');
-        os << "(" << *radioMedium->getObstacleLoss() << "))";
+        os << "(" << *receptionPathLoss << ")";
+        if (auto obstacleLoss = radioMedium->getObstacleLoss()) {
+            os << "\n" << std::string(level + 2, ' ');
+            os << "(" << *obstacleLoss << ")";
+        }
+        os << ")";
     }
 };
 
@@ -383,7 +396,7 @@ class INET_API PathLossFunction : public FunctionBase<double, Domain<mps, m, Hz>
         mps propagationSpeed = std::get<0>(p);
         Hz frequency = std::get<2>(p);
         m distance = std::get<1>(p);
-        return pathLoss->computePathLoss(propagationSpeed, frequency, distance);
+        return pathLoss->computeDistancePathLoss(propagationSpeed, frequency, distance);
     }
 
     virtual void printStructure(std::ostream& os, int level = 0) const override { os << "(" << *pathLoss << ")"; }

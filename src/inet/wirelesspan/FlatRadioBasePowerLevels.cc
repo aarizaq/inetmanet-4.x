@@ -92,7 +92,9 @@ void FlatRadioBasePowerLevels::setBitrate(bps newBitrate)
 {
     FlatTransmitterBase *flatTransmitter = const_cast<FlatTransmitterBase *>(check_and_cast<const FlatTransmitterBase *>(transmitter));
     flatTransmitter->setBitrate(newBitrate);
-    receptionTimer = nullptr;
+
+    while (!attemptedReceptionTimers.empty())
+        abortReception(attemptedReceptionTimers.front());
 }
 
 void FlatRadioBasePowerLevels::handleUpperCommand(cMessage *message)

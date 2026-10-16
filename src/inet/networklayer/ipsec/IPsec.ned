@@ -35,12 +35,11 @@ import inet.common.SimpleModule;
 //   As a consequence, encryption keys, certificates, and other cryptography-related
 //   data do not appear in the model's data structures.
 // - Key exchange protocols are not implemented. Instead, security associations (SAs)
-//   are statically configured and remain in effect for the entire duration of the
-//   simulation.
+//   are statically configured. An SA remains in effect for the entire duration of the
+//   simulation, unless it has a hard lifetime; then it ends, and no new SA replaces it.
 // - Transport mode only. Tunnel mode is not supported.
 // - Multicast traffic is not supported. (Any multicast packet is let through unchanged.)
 // - Anti-replay mechanism is not implemented.
-// - DSCP-based SA selection is not implemented.
 // - For IPv6, AH/ESP are modelled as transport-mode headers inserted after the base
 //   header (next-header 51/50); selectors match on protocol number for ICMPv6 (ICMPv6
 //   type/code selectors are not supported).
@@ -63,9 +62,11 @@ import inet.common.SimpleModule;
 //
 // - root: `SecurityPolicy*`
 // - `SecurityPolicy`: Selector, Direction, Action, Protection?, `EspMode`?,
-//   `EncryptionAlg`?, `AuthenticationAlg`?, `MaxTfcPadLength`?, `SecurityAssociation*`
+//   `EncryptionAlg`?, `AuthenticationAlg`?, `MaxTfcPadLength`?, `HardLifetimeSeconds`?,
+//   `HardLifetimeBytes`?, `SecurityAssociation*`
 // - Selector: `LocalAddress`?, `RemoteAddress`?, Protocol?, `LocalPort`?, `RemotePort`?, ICMPType?, ICMPCode?
-// - `SecurityAssociation`: SPI, Selector?
+// - `SecurityAssociation`: SPI, Protection?, `HardLifetimeSeconds`?, `HardLifetimeBytes`?, DSCP?,
+//   `DummyPacketInterval`?, Selector?
 //
 // Contained elements may occur in any order.
 //
@@ -86,6 +87,17 @@ import inet.common.SimpleModule;
 //   AES_256_GMAC, HMAC_SHA2_256_128, HMAC_SHA2_384_192, HMAC_SHA2_512_256.
 // - `MaxTfcPadLength`: Maximum length of random Traffic Confidentiality (TFC) padding.
 //   The actual TFC pad length will be drawn with uniform distribution over [0,max].
+// - `HardLifetimeSeconds`, `HardLifetimeBytes`: the hard lifetime of an SA (RFC 4301
+//   section 4.4.2.1), in seconds from the start of the simulation, and in bytes that the
+//   SA has protected. An SA whose hard lifetime has ended is not used any more: an
+//   outgoing packet for it is discarded, and an incoming one too. In a `SecurityPolicy`,
+//   the value is the default of its SAs.
+// - `DummyPacketInterval`: the interval in seconds of the dummy packets of an outbound ESP SA
+//   (RFC 4303 section 2.6): packets with Next Header 59 and an empty payload, to the addresses
+//   of the last packet that the SA protected. The receiver discards them.
+// - DSCP: comma-separated list of DSCP values / ranges of an SA (RFC 4301 section 4.4.2.1).
+//   Of the SAs of a policy that match a packet, the sender uses the first one whose list
+//   holds the DSCP of the packet; an SA without the element takes any DSCP.
 // - `LocalAddress`, `RemoteAddress`: comma-separated list of addresses / address ranges
 // - Protocol: comma-separated list of protocol names/numbers and/or their ranges.
 //   Recognized names are TCP, UDP, and ICMP.
@@ -102,7 +114,10 @@ import inet.common.SimpleModule;
 // As a rule, an SA inherits its properties from its parent policy. However,
 // the selector can be changed/refined. Elements within `SecurityAssociation`'s
 // Selector override the corresponding elements specified in the parent
-// `SecurityPolicy`'s Selector element.
+// `SecurityPolicy`'s Selector element. The Protection of an SA can also differ
+// from that of its policy, so that one policy can hold an ESP SA and an AH SA:
+// an AH SA uses the `AuthenticationAlg` of the policy, and an ESP SA needs the
+// ESP elements of an ESP policy.
 //
 // Note that an SA needs to be configured at both endpoints to work.
 // (Flip Direction and swap `LocalAddress`/`RemoteAddress` and `LocalPort`/`RemotePort`
@@ -143,12 +158,11 @@ import inet.common.SimpleModule;
 //
 // If Action is PROTECT, the list of SAs defined for the security policy is
 // searched for matching ones (where Selector matches the packet). The protection
-// defined in the SA is applied to the packet. (If there are multiple matching SAs,
-// all of them are.) If Protection is AH, the packet is protected with an AH
-// header. If Protection is ESP, the packet is protected with an ESP header. If
-// Protection is AH_ESP, both headers are added. (Note that in an actual IPsec
-// implementation, this would involve cryptographic processing, but the model does
-// not contain actual cryptography.)
+// defined in the SA is applied to the packet. The first matching ESP SA adds an ESP
+// header, and the first matching AH SA adds an AH header; with both, ESP comes
+// first and AH covers it. If no SA matches, the packet is discarded. (Note that in
+// an actual IPsec implementation, this would involve cryptographic processing, but
+// the model does not contain actual cryptography.)
 //
 // For ingress packets, processing depends on whether the transport protocol in
 // the packet is AH/ESP or something else.
@@ -157,7 +171,9 @@ import inet.common.SimpleModule;
 // and SPI matching the packet's SPI. If there is no matching SA, the packet
 // is discarded. If there is a matching SA but the packet's protocol doesn't
 // match the SA's Protection field, the packet is discarded. Otherwise, the
-// AH or ESP header is removed from the packet.
+// AH or ESP header is removed from the packet; after an AH header, an ESP header
+// is processed in the same way. The packet that remains must match the selectors
+// of its SAs, or it is discarded.
 //
 // If the packet's protocol was not AH or ESP, the list of security policies
 // is searched in order for the first matching entry. If there is no match,
@@ -227,4 +243,7 @@ simple IPsec extends SimpleModule
         @statistic[inProcessDelay](title="Incoming Processing Delay"; record=vector,stats);
         @statistic[outProcessDelay](title="Outgoing Processing Delay"; record=vector,stats);
 
+    gates:
+        input ipIn;   // unused: nothing is dispatched up to IPsec
+        output ipOut; // the dummy packets of ESP SAs, to the IP layer
 }

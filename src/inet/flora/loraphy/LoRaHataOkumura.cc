@@ -40,7 +40,7 @@ std::ostream& LoRaHataOkumura::printToStream(std::ostream& stream, int level, in
     return stream;
 }
 
-double LoRaHataOkumura::computePathLoss(mps propagationSpeed, Hz frequency, m distance) const
+double LoRaHataOkumura::computeDistancePathLoss(mps propagationSpeed, Hz frequency, m distance) const
 {
     // build based on documentation from Actility
     double PL_db = K1 + K2 * log10(distance.get()/1000);

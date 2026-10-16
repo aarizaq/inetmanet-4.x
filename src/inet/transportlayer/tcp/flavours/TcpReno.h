@@ -8,7 +8,7 @@
 #ifndef __INET_TCPRENO_H
 #define __INET_TCPRENO_H
 
-#include "inet/transportlayer/tcp/flavours/TcpTahoeRenoFamily.h"
+#include "inet/transportlayer/tcp/flavours/TcpClassicAlgorithmBase.h"
 
 namespace inet {
 namespace tcp {
@@ -16,12 +16,12 @@ namespace tcp {
 /**
  * State variables for TcpReno.
  */
-typedef TcpTahoeRenoFamilyStateVariables TcpRenoStateVariables;
+typedef TcpClassicAlgorithmBaseStateVariables TcpRenoStateVariables;
 
 /**
  * Implements TCP Reno.
  */
-class INET_API TcpReno : public TcpTahoeRenoFamily
+class INET_API TcpReno : public TcpClassicAlgorithmBase
 {
   protected:
     TcpRenoStateVariables *& state; // alias to TCLAlgorithm's 'state'
@@ -32,21 +32,20 @@ class INET_API TcpReno : public TcpTahoeRenoFamily
         return new TcpRenoStateVariables();
     }
 
-    /** Utility function to recalculate ssthresh */
-    virtual void recalculateSlowStartThreshold();
+    virtual ITcpCongestionControl *createCongestionControl() override;
+    virtual ITcpRecovery *createRecovery() override;
 
-    /** Redefine what should happen on retransmission */
-    virtual void processRexmitTimer(TcpEventCode& event) override;
+    /**
+     * With SACK, Reno is in loss recovery while lossRecovery is set (RFC 6675). Without
+     * it, Reno is in fast recovery from the third duplicate ACK to the next ACK of new data.
+     */
 
   public:
     /** Ctor */
     TcpReno();
 
-    /** Redefine what should happen when data got acked, to add congestion window management */
-    virtual void receivedDataAck(uint32_t firstSeqAcked) override;
-
-    /** Redefine what should happen when dupAck was received, to add congestion window management */
-    virtual void receivedDuplicateAck() override;
+    /** Recovers with SACK by RFC 6675 (Rfc6675Recovery) when SACK is negotiated */
+    virtual bool supportsSackRecovery() const override { return true; }
 };
 
 } // namespace tcp

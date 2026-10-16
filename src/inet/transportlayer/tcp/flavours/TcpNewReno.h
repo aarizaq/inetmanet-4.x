@@ -7,7 +7,7 @@
 #ifndef __INET_TCPNEWRENO_H
 #define __INET_TCPNEWRENO_H
 
-#include "inet/transportlayer/tcp/flavours/TcpTahoeRenoFamily.h"
+#include "inet/transportlayer/tcp/flavours/TcpClassicAlgorithmBase.h"
 
 namespace inet {
 namespace tcp {
@@ -15,15 +15,15 @@ namespace tcp {
 /**
  * State variables for TcpNewReno.
  */
-typedef TcpTahoeRenoFamilyStateVariables TcpNewRenoStateVariables;
+typedef TcpClassicAlgorithmBaseStateVariables TcpNewRenoStateVariables;
 
 /**
  * Implements TCP NewReno.
  */
-class INET_API TcpNewReno : public TcpTahoeRenoFamily
+class INET_API TcpNewReno : public TcpClassicAlgorithmBase
 {
   protected:
-    TcpNewRenoStateVariables *& state; // alias to TcpAlgorithm's 'state'
+    TcpNewRenoStateVariables *& state; // alias to TCLAlgorithm's 'state'
 
     /** Create and return a TcpNewRenoStateVariables object. */
     virtual TcpStateVariables *createStateVariables() override
@@ -31,21 +31,17 @@ class INET_API TcpNewReno : public TcpTahoeRenoFamily
         return new TcpNewRenoStateVariables();
     }
 
-    /** Utility function to recalculate ssthresh */
-    virtual void recalculateSlowStartThreshold();
+    virtual ITcpCongestionControl *createCongestionControl() override;
+    virtual ITcpRecovery *createRecovery() override;
 
-    /** Redefine what should happen on retransmission */
-    virtual void processRexmitTimer(TcpEventCode& event) override;
+    virtual void ackProcessed(bool inFastRecovery) override;
 
   public:
     /** Ctor */
     TcpNewReno();
 
-    /** Redefine what should happen when data got acked, to add congestion window management */
-    virtual void receivedDataAck(uint32_t firstSeqAcked) override;
-
-    /** Redefine what should happen when dupAck was received, to add congestion window management */
-    virtual void receivedDuplicateAck() override;
+    /** Recovers with SACK by RFC 6675 (Rfc6675Recovery) when SACK is negotiated */
+    virtual bool supportsSackRecovery() const override { return true; }
 };
 
 } // namespace tcp

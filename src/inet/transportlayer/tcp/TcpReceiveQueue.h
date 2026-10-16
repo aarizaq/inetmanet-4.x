@@ -83,6 +83,14 @@ class INET_API TcpReceiveQueue : public cObject
     virtual uint32_t insertBytesFromSegment(Packet *tcpSegment, const Ptr<const TcpHeader>& tcpHeader);
 
     /**
+     * Returns true and sets [dupStart, dupEnd) to the lowest-sequence part of
+     * [fromSeqNum, toSeqNum) that duplicates already-buffered data (RFC 2883:
+     * the first duplicate contiguous sequence, reported as a D-SACK block).
+     * Must be queried BEFORE the segment is inserted into the queue.
+     */
+    virtual bool findFirstDuplicateRange(uint32_t fromSeqNum, uint32_t toSeqNum, uint32_t& dupStart, uint32_t& dupEnd) const;
+
+    /**
      * Should create a packet to be passed up to the app, up to (but NOT
      * including) the given sequence no (usually rcv_nxt).
      * It should return nullptr if there's no more data to be passed up --
@@ -94,6 +102,12 @@ class INET_API TcpReceiveQueue : public cObject
      * Returns the number of bytes (out-of-order-segments) currently buffered in queue.
      */
     virtual uint32_t getAmountOfBufferedBytes();
+
+    /**
+     * Returns the number of in-order bytes that the application did not read yet:
+     * the data from the start of the queue up to the first gap.
+     */
+    virtual uint32_t getAcknowledgedDataLength() const { return B(reorderBuffer.getAvailableDataLength()).get(); }
 
     /**
      * Returns the number of bytes currently free (=available) in queue. freeRcvBuffer = maxRcvBuffer - usedRcvBuffer
@@ -113,15 +127,24 @@ class INET_API TcpReceiveQueue : public cObject
     /**
      * Returns left edge of enqueued region.
      */
-    virtual uint32_t getLE(uint32_t fromSeqNum);
+    virtual uint32_t getLE(uint32_t fromSeqNum) const;
 
     /**
      * Returns right edge of enqueued region.
      */
-    virtual uint32_t getRE(uint32_t toSeqNum);
+    virtual uint32_t getRE(uint32_t toSeqNum) const;
+
+    /** Returns the end of the in-order data of the queue */
+    virtual uint32_t getRcvNxt() const { return rcv_nxt; }
 
     /** Returns the minimum of first byte seq.no. in queue and rcv_nxt */
     virtual uint32_t getFirstSeqNo();
+
+    /**
+     * Returns true if the queue holds data above rcv_nxt, that is, data
+     * that arrived after a gap in the sequence space.
+     */
+    virtual bool hasOutOfOrderData() const;
 };
 
 } // namespace tcp

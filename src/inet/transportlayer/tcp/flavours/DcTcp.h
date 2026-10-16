@@ -36,14 +36,23 @@ class INET_API DcTcp : public TcpReno
         return new DcTcpStateVariables();
     }
 
-    virtual void initialize() override;
+    virtual void initializeAlgorithm() override;
 
   public:
     /** Constructor */
     DcTcp();
 
-    /** Redefine what should happen when data got acked, to add congestion window management */
-    virtual void receivedDataAck(uint32_t firstSeqAcked) override;
+    /** DCTCP relies on ECN (RFC 8257). */
+    virtual bool needsEcn() const override { return true; }
+
+    /** RFC 8257's proportional reduction, in place of RFC 3168's halving. */
+    virtual bool processEce(uint32_t numBytesAcked) override;
+
+    /** RFC 8257 section 3.3: the count of the acknowledged and marked bytes, also in a fast recovery. */
+    virtual void ackedInFastRecovery(uint32_t numBytesAcked) override;
+
+    /** The count of RFC 8257 section 3.3 (steps 2 to 8) for one ACK, without the cut of cwnd. */
+    virtual void countBytes(uint32_t numBytesAcked);
 
     virtual bool shouldMarkAck() override;
 

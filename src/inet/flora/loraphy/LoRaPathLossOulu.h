@@ -40,7 +40,7 @@ class INET_API LoRaPathLossOulu : public FreeSpacePathLoss
 
   public:
     LoRaPathLossOulu();
-    virtual double computePathLoss(mps propagationSpeed, Hz frequency, m distance) const override;
+    virtual double computeDistancePathLoss(mps propagationSpeed, Hz frequency, m distance) const override;
 };
 
 } // namespace physicallayer

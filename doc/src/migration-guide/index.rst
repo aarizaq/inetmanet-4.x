@@ -4,6 +4,398 @@ Migrating Code from INET 3.x
 ============================
 Release: |release|
 
+TCP Algorithms
+--------------
+
+The algorithm of a TCP connection is a module now: each connection creates it as its submodule
+``algorithm``, of the NED type that the ``tcpAlgorithmClass`` parameter names. An algorithm
+implemented outside INET needs these changes:
+
+- Register the class with ``Define_Module()`` instead of ``Register_Class()``.
+- Add a simple module type that extends ``TcpAlgorithm``, with the C++ class in its ``@class``
+  property. The value of ``tcpAlgorithmClass`` names this type: a name in the package
+  ``inet.transportlayer.tcp.flavours``, or the qualified name of a type in another package. Without
+  the type, the connection stops with an error.
+- Rename the override of ``initialize()`` to ``initializeAlgorithm()``. The connection calls it in
+  its own context, so the timers that it creates belong to the connection. ``initialize()`` is now
+  the initialization of the module.
+- Rename the calls of the ``cancelEvent()`` helper of ``TcpAlgorithmBase`` to ``cancelTimer()``.
+  Delete a timer with ``conn->deleteTimer()``, because the connection owns it.
+- Move the parameters of the algorithm from ``Tcp`` to the new type, and read them with ``par()``.
+
+For example:
+
+.. code-block:: ned
+
+   import inet.transportlayer.tcp.flavours.TcpAlgorithm;
+
+   simple MyTcpAlgorithm extends TcpAlgorithm
+   {
+       parameters:
+           @class(MyTcpAlgorithm);
+           double gain = default(0.5);
+   }
+
+The parameters of CUBIC, HyStart and DCTCP moved to ``TcpCubic`` and ``DcTcp``, so their ini keys
+change. For example, ``**.tcp.cubicBeta`` is now ``**.tcp.conn-*.algorithm.beta``, and
+``**.tcp.dctcpGamma`` is now ``**.tcp.conn-*.algorithm.g``. WHATSNEW lists all of them.
+
+Queueing Classifiers
+--------------------
+
+``PacketClassifierBase::classifyPacket()`` is a query. The base class calls it from
+``canPushPacket()``, ``canPullPacket()`` and ``handleCanPullPacketChanged()``, and again from the
+operation that moves the packet. So it must not change the state of the module. Custom classifiers
+must use this signature:
+
+.. code-block:: c++
+
+   int classifyPacket(Packet *packet) const override;
+
+Move each state change of ``classifyPacket()`` into the new hook. The base class calls it one time
+for each packet that goes through the module, and one time for each packet stream, before the
+packet leaves the module:
+
+.. code-block:: c++
+
+   void handlePacketClassified(Packet *packet, int index) override;
+
+For example, a classifier with a token bucket compares the token count in ``classifyPacket()``, and
+it removes the tokens in ``handlePacketClassified()``. A classifier that overrides ``pushPacket()``
+or ``pullPacket()`` must call ``handlePacketClassified()`` itself.
+
+Queueing Schedulers
+-------------------
+
+``PacketSchedulerBase::schedulePacket()`` is a query. The base class calls it from
+``canPushSomePacket()`` and ``handleCanPushPacketChanged()``, and again from the operation that
+moves the packet. So it must not change the state of the module. Custom schedulers must use this
+signature:
+
+.. code-block:: c++
+
+   int schedulePacket() const override;
+
+Move each state change of ``schedulePacket()`` into the new hook. The base class calls it one time
+for each packet that goes through the module, and one time for each packet stream, when the module
+holds the packet and before the packet leaves the module:
+
+.. code-block:: c++
+
+   void handlePacketScheduled(Packet *packet, int index) override;
+
+For example, a weighted round-robin scheduler selects the input in ``schedulePacket()``, and it
+decrements the bucket of that input in ``handlePacketScheduled()``. The hook gets the packet, so a
+scheduler that charges by length, such as deficit round-robin, can use its length. A scheduler that
+overrides ``pushPacket()`` or ``pullPacket()`` must call ``handlePacketScheduled()`` itself.
+
+Queueing Filters
+----------------
+
+``IPacketFilter::matchesPacket()`` is a query. ``PacketFilterBase`` calls it from
+``canPushPacket()`` and ``canPullPacket()``, and again from the operation that moves the packet. So
+it must not change the state of the module, and it must not draw a random number. Move each state
+change into the new hook. The base class calls it one time for each packet that goes through the
+filter or that the filter drops, and one time for each packet stream, when the module holds the
+packet and before the packet leaves the module:
+
+.. code-block:: c++
+
+   void handlePacketFiltered(Packet *packet, bool matches) override;
+
+``processPacket()`` changes each packet instance that passes, for example it removes a header, and
+``dropPacket()`` disposes of each instance that the filter drops. In a packet stream the base class
+calls them for each instance, so neither may change the state of the module. A filter that decides
+with a random number draws the number in advance, and draws the next one in
+``handlePacketFiltered()`` after a decision used it.
+
+IPsec Sequence Numbers
+----------------------
+
+``SecurityAssociation::getAndIncSeqNum()`` returned the counter and then incremented it, so the
+first packet of every SA carried the Sequence Number 0. RFC 4302 and RFC 4303 increment the counter
+first, so that the first packet carries 1. The method is now
+``SecurityAssociation::incrementAndGetSeqNum()``, and returns the incremented value. C++ code that
+called the old method must use the new name, and expects one more than before.
+
+IEEE 802.11 QoS DATA Lifetime
+-----------------------------
+
+HCF enforces a finite lifetime for every QoS DATA frame. Each access category uses ``mac.hcf.edca.edcaf[*].msduLifetime``, with a default of 0.512 seconds. This lifetime applies with Block Ack support enabled or disabled. HCF starts the timer at MAC acceptance, before queue insertion and sequence assignment. Queue residence can therefore cause disposal before the first transmission.
+
+Set a positive, finite value for each required access category. Zero, negative, and nonfinite values fail at initialization. A value that rounds to zero at the simulation time resolution also fails. A long finite value permits compatibility studies without an unlimited mode:
+
+.. code-block:: ini
+
+   **.mac.hcf.edca.edcaf[*].msduLifetime = 100s
+
+This value prevents lifetime expiration for newly accepted DATA during a ten-second run. Acknowledgment, queue loss, and retry-limit disposal can still resolve DATA earlier. Recovery that depends on expiration inherits the configured delay. The value does not guarantee unchanged fingerprints or delivery results.
+
+A-MSDU construction restarts the aggregate timer when each MSDU joins the aggregate. The current builder adds all constituents at one simulation time. Fragments retain the source MSDU deadline. Retransmission and ACK-policy changes do not restart a deadline. An accepted exchange can complete after expiration. HCF retains its referenced DATA until safe completion, but permits no later attempt after expiration.
+
+The concrete ``EdcaTransmitLifetimeHandler`` now uses local packet identities instead of sequence numbers. External C++ consumers must use its registration and replacement operations with packet identities. EDCA owns the handler. The handler cannot be copied. The DCF lifetime interface remains unchanged. This change does not add management lifetime or MAC stop/start recovery.
+
+IEEE 802.11 Block Ack Recipient Delivery
+----------------------------------------
+
+Block Ack recipients return complete units in cyclic sequence order. External C++ callers of ``BlockAckReordering::processReceivedQoSFrame()`` and ``processReceivedBlockAckReq()`` must use ``BlockAckReordering::ReleasedFrames`` for their results. This type is a vector of sequence-number and fragment-group pairs. The indexed receive buffer retains its map storage.
+
+Replace explicit ``BlockAckReordering::ReorderBuffer`` result declarations with ``BlockAckReordering::ReleasedFrames``. Iterate over the vector in its supplied order. Keep that order through reassembly, A-MSDU deaggregation, and delivery. Do not insert released units into a numeric sequence map. For example, a release across sequence wrap supplies 4095 before 0.
+
+``ReceiveBuffer::getLength()`` counts occupied sequence positions. All Basic fragments of one MSDU count once. ``isFull()`` uses that same count. Custom diagnostics that require a fragment count must count the fragments in each stored position separately.
+
+The protected ``getEarliestCompleteMsduOrAMsduIfExists()`` helper remains available for one release but is deprecated. It retains its lookup behavior for external subclasses and returns fragments owned by the receive buffer. The helper does not remove frames or transfer ownership. Its returned pointers remain valid only while the buffer retains those fragments. For delivery, consume the ordered ``ReleasedFrames`` results from ``processReceivedQoSFrame()`` or ``processReceivedBlockAckReq()``. These methods remove complete units from storage and transfer their ownership to the caller.
+
+No configuration change is necessary. Gap release, window movement, and BAR before DATA can change delivery times and fingerprints in affected Basic Block Ack scenarios. These repairs do not enable Compressed Block Ack.
+
+IEEE 802.11 Response Query Roles
+--------------------------------
+
+Response selectors now distinguish sender estimates from actual recipient responses. Previously, sender queries used the frame's transmitter address and could replace a valid HT response with a legacy mode.
+
+External implementations of ``IRateSelection`` must provide these signatures:
+
+.. code-block:: c++
+
+   const IIeee80211Mode *computeResponseAckFrameMode(Packet *packet,
+           const Ptr<const Ieee80211DataOrMgmtHeader>& header, ResponseQueryRole role) override;
+   const IIeee80211Mode *computeResponseCtsFrameMode(Packet *packet,
+           const Ptr<const Ieee80211RtsFrame>& rts, ResponseQueryRole role) override;
+
+``IQosRateSelection`` requires the same ACK and CTS changes. It also requires this signature:
+
+.. code-block:: c++
+
+   const IIeee80211Mode *computeResponseBlockAckFrameMode(Packet *packet,
+           const Ptr<const Ieee80211BlockAckReq>& bar, ResponseQueryRole role) override;
+
+The enum is in ``inet/linklayer/ieee80211/mac/common/Ieee80211Defs.h``. Update external callers and overrides as follows:
+
+- Use ``ResponseQueryRole::PREDICT`` for sender reservations, response timeouts, and exchange admission estimates.
+- Use ``ResponseQueryRole::RESPOND`` for actual ACK, CTS, or Basic Block Ack selection and recipient response duration calculations.
+- Forward the role when an override calls another selector.
+
+The frame argument identifies the frame that requires a response. Prediction uses its receiver address and ``localRxPeerTx``, the capability for peer transmission to the local receiver. A recipient response uses its transmitter address and ``localTxPeerRx``, the capability for local transmission to the peer receiver. Frame mode tags do not determine the role.
+
+For example, compatible associated peers can now retain the same 13 Mbps HT response in both queries. The old sender query could select 12 Mbps legacy ERP-OFDM in ``n(mixed-2.4Ghz)``. Existing HT simulations can therefore change reservations, response timeouts, and TXOP admission. See :ref:`ug:sec:80211:response-prediction` for agreement conditions and unknown Tx limits.
+
+IEEE 802.11 HT Support in ac Interfaces
+---------------------------------------
+
+``opMode = "ac"`` now enables existing HT support. HT management requires standard channel numbers for HT Operation elements. An ``ac`` AP on an arithmetic 5 GHz band therefore fails initialization, including simplified management. For standard channel 36 at 5180 MHz, use:
+
+.. code-block:: ini
+
+   **.wlan[*].opMode = "ac"
+   **.wlan[*].radio.bandName = "5 GHz (mapped 20 MHz)"
+   **.wlan[*].radio.channelNumber = 0
+   **.wlan[*].radio.centerFrequency = 5.18GHz
+
+Remove an earlier band override if it would take precedence over these settings. Preserve the required data rate, channel width, and spatial stream constraints. For centers outside the mapped subset, use a custom band with explicit standard channel conversion.
+
+The supplied configurations now use index 0 at 5180 MHz:
+
+.. list-table:: Effective initial center changes
+   :header-rows: 1
+
+   * - Configuration
+     - Previous center
+   * - ``tests/protocol/wifi/ini/_ac.ini``
+     - 5040 MHz
+   * - ``examples/wireless/lan80211ac/omnetpp.ini``
+     - 5010 MHz
+   * - ``tests/protocol/wifi/11ac/Ac_160mhz.test``
+     - 5080 MHz
+
+These are effective radio frequencies; the earlier ``centerFrequency = 5GHz`` setting did not make them 5000 MHz. The new frequencies can change propagation results and fingerprints. Added HT entries can also change ACK/CTS candidates and adaptive rate steps. See :ref:`ug:sec:80211:ac-ht` for the channel mapping, radio requirements, and current model limits.
+
+IEEE 802.11 TXNAV and Sequence Callbacks
+--------------------------------------
+
+Custom ``IRx`` implementations must provide these operations:
+
+.. code-block:: c++
+
+   simtime_t getTxnavRemaining() const override;
+   void successfulFrameTransmitted(simtime_t ppduEnd, simtime_t durationField) override;
+   void setContentionBlocked(bool blocked) override;
+
+Keep TXNAV separate from received NAV. Replace its endpoint with ``ppduEnd + durationField`` after successful holder transmission. Cancel TXNAV for zero or expired fields. Preserve TXNAV after TXOP end. Exclude contention while TXNAV remains active. Keep ``isMediumFree()`` independent of TXNAV for the CTS policy and radio configuration.
+
+Honor HCF's separate contention permission through ``setContentionBlocked()``. HCF blocks contention after internal-collision handling and restores it after channel release and TXOP end. This permission prevents a second grant during an initial response wait, when successful TXNAV does not yet exist. Preserve the CTS medium query.
+
+Custom single-protection admission must compare the complete exchange cost strictly against TXNAV at the decision before SIFS. Exclude the initial SIFS from that exchange cost. Include the initial SIFS in the separate positive TXOP limit check. For example, a 238 us DATA/ACK exchange passes with 246.67 us TXNAV and at least 248 us of positive TXOP time. This example uses 10 us initial SIFS. The timer sample instant follows INET's stated interpretation of IEEE Std 802.11-2024, Clause 10.23.2.8.
+
+Custom sequence callbacks must provide these signatures:
+
+.. code-block:: c++
+
+   void frameSequenceStarted() override;
+   bool transmitFrame(Packet *packet, simtime_t ifs) override;
+
+Emit the start observation from ``frameSequenceStarted()``. The handler installs its context and initializes the sequence before this call. Return true after submission to Tx. Return false before submission to end the sequence normally. The handler destroys the refused step before finish observers inspect history. An empty preparation or immediate refusal therefore produces one start and one finish with valid contexts.
+
+TxOpFs publishes the selected DATA ACK policy before execution. HCF consumes that policy without a second DATA-submission query. Custom ACK policies must not require effects from that removed query. Their method signatures remain unchanged.
+
+IEEE 802.11 Local NAV Choice
+---------------------------
+
+Tx transmits MAC frames and can update the local network allocation vector (NAV). The NAV records a
+reservation of the medium. Both ``ITx::transmitFrame()`` overloads require an explicit
+``updateLocalNav`` argument. Custom implementations must use these signatures:
+
+.. code-block:: c++
+
+   void transmitFrame(Packet *packet, const Ptr<const Ieee80211MacHeader>& header,
+           bool updateLocalNav, ITx::ICallback *callback) override;
+   void transmitFrame(Packet *packet, const Ptr<const Ieee80211MacHeader>& header,
+           simtime_t ifs, bool updateLocalNav, ITx::ICallback *callback) override;
+
+Pass ``true`` for DCF holder frames. Pass ``false`` for HCF holder frames and recipient responses. For example, HCF publishes successful RTS and DATA fields through shared TXNAV. DCF retains the local NAV update. The transmitted duration field
+remains in each response. The response no longer extends the recipient's local NAV. Received
+reservations still prevent a recipient CTS when the medium is busy.
+
+The immediate overload forwards the caller's choice with zero interframe space:
+
+.. code-block:: c++
+
+   transmitFrame(packet, header, SIMTIME_ZERO, updateLocalNav, callback);
+
+1. Retain the choice with the accepted frame through its delay and transmission.
+2. Save the completed frame's choice before the completion callback.
+3. Clear the retained state before that callback.
+4. Apply the local NAV update after the callback only when the saved choice is true.
+
+.. code-block:: c++
+
+   auto completedUpdateLocalNav = updateLocalNav;
+   auto completedCallback = txCallback;
+   auto completedFrame = frame;
+   auto duration = completedFrame->peekAtFront<Ieee80211MacHeader>()->getDurationField();
+   frame = nullptr;
+   txCallback = nullptr;
+   updateLocalNav = false;
+   completedCallback->transmissionComplete(completedFrame,
+       completedFrame->peekAtFront<Ieee80211MacHeader>());
+   delete completedFrame;
+   if (completedUpdateLocalNav)
+       rx->frameTransmitted(duration);
+
+The callback can accept another transmission with a different choice. For example, a completed
+recipient CTS must retain ``false`` even if the callback accepts a holder frame with ``true``. Do
+not use default arguments on these virtual methods.
+
+IEEE 802.11 Radio Command Deferral
+---------------------------------
+
+Tx is the component that transmits frames for medium access control (MAC).
+The MAC keeps a radio command while Tx retains an accepted transmission.
+This includes the short interframe space (SIFS) before a response.
+The hybrid coordination function (HCF) and distributed coordination function (DCF)
+release the pending command after the response completes.
+This prevents radio reconfiguration before the accepted response completes.
+
+Custom implementations of ``ITx`` need the new method to compile.
+Implement the query with this signature:
+
+.. code-block:: c++
+
+   [[nodiscard]] bool hasTransmission() const override;
+
+1. Return true after Tx accepts a frame, including any wait before transmission starts.
+2. Keep the return value true while Tx transmits the frame.
+3. Clear the accepted transmission state before Tx calls ``ICallback::transmissionComplete()``.
+4. Return false when Tx holds no accepted transmission.
+
+The completion callback can release a pending command, so it must observe the cleared state.
+For example, Tx accepts an acknowledgment (ACK) frame with a SIFS delay.
+A radio command arrives during that delay, when ``hasTransmission()`` returns true.
+The MAC keeps the command until the ACK completes.
+Tx clears its state before the callback, so the coordination function can release the command.
+
+IEEE 802.11 PHY Mode Properties
+-------------------------------
+
+The physical layer (PHY) mode interface ``IIeee80211Mode`` gains three pure
+virtual methods. Direct implementations outside INET must implement them:
+
+.. code-block:: c++
+
+   ModulationClass getModulationClass() const override;
+   PreambleType getLegacyPreambleType() const override;
+   bps getNonHtReferenceRate() const override;
+
+``ModulationClass`` identifies the mode family. Its values are ``UNKNOWN``,
+``DSSS_HRDSSS``, ``OFDM``, ``ERP_OFDM``, ``HT``, and ``VHT``.
+HT means High Throughput; VHT means Very High Throughput.
+
+``PreambleType`` describes the legacy preamble, which precedes the frame header.
+Its values are ``UNKNOWN``, ``LONG``, ``SHORT``, and ``NOT_APPLICABLE``.
+``LONG`` and ``SHORT`` apply only to legacy direct-sequence modes.
+OFDM, HT, and VHT modes return ``NOT_APPLICABLE`` for this query.
+OFDM means orthogonal frequency-division multiplexing.
+
+``getNonHtReferenceRate()`` returns a bound for response-rate selection, in
+bits per second. Supported legacy modes return their data rate. HT and VHT
+modes derive the bound from the modulation and code rate of stream 1.
+The bound does not depend on channel width, guard interval, or stream count.
+An unsupported mapping returns ``bps(NaN)``, where NaN means not a number.
+Check the value with ``std::isnan(rate.get())`` before rate comparisons.
+
+Subclasses of ``Ieee80211ModeBase`` inherit defaults and need no new override
+to compile. Those defaults return ``UNKNOWN`` for both enum queries and
+``bps(NaN)`` for the reference rate.
+Override each query that the custom mode supports.
+Custom rate selectors can use these queries instead of concrete mode casts
+or a second copy of the reference-rate formula.
+
+IEEE 802.11 MIB Rate State and Listeners
+----------------------------------------
+
+``Ieee80211Mib`` adds rate state to the Management Information Base (MIB).
+``Ieee80211RateSetState`` contains ``supported``, ``basic``, and ``operational``
+rate sets. Each ``Ieee80211RateSet`` has a ``known`` flag, legacy rates in bits
+per second, and HT modulation and coding scheme (MCS) indexes.
+The default ``known=false`` means that the information is unknown.
+A set with ``known=true`` and no rates is a known empty set.
+Check ``known`` before you use an empty rate set.
+
+Read the state with ``getLocalRateSet()``, ``getBssRateSet()``, and
+``findPeerRateSet(address)``. BSS means Basic Service Set.
+``findPeerRateSet()`` returns ``nullptr`` when no peer record exists.
+The getters return views that remain valid until the corresponding update
+or clear operation. Copy any state that you need after such an operation.
+This includes an update that a synchronous signal listener makes.
+
+Use ``setLocalRateSet()`` for local state.
+Use ``setBssRateSet()`` for BSS state.
+Use ``installBssAndPeerRateSets()`` to install BSS and peer state together.
+
+These methods validate all input before they change the rate records.
+Unknown sets must contain no rates. Known basic and operational sets must
+respect the subset checks in ``validateIeee80211RateSetState()``.
+An equal rate-set update emits no signal.
+
+``clearBssRateSet()`` restores unknown BSS rate state.
+``removePeerRateSet()`` and ``clearPeerRateSets()`` remove peer rate records.
+
+Subscribe to ``Ieee80211Mib::rateStateChangedSignal`` for state notifications.
+The signal name is ``rateStateChanged``. A notification carries boolean
+``true`` and no details object. The MIB emits it after a committed rate,
+HT capability, or channel-operation change. Query the MIB in the listener
+to obtain current state.
+``installBssAndPeerRateSets()`` publishes both records before one notification.
+
+``releaseAssociationId()`` and ``clearAssociationIds()`` remove peer HT
+capabilities and peer rate sets before notification. A teardown that removes
+either kind of peer state emits one signal. Empty teardown emits no signal.
+A listener can install replacement peer state from the callback.
+The teardown leaves that replacement intact.
+Standalone HT and rate removal methods retain their own notifications when
+they remove state.
+
+Existing configuration parameters and MIB method signatures need no change.
+
 IEEE 802.11 EDCA Management Recovery
 -----------------------------------
 

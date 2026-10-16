@@ -1,0 +1,1162 @@
+//
+// Copyright (C) 2004 OpenSim Ltd.
+// Copyright (C) 2009-2010 Thomas Reschka
+//
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+
+#include "inet/transportlayer/tcp/flavours/TcpAlgorithmBase.h"
+
+#include "inet/transportlayer/tcp/Tcp.h"
+#include "inet/transportlayer/tcp/TcpSackRexmitQueue.h"
+#include "inet/transportlayer/tcp/TcpSendQueue.h"
+#include "inet/transportlayer/tcp/TcpSimsignals.h"
+
+namespace inet {
+namespace tcp {
+
+// The retransmission and delayed ACK timers take their values from the
+// parameters of the Tcp module (TcpAlgorithm::initializeAlgorithm()).
+
+// the delayed ACK of Linux (adaptiveDelayedAcks): TCP_ATO_MIN, TCP_DELACK_MIN,
+// TCP_DELACK_MAX, TCP_MAX_QUICKACKS, and the default of net.ipv4.tcp_pingpong_thresh
+#define TCP_ATO_MIN_S          0.04  // 40ms: the lower limit of the ATO, and the ATO of the quickack mode
+#define TCP_DELACK_MIN_S       0.04  // 40ms
+#define TCP_DELACK_MAX_S       0.2   // 200ms
+#define TCP_MAX_QUICKACKS      16
+#define TCP_PINGPONG_THRESH    1
+
+#define TLP_MAX_ACK_DELAY      0.2   // 200ms: RFC 8985 TLP.max_ack_delay, as Linux (TCP_RTO_MIN)
+#define TLP_MIN_TIMEOUT        0.002 // 2ms: Linux TCP_TIMEOUT_MIN, the PTO margin when more than one segment is in flight
+
+std::string TcpAlgorithmBaseStateVariables::str() const
+{
+    std::stringstream out;
+    out << TcpStateVariables::str();
+    out << " snd_cwnd=" << snd_cwnd;
+    out << " rto=" << rexmit_timeout;
+    return out.str();
+}
+
+std::string TcpAlgorithmBaseStateVariables::detailedInfo() const
+{
+    std::stringstream out;
+    out << TcpStateVariables::detailedInfo();
+    out << "snd_cwnd=" << snd_cwnd << "\n";
+    out << "rto=" << rexmit_timeout << "\n";
+    out << "persist_timeout=" << persist_timeout << "\n";
+    // TODO add others too
+    return out.str();
+}
+
+TcpAlgorithmBase::TcpAlgorithmBase() : TcpAlgorithm(),
+    state((TcpAlgorithmBaseStateVariables *&)TcpAlgorithm::state)
+{
+    rexmitTimer = persistTimer = delayedAckTimer = keepAliveTimer = tlpTimer = corkTimer = nullptr;
+}
+
+TcpAlgorithmBase::~TcpAlgorithmBase()
+{
+    // Note: don't delete "state" here, it'll be deleted from TcpConnection
+
+    // cancel and delete timers
+    if (rexmitTimer)
+        conn->deleteTimer(rexmitTimer);
+    if (persistTimer)
+        conn->deleteTimer(persistTimer);
+    if (delayedAckTimer)
+        conn->deleteTimer(delayedAckTimer);
+    if (keepAliveTimer)
+        conn->deleteTimer(keepAliveTimer);
+    if (tlpTimer)
+        conn->deleteTimer(tlpTimer);
+    if (corkTimer)
+        conn->deleteTimer(corkTimer);
+}
+
+void TcpAlgorithmBase::initializeAlgorithm()
+{
+    TcpAlgorithm::initializeAlgorithm();
+
+    rexmitTimer = new cMessage("REXMIT");
+    persistTimer = new cMessage("PERSIST");
+    delayedAckTimer = new cMessage("DELAYEDACK");
+    keepAliveTimer = new cMessage("KEEPALIVE");
+    tlpTimer = new cMessage("TLP-PTO");
+    // schedulePto() limits the probe timeout to the time of the RTO, so both
+    // timers can expire at the same instant. RFC 8985 section 8 gives them one
+    // timer, where the probe takes the place of the RTO: the probe goes first,
+    // and processPtoTimer() then restarts the RTO.
+    tlpTimer->setSchedulingPriority(-1);
+    corkTimer = new cMessage("CORK");
+
+    rexmitTimer->setContextPointer(conn);
+    persistTimer->setContextPointer(conn);
+    delayedAckTimer->setContextPointer(conn);
+    keepAliveTimer->setContextPointer(conn);
+    tlpTimer->setContextPointer(conn);
+    corkTimer->setContextPointer(conn);
+
+    state->rexmit_timeout = initialRto;
+
+    state->keepalive_enabled = conn->getTcpMain()->par("keepAliveEnabled");
+    state->keepalive_idle_time = conn->getTcpMain()->par("keepAliveIdleTime");
+    state->keepalive_interval = conn->getTcpMain()->par("keepAliveInterval");
+    state->keepalive_max_probes = conn->getTcpMain()->par("keepAliveProbeCount");
+}
+
+uint32_t TcpAlgorithmBase::getInitialWindow() const
+{
+    // initialCwnd, as the initcwnd of a Linux route, which wins over the default
+    // (tcp_init_cwnd()); else initialWindow
+    if (state->initialCwndSegments > 0)
+        return state->initialCwndSegments * state->snd_effmss;
+    switch (state->init_cwnd_mode) {
+        case 1: // RFC 3390, the upper bound of RFC 5681 section 3.1
+            return std::min(4 * state->snd_effmss, std::max(2 * state->snd_effmss, (uint32_t)4380));
+        case 2: // RFC 6928 (IW10)
+            return std::min(10 * state->snd_effmss, std::max(2 * state->snd_effmss, (uint32_t)14600));
+        default: // RFC 2001: one segment
+            return state->snd_effmss;
+    }
+}
+
+void TcpAlgorithmBase::established(bool active)
+{
+    // RFC 6298 section 5.7: "If the timer expires awaiting the ACK of a SYN segment and
+    // the TCP implementation is using an RTO less than 3 seconds, the RTO MUST be
+    // re-initialized to 3 seconds when data transmission begins". A retransmitted SYN
+    // or SYN-ACK gives no RTT sample (Karn), so the RTO is still the initial one here.
+    // Linux tcp_init_metrics() does the same with TCP_TIMEOUT_FALLBACK.
+    if (state->syn_rexmit_count > 0 && !state->rttMeasured && state->rexmit_timeout < 3) {
+        state->rexmit_timeout = 3;
+        EV_INFO << "RFC 6298 section 5.7: the SYN timer expired, the RTO is 3s\n";
+    }
+
+    // Linux starts the time of the last arrival (icsk_ack.lrcvtime) at the end of the
+    // handshake (tcp_finish_connect()), so a reply within one ATO of it counts for the
+    // pingpong mode
+    state->lastDataRecvTime = simTime();
+
+    // Linux tcp_rcv_synsent_state_process(): when data waits at the end of an active
+    // open, the client enters the quickack mode, which also sets the ATO
+    if (active && state->adaptiveDelayedAcks && conn->getSendQueue()->getBytesAvailable(state->snd_nxt) > 0)
+        enterQuickackMode(TCP_MAX_QUICKACKS);
+
+    // initialize cwnd (we may learn SMSS during connection setup)
+
+    // RFC 3390, page 2: "The upper bound for the initial window is given more precisely in
+    // (1):
+    //
+    //   min (4*MSS, max (2*MSS, 4380 bytes))                        (1)
+    //
+    // Note: Sending a 1500 byte packet indicates a maximum segment size
+    // (MSS) of 1460 bytes (assuming no IP or TCP options).  Therefore,
+    // limiting the initial window's MSS to 4380 bytes allows the sender to
+    // transmit three segments initially in the common case when using 1500
+    // byte packets.
+    //
+    // Equivalently, the upper bound for the initial window size is based on
+    // the MSS, as follows:
+    //
+    //   If (MSS <= 1095 bytes)
+    //     then win <= 4 * MSS;
+    //   If (1095 bytes < MSS < 2190 bytes)
+    //     then win <= 4380;
+    //   If (2190 bytes <= MSS)
+    //     then win <= 2 * MSS;
+    //
+    // This increased initial window is optional: a TCP MAY start with a
+    // larger initial window.  However, we expect that most general-purpose
+    // TCP implementations would choose to use the larger initial congestion
+    // window given in equation (1) above.
+    //
+    // This upper bound for the initial window size represents a change from
+    // RFC 2581 [RFC2581], which specified that the congestion window be
+    // initialized to one or two segments.
+    // (...)
+    // If the SYN or SYN/ACK is
+    // lost, the initial window used by a sender after a correctly
+    // transmitted SYN MUST be one segment consisting of MSS bytes."
+    if (state->syn_rexmit_count == 0 && (state->init_cwnd_mode != 0 || state->initialCwndSegments != 0)) {
+        state->snd_cwnd = getInitialWindow();
+        EV_DETAIL << "Increased Initial Window, CWND is set to " << state->snd_cwnd << "\n";
+    }
+    // RFC 2001, page 3:
+    // " 1.  Initialization for a given connection sets cwnd to one segment
+    // and ssthresh to 65535 bytes."
+    else
+        state->snd_cwnd = state->snd_effmss; // RFC 2001
+
+    if (active) {
+        // finish connection setup with ACK (possibly piggybacked on data)
+        EV_INFO << "Completing connection setup by sending ACK (possibly piggybacked on data)\n";
+        if (sendDataWithFirstAck) {
+            if (!sendData(false))
+                conn->sendAck();
+        }
+        else {
+            conn->sendAck();
+            sendData(false);
+        }
+    }
+
+    if (state->keepalive_enabled) {
+        state->time_last_segment_received = simTime();
+        state->keepalive_probes_sent = 0;
+        conn->scheduleAfter(state->keepalive_idle_time, keepAliveTimer);
+    }
+}
+
+void TcpAlgorithmBase::setKeepAlive(bool enabled)
+{
+    // as Linux tcp_set_keepalive(): a connection that has completed its handshake
+    // starts the idle time now; before that, established() starts it
+    state->keepalive_enabled = enabled;
+    if (!enabled)
+        cancelTimer(keepAliveTimer);
+    else if (!keepAliveTimer->isScheduled()) {
+        int fsmState = conn->getFsmState();
+        if (fsmState == TCP_S_ESTABLISHED || fsmState == TCP_S_CLOSE_WAIT || fsmState == TCP_S_FIN_WAIT_1
+            || fsmState == TCP_S_FIN_WAIT_2 || fsmState == TCP_S_CLOSING || fsmState == TCP_S_LAST_ACK)
+        {
+            state->keepalive_probes_sent = 0;
+            conn->scheduleAfter(state->keepalive_idle_time, keepAliveTimer);
+        }
+    }
+}
+
+void TcpAlgorithmBase::connectionClosed()
+{
+    cancelTimer(rexmitTimer);
+    cancelTimer(persistTimer);
+    cancelTimer(delayedAckTimer);
+    cancelTimer(keepAliveTimer);
+    cancelTimer(tlpTimer);
+    cancelTimer(corkTimer);
+}
+
+void TcpAlgorithmBase::processTimer(cMessage *timer, TcpEventCode& event)
+{
+    if (timer == rexmitTimer) {
+        // RFC 3168, section 6.1.2: after an ECN-Echo at a congestion window of one
+        // segment, "The sending TCP MUST reset the retransmit timer", also with
+        // nothing in flight, and when it expires, the sender "will then be able to
+        // send a new packet". So there is nothing to retransmit then. In the persist
+        // state only the probe octet is in flight, and the persist timer repeats it.
+        if (state->snd_una == state->snd_max || persistTimer->isScheduled()) {
+            EV_INFO << "REXMIT timer expired with nothing in flight: no retransmission, sending new data\n";
+            sendData(false);
+        }
+        else
+            processRexmitTimer(event);
+    }
+    else if (timer == persistTimer)
+        processPersistTimer(event);
+    else if (timer == delayedAckTimer)
+        processDelayedAckTimer(event);
+    else if (timer == keepAliveTimer)
+        processKeepAliveTimer(event);
+    else if (timer == tlpTimer)
+        processPtoTimer(event);
+    else if (timer == corkTimer) {
+        // a partial that TCP_CORK or MSG_MORE held goes now, with PSH (Linux
+        // tcp_write_wakeup())
+        conn->flushCorkedData(true);
+    }
+    else
+        throw cRuntimeError(timer, "unrecognized timer");
+}
+
+void TcpAlgorithmBase::schedulePto()
+{
+    // RFC 8985 section 7.2: not in a fast recovery or in an RTO recovery, not with
+    // SACKed data, and not with a probe outstanding (Linux sends no second probe).
+    if (!state->tlpEnabled || !state->sack_enabled || state->lossRecovery
+            || (state->rtoRecoveryPoint != 0 && seqLess(state->snd_una, state->rtoRecoveryPoint))
+            || state->sackedBytes != 0 || state->tlpHighSeq != 0
+            || state->snd_una == state->snd_max)
+        return;
+
+    // TLP_calc_PTO(): 2*SRTT, plus the delayed ACK of the peer when one segment is
+    // in flight; without an RTT sample, the RTO. Never later than the RTO.
+    simtime_t pto;
+    if (state->srtt > 0) {
+        pto = state->srtt * 2;
+        if (state->snd_max - state->snd_una <= state->snd_mss)
+            pto += TLP_MAX_ACK_DELAY;
+        else
+            pto += TLP_MIN_TIMEOUT; // the probe must not come between the ACKs of one flight
+    }
+    else
+        pto = state->rexmit_timeout;
+    if (rexmitTimer->isScheduled()) {
+        simtime_t rtoRemaining = rexmitTimer->getArrivalTime() - simTime();
+        if (rtoRemaining < pto)
+            pto = rtoRemaining;
+    }
+    if (pto <= SIMTIME_ZERO)
+        return;
+
+    cancelTimer(tlpTimer);
+    conn->scheduleAfter(pto, tlpTimer);
+    EV_DETAIL << "TLP: probe timeout armed for " << pto << "s\n";
+}
+
+void TcpAlgorithmBase::processPtoTimer(TcpEventCode& event)
+{
+    // RFC 8985 section 7.3, Linux tcp_send_loss_probe(): no ACK came for the tail
+    // of the flight in the probe timeout. Send one probe, so that its ACK, or the
+    // SACK hole that it shows, starts a fast recovery instead of an RTO. Not during
+    // a fast recovery: RACK can start one without a new ACK, so the timer can stay.
+    if (!state->tlpEnabled || state->tlpHighSeq != 0 || state->lossRecovery
+            || state->snd_una == state->snd_max)
+        return;
+    if (conn->sendTlpProbe()) {
+        state->tlpHighSeq = state->snd_max;
+        // the probe takes the place of the RTO: restart the RTO from now
+        cancelTimer(rexmitTimer);
+        conn->scheduleAfter(state->rexmit_timeout, rexmitTimer);
+    }
+}
+
+void TcpAlgorithmBase::processTlpAck(const TcpHeader *tcpHeader, uint32_t payloadLength)
+{
+    // RFC 8985 section 7.4.2 TLP_process_ack(), Linux tcp_process_tlp_ack()
+    uint32_t ack = tcpHeader->getAckNo();
+    if (state->tlpHighSeq == 0 || seqLess(ack, state->tlpHighSeq))
+        return;
+    if (!state->tlpRetrans)
+        state->tlpHighSeq = 0; // the probe of new data arrived
+    else if (state->dsackSeen && state->dsackEndSeq == state->tlpHighSeq)
+        state->tlpHighSeq = 0; // a D-SACK of the probe: the original and the probe arrived
+    else if (seqGreater(ack, state->tlpHighSeq)) {
+        // The ACK covers data after the probe, and no report showed that both the
+        // original and the probe arrived: the probe repaired a loss.
+        state->tlpHighSeq = 0;
+        tlpLossResponse();
+    }
+    else if (ack == state->snd_una && payloadLength == 0) {
+        bool sackOption = false;
+        for (size_t i = 0; i < tcpHeader->getHeaderOptionArraySize(); i++)
+            if (tcpHeader->getHeaderOption(i)->getKind() == TCPOPTION_SACK)
+                sackOption = true;
+        if (!sackOption)
+            state->tlpHighSeq = 0; // a duplicate ACK without SACK: the original and the probe arrived
+    }
+    // else: the ACK reaches the probe without a D-SACK; wait for a later ACK
+}
+
+void TcpAlgorithmBase::processRexmitTimer(TcpEventCode& event)
+{
+    EV_DETAIL << "TCB: " << state->str() << "\n";
+
+    //"
+    // For any state if the retransmission timeout expires on a segment in
+    // the retransmission queue, send the segment at the front of the
+    // retransmission queue again, reinitialize the retransmission timer,
+    // and return.
+    //"
+    // Also: abort connection after max 12 retries.
+    //
+    // However, retransmission is actually more complicated than that
+    // in RFC 9293 section 3.10.8 above, we'll leave it to subclasses (e.g. TcpTahoe, TcpReno).
+    //
+    if (++state->rexmit_count > maxRexmitCount) {
+        EV_DETAIL << "Retransmission count exceeds " << maxRexmitCount << ", aborting connection\n";
+        conn->signalConnectionTimeout();
+        event = TCP_E_ABORT; // TODO maybe rather introduce a TCP_E_TIMEDOUT event
+        return;
+    }
+
+    EV_INFO << "Performing retransmission #" << state->rexmit_count
+            << "; increasing RTO from " << state->rexmit_timeout << "s ";
+
+    //
+    // Karn's algorithm is implemented below:
+    //  (1) don't measure RTT for retransmitted packets.
+    //  (2) RTO should be doubled after retransmission ("exponential back-off")
+    //
+
+    // restart the retransmission timer with twice the latest RTO value, or with the max, whichever is smaller
+    state->rexmit_timeout += state->rexmit_timeout;
+    if (state->rexmit_timeout > maxRexmitTimeout)
+        state->rexmit_timeout = maxRexmitTimeout;
+
+    conn->scheduleAfter(state->rexmit_timeout, rexmitTimer);
+
+    // RFC 8985 section 8: the RTO and the probe timeout are one timer. Section 7.1:
+    // "Reset TLP.is_retrans and TLP.end_seq when initiating a connection, fast
+    // recovery, or RTO recovery": an earlier probe is not the repair of this loss.
+    cancelTimer(tlpTimer);
+    state->tlpHighSeq = 0;
+    state->tlpRetrans = false;
+
+    EV_INFO << " to " << state->rexmit_timeout << "s, and cancelling RTT measurement\n";
+
+    // cancel round-trip time measurement
+    state->rtseq_sendtime = 0;
+
+    state->numRtos++;
+
+    conn->emit(numRtosSignal, state->numRtos);
+
+    // if sacked_enabled reset sack related flags
+    if (state->sack_enabled) {
+        // RFC 2018 section 8: after a timeout the sender SHOULD turn off the SACKed bits,
+        // because the receiver may have reneged; RFC 5682 step 1 repeats it. Linux keeps
+        // them (tcp_timeout_mark_lost() clears them only when it detects reneging), which
+        // RFC 6675 section 5.1 allows; retainSackAfterRto selects that.
+        if (!retainSackAfterRto)
+            conn->getRexmitQueueForUpdate()->resetSackedBit();
+        conn->getRexmitQueueForUpdate()->resetRexmittedBit();
+
+        // RFC 3517, page 8: "If an RTO occurs during loss recovery as specified in this document,
+        // RecoveryPoint MUST be set to HighData.  Further, the new value of
+        // RecoveryPoint MUST be preserved and the loss recovery algorithm
+        // outlined in this document MUST be terminated.  In addition, a new
+        // recovery phase (as described in section 5) MUST NOT be initiated
+        // until HighACK is greater than or equal to the new value of
+        // RecoveryPoint."
+        // TcpClassicAlgorithmBase, which alone sets lossRecovery, clears it after the
+        // timeout hook of the recovery, so that the hook can see the fast recovery.
+        if (state->lossRecovery) {
+            state->recoveryPoint = state->snd_max; // HighData = snd_max
+            state->recoveryAfterRtoBlocked = true;
+            EV_DETAIL << "Loss Recovery terminated.\n";
+        }
+    }
+
+    state->time_last_data_sent = simTime();
+
+    //
+    // Leave congestion window management and actual retransmission to
+    // subclasses (e.g. TcpTahoe, TcpReno).
+    //
+    // That is, subclasses will redefine this method, call us, then perform
+    // window adjustments and do the retransmission as they like.
+    //
+}
+
+void TcpAlgorithmBase::processPersistTimer(TcpEventCode& event)
+{
+    // RFC 9293 section 3.8.6.1: "The transmitting host SHOULD send the first
+    // zero-window probe when a zero window has existed for the retransmission timeout
+    // period (SHLD-29), and SHOULD increase exponentially the interval between
+    // successive probes (SHLD-30)." The first interval is the RTO (see
+    // receivedAckForUnackedData()), and each probe doubles it, up to
+    // maxPersistTimeout; as Linux tcp_probe_timer().
+    // no data waits for the window, so there is nothing to probe: the timer stops
+    // (Linux tcp_probe_timer()), and a later send starts it again (sendData())
+    if (!isDataWaiting()) {
+        EV_INFO << "PERSIST timer expired, but no data waits: no probe\n";
+        return;
+    }
+
+    // RFC 9293 section 3.8.6.2.1, rule (4): with an open window that the sender SWS
+    // avoidance does not use, "it is necessary to have a timeout to force transmission
+    // of data, overriding the SWS avoidance algorithm", and the RFC suggests this timer.
+    // Linux sends such a segment from its probe timer too (tcp_write_wakeup()).
+    if (state->snd_wnd > 0 && state->snd_una == state->snd_max) {
+        EV_INFO << "PERSIST timer expired with an open window: overriding the SWS avoidance\n";
+        state->swsOverride = true;
+        sendData(false);
+        state->swsOverride = false;
+        return;
+    }
+
+    state->persist_timeout = state->persist_timeout * 2;
+    if (state->persist_timeout > maxPersistTimeout)
+        state->persist_timeout = maxPersistTimeout;
+
+    conn->scheduleAfter(state->persist_timeout, persistTimer);
+
+    // sending persist probe
+    conn->sendProbe();
+    state->zeroWindowProbesSent++;
+}
+
+void TcpAlgorithmBase::processDelayedAckTimer(TcpEventCode& event)
+{
+    if (state->adaptiveDelayedAcks) {
+        // Linux tcp_delack_timer_handler(): the delayed ACK expired, so the ATO was too
+        // short: double it, up to the RTO; in the pingpong mode, leave the mode and
+        // reset the ATO
+        if (state->pingpongCount < TCP_PINGPONG_THRESH) {
+            state->ackAto = state->ackAto * 2;
+            if (state->ackAto > state->rexmit_timeout)
+                state->ackAto = state->rexmit_timeout;
+        }
+        else {
+            state->pingpongCount = 0;
+            state->ackAto = TCP_ATO_MIN_S;
+        }
+    }
+    state->ack_now = true;
+    conn->sendAck();
+}
+
+void TcpAlgorithmBase::processKeepAliveTimer(TcpEventCode& event)
+{
+    // RFC 9293 section 3.8.4, as Linux tcp_keepalive_timer(). TIME_WAIT has no
+    // keepalive (Linux keeps only a time-wait socket there).
+    if (conn->getFsmState() == TCP_S_TIME_WAIT)
+        return;
+
+    // MUST-26: "Keep-alive packets MUST only be sent when no sent data is outstanding";
+    // data that waits also keeps the connection from being idle. Try again after the
+    // idle time.
+    if (state->snd_max != state->snd_una || !conn->isSendQueueEmpty()) {
+        state->keepalive_probes_sent = 0;
+        conn->scheduleAfter(state->keepalive_idle_time, keepAliveTimer);
+        return;
+    }
+
+    // MUST-26: "and no data or acknowledgment packets have been received for the
+    // connection within an interval". A segment since the last probe also answers it.
+    simtime_t idle = simTime() - state->time_last_segment_received;
+    if (idle < state->keepalive_idle_time) {
+        state->keepalive_probes_sent = 0;
+        conn->scheduleAfter(state->keepalive_idle_time - idle, keepAliveTimer);
+        return;
+    }
+
+    // MUST-29: one probe without an answer is not a dead connection; after
+    // keepAliveProbeCount of them, abort, and tell the application (TCP_I_TIMED_OUT)
+    if (state->keepalive_probes_sent >= state->keepalive_max_probes) {
+        EV_INFO << "Keepalive: no answer to " << state->keepalive_max_probes << " probes, aborting connection\n";
+        conn->signalConnectionTimeout();
+        event = TCP_E_ABORT;
+        return;
+    }
+
+    EV_INFO << "Keepalive: the connection is idle, sending probe #" << (state->keepalive_probes_sent + 1) << "\n";
+    conn->sendKeepAliveProbe();
+    state->keepalive_probes_sent++;
+    conn->scheduleAfter(state->keepalive_interval, keepAliveTimer);
+}
+
+void TcpAlgorithmBase::startRexmitTimer()
+{
+    // start counting retransmissions for this seq number.
+    // Note: state->rexmit_timeout is set from rttMeasurementComplete().
+    state->rexmit_count = 0;
+
+    // the RTO and the probe timeout are one timer (RFC 8985 section 8)
+    cancelTimer(tlpTimer);
+
+    // schedule timer
+    conn->scheduleAfter(state->rexmit_timeout, rexmitTimer);
+}
+
+void TcpAlgorithmBase::ensureRexmitTimerArmed()
+{
+    if (state->snd_una != state->snd_max && !rexmitTimer->isScheduled())
+        startRexmitTimer();
+}
+
+void TcpAlgorithmBase::rttMeasurementComplete(simtime_t tSent, simtime_t tAcked)
+{
+    //
+    // Jacobson's algorithm for estimating RTT and adaptively setting RTO.
+    //
+    // Note: this implementation calculates in doubles. An impl. which uses
+    // 500ms ticks is available from old tcpmodule.cc:calcRetransTimer().
+    //
+
+    // update smoothed RTT estimate (srtt) and variance (rttvar)
+    const double g = 0.125; // 1 / 8; (1 - alpha) where alpha == 7 / 8;
+    simtime_t newRTT = tAcked - tSent;
+
+    if (newRTT > 0 && (state->minRtt == 0 || newRTT < state->minRtt))
+        state->minRtt = newRTT;
+
+    simtime_t& srtt = state->srtt;
+    simtime_t& rttvar = state->rttvar;
+
+    if (!state->rttMeasured) {
+        // RFC 6298 section 2.2: the first measurement has a case of its own. Folding it
+        // into the recurrence below started the estimator from srtt = 0 and rttvar = 3/4,
+        // so the first smoothed value was one eighth of the measurement and the first
+        // timeout described the initial guess rather than the path.
+        srtt = newRTT;
+        rttvar = newRTT / 2;
+        state->rttMeasured = true;
+    }
+    else {
+        // RFC 6298 section 2.3, with alpha = 1/8 and beta = 1/4. rttvar is updated from the
+        // old srtt, so it comes first.
+        simtime_t err = newRTT - srtt;
+
+        srtt += g * err;
+        rttvar += g * (fabs(err) - rttvar);
+    }
+
+    // RFC 6298 sections 2.3 and 2.4: RTO = SRTT + 4*RTTVAR, rounded up to the
+    // minimum. With rtoVarianceFloor, Linux tcp_set_rto() instead: the minimum
+    // limits the variance term, RTO = SRTT + max(4*RTTVAR, minimum).
+    simtime_t rto;
+    if (rtoVarianceFloor)
+        rto = srtt + std::max(4 * rttvar, minRexmitTimeout);
+    else {
+        rto = srtt + 4 * rttvar;
+        if (rto < minRexmitTimeout)
+            rto = minRexmitTimeout;
+    }
+    if (rto > maxRexmitTimeout)
+        rto = maxRexmitTimeout;
+
+    state->rexmit_timeout = rto;
+
+    // record statistics
+    EV_DETAIL << "Measured RTT=" << (newRTT * 1000) << "ms, updated SRTT=" << (srtt * 1000)
+              << "ms, new RTO=" << (rto * 1000) << "ms\n";
+
+    conn->emit(rttSignal, newRTT);
+    conn->emit(srttSignal, srtt);
+    conn->emit(rttvarSignal, rttvar);
+    conn->emit(rtoSignal, rto);
+}
+
+void TcpAlgorithmBase::rttMeasurementCompleteUsingTS(uint32_t echoedTS)
+{
+    ASSERT(state->ts_enabled);
+
+    // Note: The TS option is using uint32_t values (ms precision) therefore we convert the current simTime also to a uint32_t value (ms precision)
+    // and then convert back to simtime_t to use rttMeasurementComplete() to update srtt and rttvar
+    uint32_t now = conn->convertSimtimeToTS(simTime());
+    simtime_t tSent = conn->convertTSToSimtime(echoedTS);
+    simtime_t tAcked = conn->convertTSToSimtime(now);
+    rttMeasurementComplete(tSent, tAcked);
+}
+
+bool TcpAlgorithmBase::sendData(bool sendCommandInvoked)
+{
+    // RFC 2581, pages 7 and 8: "When TCP has not received a segment for
+    // more than one retransmission timeout, cwnd is reduced to the value
+    // of the restart window (RW) before transmission begins.
+    // For the purposes of this standard, we define RW = IW.
+    // (...)
+    // Using the last time a segment was received to determine whether or
+    // not to decrease cwnd fails to deflate cwnd in the common case of
+    // persistent HTTP connections [HTH98].
+    // (...)
+    // Therefore, a TCP SHOULD set cwnd to no more than RW before beginning
+    // transmission if the TCP has not sent data in an interval exceeding
+    // the retransmission timeout."
+    if (!conn->isSendQueueEmpty()) { // do we have any data to send?
+        if ((simTime() - state->time_last_data_sent) > state->rexmit_timeout) {
+            // RFC 5681, page 11: "For the purposes of this standard, we define RW = min(IW,cwnd)."
+            if (state->init_cwnd_mode != 0 || state->initialCwndSegments != 0)
+                state->snd_cwnd = std::min(getInitialWindow(), state->snd_cwnd);
+            else
+                state->snd_cwnd = state->snd_effmss;
+
+            EV_INFO << "Restarting idle connection, CWND is set to " << state->snd_cwnd << "\n";
+        }
+    }
+
+    //
+    // Send window is effectively the minimum of the congestion window (cwnd)
+    // and the advertised window (snd_wnd).
+    //
+    bool sent = conn->sendData(state->snd_cwnd);
+
+    // Data that a zero window stops, with nothing in flight, starts the persist timer,
+    // as Linux tcp_check_probe_timer(): also after a zero window of the SYN-ACK, or when
+    // the application sends after the window closed. Data that the sender SWS avoidance
+    // holds with nothing in flight starts it too: its expiry is the override timeout
+    // (RFC 9293 section 3.8.6.2.1, rule (4)).
+    // A partial that TCP_CORK or MSG_MORE holds with nothing in flight has the cork timer.
+    if ((state->snd_wnd == 0 || (state->snd_una == state->snd_max && !corkTimer->isScheduled())) && !rexmitTimer->isScheduled()
+        && !persistTimer->isScheduled() && isDataWaiting())
+    {
+        EV_INFO << "Data waits for the window, therefore PERSIST timer is started.\n";
+        startPersistTimer();
+    }
+    return sent;
+}
+
+void TcpAlgorithmBase::scheduleCorkTimer()
+{
+    // a running timer stays, as Linux tcp_check_probe_timer(): the hold has a ceiling
+    // of one RTO from its start, also if more small writes come
+    if (!corkTimer->isScheduled())
+        conn->scheduleAfter(state->rexmit_timeout, corkTimer);
+}
+
+void TcpAlgorithmBase::cancelCorkTimer()
+{
+    cancelTimer(corkTimer);
+}
+
+bool TcpAlgorithmBase::isDataWaiting() const
+{
+    return conn->getSendQueue()->getBytesAvailable(state->snd_una) > 0;
+}
+
+void TcpAlgorithmBase::startPersistTimer()
+{
+    state->persist_timeout = state->rexmit_timeout; // the first probe after one RTO (SHLD-29)
+    conn->scheduleAfter(state->persist_timeout, persistTimer);
+}
+
+void TcpAlgorithmBase::sendCommandInvoked()
+{
+    // try sending
+    sendData(true);
+}
+
+void TcpAlgorithmBase::incrQuickack(uint32_t maxQuickacks)
+{
+    // Linux tcp_incr_quickack(): ACKs at once for half the receive window, at most
+    // maxQuickacks; the send MSS stands for the received MSS (icsk_ack.rcv_mss)
+    uint32_t mss = state->snd_mss > 0 ? state->snd_mss : 536;
+    uint32_t quickacks = state->rcv_wnd / (2 * mss);
+    if (quickacks == 0)
+        quickacks = 2;
+    if (quickacks > maxQuickacks)
+        quickacks = maxQuickacks;
+    if (quickacks > state->quickAckCounter)
+        state->quickAckCounter = quickacks;
+}
+
+void TcpAlgorithmBase::enterQuickackMode(uint32_t maxQuickacks)
+{
+    incrQuickack(maxQuickacks);
+    state->pingpongCount = 0;
+    state->ackAto = TCP_ATO_MIN_S;
+}
+
+bool TcpAlgorithmBase::inQuickackMode() const
+{
+    return state->quickAckCounter > 0 && state->pingpongCount < TCP_PINGPONG_THRESH;
+}
+
+void TcpAlgorithmBase::dataArrivedAtoUpdate()
+{
+    // Linux tcp_event_data_recv(): the first data segment starts the quickack budget;
+    // arrivals close together bring the ATO down to its lower limit; a gap longer than
+    // the RTO means that the sender waited for ACKs, so the quickack budget grows
+    simtime_t now = simTime();
+    if (state->ackAto == SIMTIME_ZERO) {
+        incrQuickack(TCP_MAX_QUICKACKS);
+        state->ackAto = TCP_ATO_MIN_S;
+    }
+    else {
+        simtime_t gap = now - state->lastDataRecvTime;
+        if (gap <= TCP_ATO_MIN_S / 2)
+            state->ackAto = state->ackAto / 2 + TCP_ATO_MIN_S / 2;
+        else if (gap < state->ackAto) {
+            state->ackAto = state->ackAto / 2 + gap;
+            if (state->ackAto > state->rexmit_timeout)
+                state->ackAto = state->rexmit_timeout;
+        }
+        else if (gap > state->rexmit_timeout)
+            incrQuickack(TCP_MAX_QUICKACKS);
+    }
+    state->lastDataRecvTime = now;
+}
+
+void TcpAlgorithmBase::scheduleDelayedAck()
+{
+    // Linux tcp_send_delayed_ack(): the ATO, at most the SRTT (but at least 40 ms) and
+    // 200 ms
+    simtime_t ato = state->ackAto;
+    if (ato > TCP_DELACK_MIN_S) {
+        simtime_t maxAto = TCP_DELACK_MAX_S;
+        if (state->srtt > SIMTIME_ZERO) {
+            simtime_t rtt = std::max(state->srtt, SimTime(TCP_DELACK_MIN_S));
+            if (rtt < maxAto)
+                maxAto = rtt;
+        }
+        if (ato > maxAto)
+            ato = maxAto;
+    }
+    if (ato > TCP_DELACK_MAX_S)
+        ato = TCP_DELACK_MAX_S;
+
+    // an earlier timer stays; one that expires within a quarter ATO sends the ACK now
+    simtime_t timeout = simTime() + ato;
+    if (delayedAckTimer->isScheduled()) {
+        if (delayedAckTimer->getArrivalTime() <= simTime() + ato / 4) {
+            cancelTimer(delayedAckTimer);
+            state->ack_now = true;
+            conn->sendAck();
+            return;
+        }
+        if (delayedAckTimer->getArrivalTime() < timeout)
+            return;
+        cancelTimer(delayedAckTimer);
+    }
+    conn->scheduleAt(timeout, delayedAckTimer);
+}
+
+void TcpAlgorithmBase::receivedOutOfOrderSegment()
+{
+    // the sender probably repairs a loss and needs an ACK for each segment
+    if (state->adaptiveDelayedAcks)
+        enterQuickackMode(TCP_MAX_QUICKACKS);
+    state->ack_now = true;
+    EV_INFO << "Out-of-order segment, sending immediate ACK\n";
+    conn->sendAck();
+}
+
+void TcpAlgorithmBase::receiveSeqChanged()
+{
+    // If we send a data segment already (with the updated seqNo) there is no need to send an additional ACK
+    if (state->full_sized_segment_counter == 0 && !state->ack_now && state->last_ack_sent == state->rcv_nxt && !delayedAckTimer->isScheduled()) { // ackSent?
+//        tcpEV << "ACK has already been sent (possibly piggybacked on data)\n";
+    }
+    else {
+        if (!state->delayed_acks_enabled) { // delayed ACK disabled
+            EV_INFO << "rcv_nxt changed to " << state->rcv_nxt << ", (delayed ACK disabled) sending ACK now\n";
+            conn->sendAck();
+        }
+        else if (state->adaptiveDelayedAcks) {
+            // Linux __tcp_ack_snd_check(): the ACK goes at once when more than one
+            // full-sized segment waits for it, in the quickack mode, or when ack_now is
+            // set; else the adaptive delayed ACK. A segment beyond the offered window
+            // (acceptBeyondBufferAtEmptyQueue) gets no ACK at once, as in Linux
+            // (rcv_neg_window). The ATO first follows the arrival (tcp_event_data_recv()).
+            dataArrivedAtoUpdate();
+            uint32_t mss = state->snd_mss > 0 ? state->snd_mss : 536;
+            bool moreThanOneFrame = state->rcv_nxt - state->last_ack_sent > mss;
+            bool overWindowAccept = conn->takeOverWindowAccept();
+            if (state->ack_now || ((moreThanOneFrame || inQuickackMode()) && !overWindowAccept)) {
+                EV_INFO << "rcv_nxt changed to " << state->rcv_nxt << ", sending ACK now ("
+                        << (state->ack_now ? "ack_now" : moreThanOneFrame ? "more than one full-sized segment" : "quickack mode")
+                        << ", quickack budget " << state->quickAckCounter << ")\n";
+                conn->sendAck();
+            }
+            else {
+                EV_INFO << "rcv_nxt changed to " << state->rcv_nxt << ", scheduling the adaptive delayed ACK (ATO "
+                        << state->ackAto << ")\n";
+                scheduleDelayedAck();
+            }
+        }
+        else { // delayed ACK enabled
+            if (state->ack_now) {
+                EV_INFO << "rcv_nxt changed to " << state->rcv_nxt << ", (delayed ACK enabled, but ack_now is set) sending ACK now\n";
+                conn->sendAck();
+            }
+            // RFC 9293 section 3.8.6.3: "the delay MUST be less than 0.5 seconds (MUST-40).
+            // An ACK SHOULD be generated for at least every second full-sized segment"
+            // (SHLD-19); delayedAckTimeout and delayedAckFrameCount set both.
+            else if (state->full_sized_segment_counter >= state->delayedAckFrameCount) {
+                EV_INFO << "rcv_nxt changed to " << state->rcv_nxt << ", (delayed ACK enabled, but full_sized_segment_counter=" << state->full_sized_segment_counter << ") sending ACK now\n";
+                conn->sendAck();
+            }
+            else {
+                EV_INFO << "rcv_nxt changed to " << state->rcv_nxt << ", (delayed ACK enabled and full_sized_segment_counter=" << state->full_sized_segment_counter << ") scheduling ACK\n";
+                if (!delayedAckTimer->isScheduled()) // schedule delayed ACK timer if not already running
+                    conn->scheduleAfter(delayedAckTimeout, delayedAckTimer);
+            }
+        }
+    }
+}
+
+void TcpAlgorithmBase::receivedAckForUnackedData(uint32_t firstSeqAcked)
+{
+    if (!state->ts_enabled) {
+        // if round-trip time measurement is running, check if rtseq has been acked
+        if (state->rtseq_sendtime != 0 && seqLess(state->rtseq, state->snd_una)) {
+            // print value
+            EV_DETAIL << "Round-trip time measured on rtseq=" << state->rtseq << ": "
+                      << floor((simTime() - state->rtseq_sendtime) * 1000 + 0.5) << "ms\n";
+
+            rttMeasurementComplete(state->rtseq_sendtime, simTime()); // update RTT variables with new value
+
+            // measurement finished
+            state->rtseq_sendtime = 0;
+        }
+    }
+
+    //
+    // handling of retransmission timer: if the ACK is for the last segment sent
+    // (no data in flight), cancel the timer, otherwise restart the timer
+    // with the current RTO value.
+    //
+    if (state->snd_una == state->snd_max) {
+        if (rexmitTimer->isScheduled()) {
+            EV_INFO << "ACK acks all outstanding segments, cancel REXMIT timer\n";
+            cancelTimer(rexmitTimer);
+        }
+        else
+            EV_INFO << "There were no outstanding segments, nothing new in this ACK.\n";
+        // no data is outstanding, so there is nothing to probe (RFC 8985 section 8)
+        cancelTimer(tlpTimer);
+    }
+    else {
+        EV_INFO << "ACK acks some but not all outstanding segments ("
+                << (state->snd_max - state->snd_una) << " bytes outstanding), "
+                << "restarting REXMIT timer\n";
+        cancelTimer(rexmitTimer);
+        startRexmitTimer();
+        // RFC 8985 section 7.2: an ACK of new data also arms the probe timeout
+        schedulePto();
+    }
+
+    //
+    // handling of PERSIST timer:
+    // If data sender received a zero-sized window, check retransmission timer.
+    //  If retransmission timer is not scheduled, start PERSIST timer if not already
+    //  running.
+    //
+    // If data sender received a non zero-sized window, check PERSIST timer.
+    //  If PERSIST timer is scheduled, cancel PERSIST timer.
+    //
+    if (state->snd_wnd == 0) { // received zero-sized window?
+        if (rexmitTimer->isScheduled()) {
+            if (persistTimer->isScheduled()) {
+                EV_INFO << "Received zero-sized window and REXMIT timer is running therefore PERSIST timer is canceled.\n";
+                cancelTimer(persistTimer);
+            }
+            else
+                EV_INFO << "Received zero-sized window and REXMIT timer is running therefore PERSIST timer is not started.\n";
+        }
+        else {
+            if (persistTimer->isScheduled())
+                EV_INFO << "Received zero-sized window and PERSIST timer is already running.\n";
+            else if (!isDataWaiting())
+                EV_INFO << "Received zero-sized window, but no data waits, therefore PERSIST timer is not started.\n";
+            else {
+                EV_INFO << "Received zero-sized window therefore PERSIST timer is started.\n";
+                startPersistTimer();
+            }
+        }
+    }
+    else { // received non zero-sized window?
+        if (persistTimer->isScheduled()) {
+            EV_INFO << "Received non zero-sized window therefore PERSIST timer is canceled.\n";
+            cancelTimer(persistTimer);
+        }
+    }
+
+    //
+    // Leave congestion window management and possible sending data to
+    // subclasses (e.g. TcpTahoe, TcpReno).
+    //
+    // That is, subclasses will redefine this method, call us, then perform
+    // window adjustments and send data (if there's room in the window).
+    //
+}
+
+bool TcpAlgorithmBase::processWindowUpdate()
+{
+    // An ACK that acknowledges no new data but opens the send window (a window update,
+    // or the ACK of a zero-window probe that the receiver did not accept) ends the
+    // persist state, and the waiting data goes at once (Linux FLAG_WIN_UPDATE, then
+    // tcp_data_snd_check()). Also with nothing in flight and no persist timer, as after
+    // a zero window of the SYN-ACK. Not with other data in flight, so that a duplicate
+    // ACK of a loss recovery does not come here.
+    if (state->snd_wnd > 0 && (state->snd_una == state->snd_max || persistTimer->isScheduled())) {
+        if (persistTimer->isScheduled()) {
+            EV_INFO << "The window update opens the window: cancelling the PERSIST timer\n";
+            cancelTimer(persistTimer);
+            // The ACK is below the probe octet, so the receiver did not accept it: the
+            // octet goes again as the first octet of the data.
+            conn->unsendWindowProbe();
+        }
+        sendData(false);
+        return true;
+    }
+    return false;
+}
+
+void TcpAlgorithmBase::receivedAckForAlreadyAckedData(const TcpHeader *tcpHeader, uint32_t payloadLength)
+{
+    // a window update is no duplicate ACK (RFC 5681 section 2, condition (e))
+    if (processWindowUpdate())
+        return;
+
+    countDuplicateAck(tcpHeader, payloadLength);
+}
+
+bool TcpAlgorithmBase::isDuplicateAck(const TcpHeader *tcpHeader, uint32_t payloadLength)
+{
+    // A received TCP segment is a duplicate ACK if all of the following apply:
+    //    (1) snd_una == ackNo
+    //    (2) segment contains no data
+    //    (3) there's unacked data (snd_una != snd_max)
+    return state->snd_una == tcpHeader->getAckNo() && payloadLength == 0 && state->snd_una != state->snd_max;
+}
+
+void TcpAlgorithmBase::countDuplicateAck(const TcpHeader *tcpHeader, uint32_t payloadLength)
+{
+    // The ACK of a zero-window probe is no duplicate ACK: only the probe octet is in
+    // flight, and the persist timer repeats it. BSD counts a duplicate ACK only while
+    // its retransmission timer runs.
+    if (isDuplicateAck(tcpHeader, payloadLength) && !persistTimer->isScheduled()) {
+        state->dupacks++;
+        conn->emit(dupAcksSignal, state->dupacks);
+        receivedDuplicateAck();
+    }
+    else {
+        // if doesn't qualify as duplicate ACK, just ignore it.
+        if (payloadLength == 0) {
+            if (state->snd_una != tcpHeader->getAckNo())
+                EV_DETAIL << "Old ACK: ackNo < snd_una\n";
+            else if (state->snd_una == state->snd_max)
+                EV_DETAIL << "ACK looks duplicate but we have currently no unacked data (snd_una == snd_max)\n";
+        }
+
+        // reset counter
+        state->dupacks = 0;
+        state->limitedTransmitBytes = 0;
+        conn->emit(dupAcksSignal, state->dupacks);
+    }
+}
+
+void TcpAlgorithmBase::receivedDuplicateAck()
+{
+    EV_INFO << "Duplicate ACK #" << state->dupacks << "\n";
+
+    bool fullSegmentsOnly = state->nagle_enabled && state->snd_una != state->snd_max;
+    if (state->dupacks < state->dupthresh && state->limited_transmit_enabled) { // DUPTRESH = 3
+        uint32_t oldSndMax = state->snd_max;
+        conn->sendOneNewSegment(fullSegmentsOnly, state->snd_cwnd); // RFC 3042
+        state->limitedTransmitBytes += state->snd_max - oldSndMax;
+    }
+
+    //
+    // Leave to subclasses (e.g. TcpTahoe, TcpReno) whatever they want to do
+    // on duplicate Acks.
+    //
+    // That is, subclasses will redefine this method, call us, then perform
+    // whatever action they want to do on dupAcks (e.g. retransmitting one segment).
+    //
+}
+
+void TcpAlgorithmBase::receivedAckForUnsentData(uint32_t seq)
+{
+    // Note: In this case no immediate ACK will be send because not mentioned
+    // in [Stevens, W.R.: TCP/IP Illustrated, Volume 2, page 861].
+    // To force immediate ACK use:
+//    state->ack_now = true;
+//    tcpEV << "ACK acks something not yet sent, sending immediate ACK\n";
+    EV_INFO << "ACK acks something not yet sent, sending ACK\n";
+    conn->sendAck();
+}
+
+void TcpAlgorithmBase::ackSent()
+{
+    // each ACK uses one ACK of the quickack budget (Linux tcp_dec_quickack_mode())
+    if (state->adaptiveDelayedAcks && state->quickAckCounter > 0)
+        state->quickAckCounter--;
+    state->full_sized_segment_counter = 0; // reset counter
+    state->ack_now = false; // reset flag
+    state->last_ack_sent = state->rcv_nxt; // update last_ack_sent, needed for TS option
+    // if delayed ACK timer is running, cancel it
+    if (delayedAckTimer->isScheduled())
+        cancelTimer(delayedAckTimer);
+}
+
+void TcpAlgorithmBase::dataSent(uint32_t fromseq)
+{
+    // Linux tcp_event_data_sent(): data within one ATO after the last arrival is a reply,
+    // and the replies lead to the pingpong mode, which delays the ACKs. A FIN without
+    // data is not a reply, as in Linux.
+    bool finOnly = state->send_fin && fromseq == state->snd_fin_seq;
+    if (state->adaptiveDelayedAcks && !finOnly && state->lastDataRecvTime > SIMTIME_ZERO
+        && simTime() - state->lastDataRecvTime < state->ackAto
+        && state->pingpongCount < TCP_PINGPONG_THRESH)
+        state->pingpongCount++;
+
+    // if retransmission timer not running, schedule it
+    if (!rexmitTimer->isScheduled()) {
+        EV_INFO << "Starting REXMIT timer\n";
+        startRexmitTimer();
+    }
+
+    // RFC 8985 section 7.2: arm the probe timeout for the new tail of the flight
+    schedulePto();
+
+    if (!state->ts_enabled) {
+        // start round-trip time measurement (if not already running)
+        if (state->rtseq_sendtime == 0) {
+            // remember this sequence number and when it was sent
+            state->rtseq = fromseq;
+            state->rtseq_sendtime = simTime();
+            EV_DETAIL << "Starting rtt measurement on seq=" << state->rtseq << "\n";
+        }
+    }
+
+    state->time_last_data_sent = simTime();
+
+    // record per-segment transmit times (used by Vegas and Westwood RTT sampling).
+    // A send that starts below the range this list covers is not recorded: the
+    // list only records forward progress and must stay contiguous.
+    state->sentInfo.clearTo(state->snd_una);
+    if (seqLess(fromseq, state->snd_max) && state->sentInfo.isInRange(fromseq))
+        state->sentInfo.set(fromseq, state->snd_max, simTime());
+}
+
+void TcpAlgorithmBase::segmentRetransmitted(uint32_t fromseq, uint32_t toseq)
+{
+    if (seqLess(fromseq, toseq) && state->sentInfo.isInRange(fromseq))
+        state->sentInfo.set(fromseq, toseq, simTime());
+}
+
+void TcpAlgorithmBase::restartRexmitTimer()
+{
+    if (rexmitTimer->isScheduled())
+        cancelTimer(rexmitTimer);
+
+    startRexmitTimer();
+}
+
+bool TcpAlgorithmBase::shouldMarkAck()
+{
+    // rfc-3168, pages 19-20:
+    // When TCP receives a CE data packet at the destination end-system, the
+    // TCP data receiver sets the ECN-Echo flag in the TCP header of the
+    // subsequent ACK packet.
+    // ...
+    // After a TCP receiver sends an ACK packet with the ECN-Echo bit set,
+    // that TCP receiver continues to set the ECN-Echo flag in all the ACK
+    // packets it sends (whether they acknowledge CE data packets or non-CE
+    // data packets) until it receives a CWR packet (a packet with the CWR
+    // flag set).  After the receipt of the CWR packet, acknowledgments for
+    // subsequent non-CE data packets do not have the ECN-Echo flag set.
+
+    if (state && state->ect) {
+        if (state->gotCeIndication) {
+            EV_INFO << "Received CE... ";
+            if (state->ecnEchoState)
+                EV_INFO << "Already in ecnEcho state\n";
+            else {
+                state->ecnEchoState = true;
+                EV << "Entering ecnEcho state\n";
+            }
+            state->gotCeIndication = false;
+        }
+        return state->ecnEchoState;
+    }
+    return false;
+}
+
+void TcpAlgorithmBase::processEcnInEstablished()
+{
+}
+
+uint32_t TcpAlgorithmBase::calculateSsthreshForFastRecovery()
+{
+    // RFC 5681 equation (4), also RFC 6675 section 5 step (4.2):
+    // ssthresh = max(FlightSize / 2, 2*SMSS)
+    return std::max(conn->getFlightSize() / 2, 2 * state->snd_mss);
+}
+
+uint32_t TcpAlgorithmBase::calculateSsthresh(uint32_t bytesInFlight)
+{
+    return std::max(bytesInFlight / 2, 2 * state->snd_effmss);
+}
+
+uint32_t TcpAlgorithmBase::getBytesInFlight() const
+{
+    return state->snd_nxt - conn->getDataSndUna();
+}
+
+} // namespace tcp
+} // namespace inet
+

@@ -104,6 +104,7 @@ void RadioMedium::initialize(int stage)
         if (recordTransmissionLog || recordReceptionLog)
             communicationLog.open();
         sameTransmissionStartTimeCheck = par("sameTransmissionStartTimeCheck");
+        purgeOnTransmission = !strcmp(par("transmissionPurgeMode"), "onTransmission");
 
         WATCH(transmissionCount);
         WATCH(signalSendCount);
@@ -181,8 +182,10 @@ std::ostream& RadioMedium::printToStream(std::ostream& stream, int level, int ev
 
 void RadioMedium::handleMessage(cMessage *message)
 {
-    if (message == removeNonInterferingTransmissionsTimer)
+    if (message == removeNonInterferingTransmissionsTimer) {
         removeNonInterferingTransmissions();
+        scheduleRemoveNonInterferingTransmissionsTimer();
+    }
     else
         throw cRuntimeError("Unknown message");
 }
@@ -248,6 +251,10 @@ void RadioMedium::removeNonInterferingTransmissions()
     communicationCache->removeNonInterferingTransmissions([&] (const ITransmission *transmission) {
         emit(signalRemovedSignal, check_and_cast<const cObject *>(transmission));
     });
+}
+
+void RadioMedium::scheduleRemoveNonInterferingTransmissionsTimer()
+{
     communicationCache->mapTransmissions([&] (const ITransmission *transmission) {
         auto interferenceEndTime = communicationCache->getCachedInterferenceEndTime(transmission);
         if (!removeNonInterferingTransmissionsTimer->isScheduled() && interferenceEndTime > simTime())
@@ -439,12 +446,17 @@ void RadioMedium::addRadio(const IRadio *radio)
     if (neighborCache)
         neighborCache->addRadio(radio);
     mediumLimitCache->addRadio(radio);
-    communicationCache->mapTransmissions([&] (const ITransmission *transmission) {
-        const IArrival *arrival = propagation->computeArrival(transmission, radio->getAntenna()->getMobility());
-        const IListening *listening = radio->getReceiver()->createListening(radio, arrival->getStartTime(), arrival->getEndTime(), arrival->getStartPosition(), arrival->getEndPosition());
-        communicationCache->setCachedArrival(radio, transmission, arrival);
-        communicationCache->setCachedListening(radio, transmission, listening);
-    });
+    // like addTransmission(), cache no arrival, interval or listening at a radio without a receiver
+    if (radio->getReceiver() != nullptr) {
+        communicationCache->mapTransmissions([&] (const ITransmission *transmission) {
+            const IArrival *arrival = propagation->computeArrival(transmission, radio->getAntenna()->getMobility());
+            const IntervalTree::Interval *interval = new IntervalTree::Interval(arrival->getStartTime(), arrival->getEndTime(), (void *)transmission);
+            const IListening *listening = radio->getReceiver()->createListening(radio, arrival->getStartTime(), arrival->getEndTime(), arrival->getStartPosition(), arrival->getEndPosition());
+            communicationCache->setCachedArrival(radio, transmission, arrival);
+            communicationCache->setCachedInterval(radio, transmission, interval);
+            communicationCache->setCachedListening(radio, transmission, listening);
+        });
+    }
     cModule *radioModule = const_cast<cModule *>(check_and_cast<const cModule *>(radio));
     if (radioModeFilter)
         radioModule->subscribe(IRadio::radioModeChangedSignal, this);
@@ -516,7 +528,9 @@ void RadioMedium::addTransmission(const IRadio *transmitterRadio, const ITransmi
         }
     });
     communicationCache->setCachedInterferenceEndTime(transmission, maxArrivalEndTime + mediumLimitCache->getMaxTransmissionDuration());
-    if (!removeNonInterferingTransmissionsTimer->isScheduled())
+    if (purgeOnTransmission)
+        removeNonInterferingTransmissions();
+    else if (!removeNonInterferingTransmissionsTimer->isScheduled())
         scheduleAt(communicationCache->getCachedInterferenceEndTime(transmission), removeNonInterferingTransmissionsTimer);
     emit(signalAddedSignal, check_and_cast<const cObject *>(transmission));
 }
@@ -756,6 +770,9 @@ void RadioMedium::receiveSignal(cComponent *source, simsignal_t signal, intval_t
         Enter_Method("listeningChanged");
         auto radio = check_and_cast<Radio *>(source);
         communicationCache->mapTransmissions([&] (const ITransmission *transmission) {
+            // addTransmission() caches no arrival and no listening at the transmitter itself
+            if (transmission->getTransmitterRadioId() == radio->getId())
+                return;
             const IArrival *arrival = getArrival(radio, transmission);
             const IListening *listening = radio->getReceiver()->createListening(radio, arrival->getStartTime(), arrival->getEndTime(), arrival->getStartPosition(), arrival->getEndPosition());
             delete communicationCache->getCachedListening(radio, transmission);

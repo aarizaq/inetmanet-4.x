@@ -19,6 +19,9 @@ void DynamicClassifier::initialize(int stage)
 {
     PacketClassifier::initialize(stage);
     if (stage == INITSTAGE_LOCAL) {
+        // the output gates are created in the order in which the classes appear
+        if (reverseOrder)
+            throw cRuntimeError("The reverseOrder parameter is not supported");
         submoduleName = par("submoduleName");
         moduleType = cModuleType::get(par("moduleType"));
         if (!getParentModule()->hasSubmoduleVector(submoduleName))
@@ -26,9 +29,20 @@ void DynamicClassifier::initialize(int stage)
      }
 }
 
-int DynamicClassifier::classifyPacket(Packet *packet)
+int DynamicClassifier::getClassIndex(Packet *packet) const
 {
-    int index = PacketClassifier::classifyPacket(packet);
+    return packetClassifierFunction->classifyPacket(packet);
+}
+
+int DynamicClassifier::classifyPacket(Packet *packet) const
+{
+    auto it = classIndexToGateItMap.find(getClassIndex(packet));
+    return it != classIndexToGateItMap.end() ? it->second : -1;
+}
+
+void DynamicClassifier::createBranchIfNeeded(Packet *packet)
+{
+    int index = getClassIndex(packet);
     auto it = classIndexToGateItMap.find(index);
     if (it == classIndexToGateItMap.end()) {
         auto parentModule = getParentModule();
@@ -53,10 +67,28 @@ int DynamicClassifier::classifyPacket(Packet *packet)
         module->buildInside();
         module->callInitialize();
         classIndexToGateItMap[index] = submoduleIndex;
-        return submoduleIndex;
     }
-    else
-        return it->second;
+}
+
+void DynamicClassifier::startPacketStreaming(Packet *packet)
+{
+    createBranchIfNeeded(packet);
+    PacketClassifier::startPacketStreaming(packet);
+}
+
+bool DynamicClassifier::canPushPacket(Packet *packet, const cGate *gate) const
+{
+    // KLUDGE: the answer must hold for this packet, and it depends on the branch
+    // of its class, so this query creates the branch if it does not exist yet
+    const_cast<DynamicClassifier *>(this)->createBranchIfNeeded(packet);
+    return PacketClassifier::canPushPacket(packet, gate);
+}
+
+void DynamicClassifier::pushPacket(Packet *packet, const cGate *gate)
+{
+    Enter_Method("pushPacket");
+    createBranchIfNeeded(packet);
+    PacketClassifier::pushPacket(packet, gate);
 }
 
 } // namespace queueing

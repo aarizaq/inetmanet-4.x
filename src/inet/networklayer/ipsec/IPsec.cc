@@ -21,10 +21,13 @@
 
 #include "inet/common/INETUtils.h"
 #include "inet/common/ModuleAccess.h"
+#include "inet/common/ProtocolTag_m.h"
 #include "inet/common/XMLUtils.h"
+#include "inet/common/packet/chunk/BytesChunk.h"
 #include "inet/linklayer/common/InterfaceTag_m.h"
 #include "inet/networklayer/common/L3AddressResolver.h"
 #include "inet/networklayer/common/IpProtocolId_m.h"
+#include "inet/networklayer/common/L3AddressTag_m.h"
 #ifdef INET_WITH_IPv4
 #include "inet/networklayer/ipv4/IcmpHeader.h"
 #include "inet/networklayer/ipv4/Ipv4Header_m.h"
@@ -46,6 +49,8 @@ using namespace inet::xmlutils;
 
 namespace inet {
 namespace ipsec {
+
+static const short DUMMY_PACKET_TIMER_KIND = 1; // the reinjection timers of the delay model have kind 0
 
 simsignal_t IPsec::inProtectedAcceptSignal = registerSignal("inProtectedAccept");
 simsignal_t IPsec::inProtectedDropSignal = registerSignal("inProtectedDrop");
@@ -142,6 +147,8 @@ IPsec::IPsec()
 
 IPsec::~IPsec()
 {
+    for (auto timer : dummyPacketTimers)
+        cancelAndDelete(timer);
 }
 
 void IPsec::initSecurityDBs(cXMLElement *spdConfig)
@@ -158,7 +165,7 @@ void IPsec::initSecurityDBs(cXMLElement *spdConfig)
     for (cXMLElement *spdEntryElem : spdConfig->getChildrenByTagName("SecurityPolicy")) {
         SecurityPolicy *spdEntry = new SecurityPolicy();
 
-        checkTags(spdEntryElem, "Selector Direction Action Protection EspMode EncryptionAlg AuthenticationAlg MaxTfcPadLength SecurityAssociation");
+        checkTags(spdEntryElem, "Selector Direction Action Protection EspMode EncryptionAlg AuthenticationAlg MaxTfcPadLength HardLifetimeSeconds HardLifetimeBytes SecurityAssociation");
 
         // Selector
         PacketSelector selector;
@@ -209,7 +216,7 @@ void IPsec::initSecurityDBs(cXMLElement *spdConfig)
 
             // load SA details
             for (cXMLElement *saEntryElem : spdEntryElem->getChildrenByTagName("SecurityAssociation")) {
-                checkTags(saEntryElem, "SPI Selector");
+                checkTags(saEntryElem, "SPI Protection HardLifetimeSeconds HardLifetimeBytes DSCP DummyPacketInterval Selector");
 
                 // SPI
                 const cXMLElement *spiElem = getUniqueChild(saEntryElem, "SPI");
@@ -219,6 +226,57 @@ void IPsec::initSecurityDBs(cXMLElement *spdConfig)
                 SecurityAssociation *sadEntry = new SecurityAssociation();
                 sadEntry->setRule(spdEntry->getRule());
                 sadEntry->setSpi(spi);
+
+                // an SA can override the Protection of its entry, so that one entry can protect a
+                // packet with ESP and AH together (RFC 4301 section 4.1): an AH SA takes the
+                // AuthenticationAlg of the entry, and an ESP SA needs the ESP elements of the entry
+                if (getUniqueChildIfExists(saEntryElem, "Protection") != nullptr) {
+                    Protection saProtection = parseEnumElem(protectionEnum, saEntryElem, "Protection");
+                    if (saProtection == Protection::AH && spdEntry->getAuthenticationAlg() == AuthenticationAlg::NONE)
+                        throw cRuntimeError("An AH SA needs an AuthenticationAlg other than NONE in its SecurityPolicy, at %s", saEntryElem->getSourceLocation());
+                    if (saProtection == Protection::ESP && spdEntry->getEspMode() == EspMode::NONE)
+                        throw cRuntimeError("An ESP SA needs the EspMode of an ESP SecurityPolicy, at %s", saEntryElem->getSourceLocation());
+                    IPsecRule rule = sadEntry->getRule();
+                    rule.setProtection(saProtection);
+                    sadEntry->setRule(rule);
+                }
+
+                // the hard lifetime of RFC 4301 section 4.4.2.1, in seconds from the start and in
+                // bytes; an element of the SA overrides the one of its policy
+                for (const char *name : {"HardLifetimeSeconds", "HardLifetimeBytes"}) {
+                    const cXMLElement *lifetimeElem = getUniqueChildIfExists(saEntryElem, name);
+                    if (lifetimeElem == nullptr)
+                        lifetimeElem = getUniqueChildIfExists(spdEntryElem, name);
+                    if (lifetimeElem == nullptr)
+                        continue;
+                    double value = atof(lifetimeElem->getNodeValue());
+                    if (value <= 0)
+                        throw cRuntimeError("%s must be positive, at %s", name, lifetimeElem->getSourceLocation());
+                    if (!strcmp(name, "HardLifetimeSeconds"))
+                        sadEntry->setHardLifetimeEnd(simTime() + value);
+                    else
+                        sadEntry->setHardLifetimeBytes((int64_t)value);
+                }
+
+                // the DSCP values of the SA (RFC 4301 section 4.4.2.1): of the SAs of one policy,
+                // the sender picks the one whose values hold the DSCP of the packet
+                if (const cXMLElement *dscpElem = getUniqueChildIfExists(saEntryElem, "DSCP"))
+                    sadEntry->setDscps(rangelist<unsigned int>::parse(dscpElem->getNodeValue(), [](std::string s) { return (unsigned int)atoi(s.c_str()); }));
+
+                // dummy packets (RFC 4303 section 2.6): an outbound ESP SA sends one in each interval,
+                // to the peer of the last packet that it protected
+                if (const cXMLElement *dummyElem = getUniqueChildIfExists(saEntryElem, "DummyPacketInterval")) {
+                    double interval = atof(dummyElem->getNodeValue());
+                    if (interval <= 0)
+                        throw cRuntimeError("DummyPacketInterval must be positive, at %s", dummyElem->getSourceLocation());
+                    if (direction != Direction::OUT || sadEntry->getProtection() != Protection::ESP)
+                        throw cRuntimeError("Only an outbound ESP SA sends dummy packets, at %s", dummyElem->getSourceLocation());
+                    sadEntry->setDummyPacketInterval(interval);
+                    cMessage *timer = new cMessage("IPsecDummyPacket", DUMMY_PACKET_TIMER_KIND);
+                    timer->setContextPointer(sadEntry);
+                    dummyPacketTimers.push_back(timer);
+                    scheduleAfter(interval, timer);
+                }
 
                 if (const cXMLElement *selectorElem = getUniqueChildIfExists(saEntryElem, "Selector")) {
                     IPsecRule rule = sadEntry->getRule();
@@ -338,7 +396,12 @@ void IPsec::initialize(int stage)
 
 void IPsec::handleMessage(cMessage *msg)
 {
-    if (msg->isSelfMessage()) {
+    if (msg->isSelfMessage() && msg->getKind() == DUMMY_PACKET_TIMER_KIND) {
+        auto sadEntry = static_cast<SecurityAssociation *>(msg->getContextPointer());
+        sendDummyPacket(sadEntry);
+        scheduleAfter(sadEntry->getDummyPacketInterval(), msg);
+    }
+    else if (msg->isSelfMessage()) {
         Packet *context = static_cast<Packet *>(msg->getContextPointer());
         delete msg;
         ipLayer->reinjectQueuedDatagram(context);
@@ -366,6 +429,10 @@ PacketInfo IPsec::extractEgressPacketInfo(Packet *packet, const L3Address& local
 
     IpProtocolId protocol = networkHeaderProtocol(datagram);
     packetInfo.setNextProtocol(protocol);
+    if (auto ipv4Header = dynamicPtrCast<const Ipv4Header>(datagram))
+        packetInfo.setDscp(ipv4Header->getDscp());
+    else if (auto ipv6Header = dynamicPtrCast<const Ipv6Header>(datagram))
+        packetInfo.setDscp(ipv6Header->getDscp());
     b transportOffset = datagram->getChunkLength();
 
     if (false) ;
@@ -397,8 +464,34 @@ PacketInfo IPsec::extractEgressPacketInfo(Packet *packet, const L3Address& local
     return packetInfo;
 }
 
+void IPsec::sendDummyPacket(SecurityAssociation *sadEntry)
+{
+    // a dummy packet goes to the peer of the last packet that the SA protected; before the
+    // first one, the SA has no peer
+    if (sadEntry->getLastRemoteAddress().isUnspecified())
+        return;
+    EV_INFO << "IPsec OUT ESP dummy packet on SA " << sadEntry->getSpi() << std::endl;
+    Packet *packet = new Packet("IPsecDummyPacket");
+    // RFC 4303 section 2.6: the Next Header 59 marks a dummy packet; its payload is empty, and
+    // every other field of the ESP header and trailer is there
+    espProtect(packet, sadEntry, IP_PROT_NONE, false);
+    packet->addTag<PacketProtocolTag>()->setProtocol(&Protocol::ipsecEsp);
+    auto addressReq = packet->addTag<L3AddressReq>();
+    addressReq->setSrcAddress(sadEntry->getLastLocalAddress());
+    addressReq->setDestAddress(sadEntry->getLastRemoteAddress());
+    auto dispatchProtocolReq = packet->addTag<DispatchProtocolReq>();
+    dispatchProtocolReq->setProtocol(networkProtocol);
+    dispatchProtocolReq->setServicePrimitive(SP_REQUEST);
+    dummyPackets.insert(packet);
+    send(packet, "ipOut");
+}
+
 INetfilter::IHook::Result IPsec::datagramPostRoutingHook(Packet *packet)
 {
+    // a dummy packet is already protected
+    if (dummyPackets.erase(packet) > 0)
+        return INetfilter::IHook::ACCEPT;
+
     // the local address is the datagram's source address (filled in by routing)
     return processEgressPacket(packet, peekNetworkHeader(packet)->getSourceAddress());
 }
@@ -532,8 +625,14 @@ void IPsec::espProtect(Packet *transport, SecurityAssociation *sadEntry, int tra
     // encrypting:
     if (tfcPadding > 0)
         transport->insertAtBack(makeShared<ByteCountChunk>(B(tfcPadding)));
-    if (padLength > 0)
-        transport->insertAtBack(makeShared<ByteCountChunk>(B(padLength)));
+    if (padLength > 0) {
+        // RFC 4303 section 2.4: with no other rule of the cipher, the padding octets are the
+        // monotonically increasing sequence 1, 2, 3, ...
+        std::vector<uint8_t> padding(padLength);
+        for (unsigned int i = 0; i < padLength; i++)
+            padding[i] = i + 1;
+        transport->insertAtBack(makeShared<BytesChunk>(padding));
+    }
     const auto& espTrailer = makeShared<IPsecEspTrailer>();
     espTrailer->setPadLength(padLength);
     espTrailer->setNextHeader(transportType);
@@ -546,7 +645,7 @@ void IPsec::espProtect(Packet *transport, SecurityAssociation *sadEntry, int tra
 
     // create ESP packet
     const auto& espHeader = makeShared<IPsecEspHeader>();
-    espHeader->setSequenceNumber(sadEntry->getAndIncSeqNum());
+    espHeader->setSequenceNumber(sadEntry->incrementAndGetSeqNum());
     espHeader->setSpi(sadEntry->getSpi());
     espHeader->setIcvBytes(icvBytes);
     transport->insertAtFront(espHeader);
@@ -563,24 +662,31 @@ void IPsec::ahProtect(Packet *transport, SecurityAssociation *sadEntry, int tran
     unsigned int icvBytes = getIntegrityCheckValueBitLength(sadEntry->getAuthenticationAlg()) / 8;
     unsigned int ivBytes  = getInitializationVectorBitLength(sadEntry->getAuthenticationAlg()) / 8;
 
-    unsigned int len = IP_AH_HEADER_BYTES + transport->getByteLength() + ivBytes + icvBytes;
+    // RFC 4302 section 2: the ICV field is the last field of the AH header, before the payload;
+    // an algorithm with an IV carries it in the same field (RFC 4543 section 3). The header is a
+    // multiple of 32 bits in IPv4 and of 64 bits in IPv6, with padding in the ICV field
+    // (section 3.3.3.2.1).
+    unsigned int alignmentBytes = networkProtocol == &Protocol::ipv6 ? 8 : 4;
+    unsigned int icvFieldBytes = ivBytes + icvBytes;
+    unsigned int headerBytes = IP_AH_HEADER_BYTES + icvFieldBytes;
+    unsigned int paddingBytes = (alignmentBytes - headerBytes % alignmentBytes) % alignmentBytes;
+    icvFieldBytes += paddingBytes;
+    headerBytes += paddingBytes;
 
-    // encrypting:
-    auto data = transport->removeData();
-    data->markImmutable();
-    auto encryptedData = makeShared<EncryptedChunk>(data, data->getChunkLength() + B(ivBytes));
-    transport->insertData(encryptedData);
+    unsigned int len = headerBytes + transport->getByteLength();
+
+    // AH authenticates and does not encrypt, so the payload stays as it is
+    if (icvFieldBytes > 0)
+        transport->insertAtFront(makeShared<ByteCountChunk>(B(icvFieldBytes)));
 
     const auto& ahHeader = makeShared<IPsecAuthenticationHeader>();
-    ahHeader->setSequenceNumber(sadEntry->getAndIncSeqNum());
+    ahHeader->setSequenceNumber(sadEntry->incrementAndGetSeqNum());
     ahHeader->setSpi(sadEntry->getSpi());
     ahHeader->setNextHeader(transportType);
-    ahHeader->setIcvBytes(icvBytes);
+    // section 2.2: the length of AH in 32-bit words, minus 2
+    ahHeader->setPayloadLength(headerBytes / 4 - 2);
+    ahHeader->setIcvBytes(icvFieldBytes);
     transport->insertAtFront(ahHeader);
-
-    // Add integrity check value if needed
-    if (icvBytes)
-        transport->insertAtBack(makeShared<ByteCountChunk>(B(icvBytes)));
 
     ASSERT(transport->getByteLength() == len);
 }
@@ -728,37 +834,58 @@ INetfilter::IHook::Result IPsec::protectDatagram(Packet *packet, const PacketInf
 
     double delay = 0;
 
-    bool espProtected = false, ahProtected = false;
+    // one ESP SA and one AH SA can protect a packet; ESP comes first, so that AH covers it
+    // (RFC 4301 section 4.1, RFC 4303 section 3.1.1), whatever the order of the SAs in the entry
+    SecurityAssociation *espSa = nullptr, *ahSa = nullptr;
+    int64_t protectedBytes = packet->getByteLength();
     for (auto saEntry : spdEntry->getEntries()) {
-        if (saEntry->getRule().getSelector().matches(&packetInfo)) {
-            if (saEntry->getProtection() == Protection::ESP && !espProtected && !ahProtected) { // ESP protection must precede possible AH protection
-                EV_INFO << "IPsec OUT ESP PROTECT packet: " << packetInfo.str() << std::endl;
-
-                int transportType = networkHeaderProtocol(netHeader);
-                espProtect(packet, (saEntry), transportType, tfcEnabled);
-                setNetworkHeaderProtocol(netHeader, IP_PROT_ESP);
-
-                delay += espProtectOutDelay->doubleValue();
-                espProtected = true;
-            }
-            else if (saEntry->getProtection() == Protection::AH && !ahProtected) {
-                EV_INFO << "IPsec OUT AH PROTECT packet: " << packetInfo.str() << std::endl;
-
-                int transportType = networkHeaderProtocol(netHeader);
-                setNetworkHeaderProtocol(netHeader, IP_PROT_AH);
-                ahProtect(packet, saEntry, transportType);
-
-                delay += ahProtectOutDelay->doubleValue();
-                ahProtected = true;
-            }
-            else {
-                EV_WARN << "IPsec OUT PROTECT packet " << packetInfo.str() << ": matching but unused SA (repeated AH or ESP protection, or swapped AH/ESP SAs)" << std::endl;
-            }
+        if (!saEntry->getRule().getSelector().matches(&packetInfo))
+            continue;
+        if (!saEntry->matchesDscp(packetInfo.getDscp()))
+            continue;
+        if (!saEntry->isUsable(simTime(), protectedBytes)) {
+            EV_INFO << "IPsec OUT, the hard lifetime of SA " << saEntry->getSpi() << " has ended, packet: " << packetInfo.str() << std::endl;
+            continue;
         }
+        if (saEntry->getProtection() == Protection::ESP && espSa == nullptr)
+            espSa = saEntry;
+        else if (saEntry->getProtection() == Protection::AH && ahSa == nullptr)
+            ahSa = saEntry;
+        else
+            EV_WARN << "IPsec OUT PROTECT packet " << packetInfo.str() << ": matching but unused SA (repeated AH or ESP protection)" << std::endl;
+    }
+    bool espProtected = false, ahProtected = false;
+    if (espSa != nullptr) {
+        EV_INFO << "IPsec OUT ESP PROTECT packet: " << packetInfo.str() << std::endl;
+        int transportType = networkHeaderProtocol(netHeader);
+        espSa->addBytesProcessed(protectedBytes);
+        espSa->setLastAddresses(packetInfo.getLocalAddress(), packetInfo.getRemoteAddress());
+        espProtect(packet, espSa, transportType, tfcEnabled);
+        setNetworkHeaderProtocol(netHeader, IP_PROT_ESP);
+        delay += espProtectOutDelay->doubleValue();
+        espProtected = true;
+    }
+    if (ahSa != nullptr) {
+        EV_INFO << "IPsec OUT AH PROTECT packet: " << packetInfo.str() << std::endl;
+        int transportType = networkHeaderProtocol(netHeader);
+        setNetworkHeaderProtocol(netHeader, IP_PROT_AH);
+        ahSa->addBytesProcessed(protectedBytes);
+        ahProtect(packet, ahSa, transportType);
+        delay += ahProtectOutDelay->doubleValue();
+        ahProtected = true;
     }
 
     updateNetworkHeaderLength(netHeader, packet);
     packet->insertAtFront(netHeader);
+
+    if (!espProtected && !ahProtected) {
+        // RFC 4301 section 5.1: the entry wants protection, and no SA of it covers the packet;
+        // with no key management to create one, the packet is discarded, not sent in clear
+        EV_INFO << "IPsec OUT DROP, no SA of the PROTECT entry matches, packet: " << packetInfo.str() << std::endl;
+        emit(outDropSignal, 1L);
+        outDrop++;
+        return INetfilter::IHook::DROP;
+    }
 
     if (delay > 0 || lastProtectedOut > simTime()) {
         cMessage *selfmsg = new cMessage("IPsecProtectOutDelay");
@@ -800,6 +927,7 @@ INetfilter::IHook::Result IPsec::processIngressPacket(Packet *packet)
     }
 
     double delay = 0.0;
+    SecurityAssociation *ahSadEntry = nullptr; // the AH SA of a packet whose AH covers ESP
     if (transportProtocol == IP_PROT_AH) {
         auto netHeader = removeNetworkHeader(packet);
 
@@ -820,11 +948,19 @@ INetfilter::IHook::Result IPsec::processIngressPacket(Packet *packet)
             // mirroring the ESP branch; removing it a second time here would try to
             // convert the following EncryptedChunk to an AH header and crash)
 
-            // decrypting:
-            auto encryptedData = packet->removeAtFront<EncryptedChunk>();
-            packet->removeData(Chunk::PF_ALLOW_EMPTY);
-            auto data = encryptedData->getChunk();
-            packet->insertData(data);
+            // the ICV field ends the AH header (RFC 4302 section 2); its length follows from the
+            // Payload Length, the length of AH in 32-bit words minus 2
+            B icvFieldLength = B((ah->getPayloadLength() + 2) * 4) - ah->getChunkLength();
+            if (icvFieldLength > B(0))
+                packet->removeAtFront(icvFieldLength);
+            // RFC 4301 section 4.4.2.1: an SA whose hard lifetime has ended accepts nothing
+            if (!sadEntry->isUsable(simTime(), packet->getByteLength())) {
+                EV_INFO << "IPsec IN DROP AH, the hard lifetime of the SA has ended, packet: " << ingressPacketInfo.str() << std::endl;
+                emit(inProtectedDropSignal, 1L);
+                inDrop++;
+                return INetfilter::IHook::DROP;
+            }
+            sadEntry->addBytesProcessed(packet->getByteLength());
             setNetworkHeaderProtocol(netHeader, (IpProtocolId)ah->getNextHeader());
             updateNetworkHeaderLength(netHeader, packet);
             packet->insertAtFront(netHeader);
@@ -834,6 +970,12 @@ INetfilter::IHook::Result IPsec::processIngressPacket(Packet *packet)
             delay = ahProtectInDelay->doubleValue();
 
             if (ah->getNextHeader() != IP_PROT_ESP) {
+                if (!matchesSelectorsOfSa(packet, sadEntry)) {
+                    EV_INFO << "IPsec IN DROP AH, the packet does not match the selectors of its SA, packet: " << ingressPacketInfo.str() << std::endl;
+                    emit(inProtectedDropSignal, 1L);
+                    inDrop++;
+                    return INetfilter::IHook::DROP;
+                }
                 emit(inProtectedAcceptSignal, 1L);
                 inAccept++;
 
@@ -854,6 +996,10 @@ INetfilter::IHook::Result IPsec::processIngressPacket(Packet *packet)
                     return INetfilter::IHook::ACCEPT;
                 }
             }
+            // AH covers ESP: the ESP header comes next, and the selectors of this SA are checked
+            // on the packet that ESP processing gives back
+            ahSadEntry = sadEntry;
+            transportProtocol = IP_PROT_ESP;
         }
 
         if (sadEntry == nullptr) {
@@ -878,10 +1024,6 @@ INetfilter::IHook::Result IPsec::processIngressPacket(Packet *packet)
                 return INetfilter::IHook::DROP;
             }
 
-            // found SA
-            emit(inProtectedAcceptSignal, 1L);
-            inAccept++;
-
             // TODO calculate icv bytes length from SPI and use espHeader.icvBytes for verify it
             auto icvBytes = espHeader->getIcvBytes();
             if (icvBytes > 0)
@@ -894,9 +1036,33 @@ INetfilter::IHook::Result IPsec::processIngressPacket(Packet *packet)
             auto espTrailer = packet->removeAtBack<IPsecEspTrailer>(B(ESP_FIXED_PAYLOAD_TRAILER_BYTES));
             if (espTrailer->getPadLength() > 0)
                 packet->removeAtBack(B(espTrailer->getPadLength()));
+            // RFC 4303 section 2.6: the receiver discards a dummy packet, and reports no error
+            if (espTrailer->getNextHeader() == IP_PROT_NONE) {
+                EV_INFO << "IPsec IN DISCARD ESP dummy packet, packet: " << ingressPacketInfo.str() << std::endl;
+                return INetfilter::IHook::DROP;
+            }
+            // RFC 4301 section 4.4.2.1: an SA whose hard lifetime has ended accepts nothing
+            if (!sadEntry->isUsable(simTime(), packet->getByteLength())) {
+                EV_INFO << "IPsec IN DROP ESP, the hard lifetime of the SA has ended, packet: " << ingressPacketInfo.str() << std::endl;
+                emit(inProtectedDropSignal, 1L);
+                inDrop++;
+                return INetfilter::IHook::DROP;
+            }
+            sadEntry->addBytesProcessed(packet->getByteLength());
             setNetworkHeaderProtocol(netHeader, (IpProtocolId)espTrailer->getNextHeader());
             updateNetworkHeaderLength(netHeader, packet);
             packet->insertAtFront(netHeader);
+
+            if (!matchesSelectorsOfSa(packet, sadEntry) || (ahSadEntry != nullptr && !matchesSelectorsOfSa(packet, ahSadEntry))) {
+                EV_INFO << "IPsec IN DROP ESP, the packet does not match the selectors of its SA, packet: " << ingressPacketInfo.str() << std::endl;
+                emit(inProtectedDropSignal, 1L);
+                inDrop++;
+                return INetfilter::IHook::DROP;
+            }
+
+            // found SA
+            emit(inProtectedAcceptSignal, 1L);
+            inAccept++;
 
             delay += espProtectInDelay->doubleValue();
 
@@ -953,6 +1119,14 @@ INetfilter::IHook::Result IPsec::processIngressPacket(Packet *packet)
     emit(inUnprotectedDropSignal, 1L);
     inDrop++;
     return INetfilter::IHook::DROP;
+}
+
+bool IPsec::matchesSelectorsOfSa(Packet *packet, SecurityAssociation *sadEntry)
+{
+    // RFC 4301 section 5.2, step 4: after AH or ESP processing, the packet must match the
+    // selectors of the SA that protected it; the SAD entry holds them
+    PacketInfo packetInfo = extractIngressPacketInfo(packet);
+    return sadEntry->getRule().getSelector().matches(&packetInfo);
 }
 
 INetfilter::IHook::Result IPsec::datagramLocalOutHook(Packet *packet)

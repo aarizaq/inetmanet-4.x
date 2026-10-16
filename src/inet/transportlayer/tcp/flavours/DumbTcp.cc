@@ -12,7 +12,7 @@
 namespace inet {
 namespace tcp {
 
-Register_Class(DumbTcp);
+Define_Module(DumbTcp);
 
 // just a dummy value
 #define REXMIT_TIMEOUT    2
@@ -27,12 +27,12 @@ DumbTcp::~DumbTcp()
 {
     // cancel and delete timers
     if (rexmitTimer)
-        delete conn->cancelEvent(rexmitTimer);
+        conn->deleteTimer(rexmitTimer);
 }
 
-void DumbTcp::initialize()
+void DumbTcp::initializeAlgorithm()
 {
-    TcpAlgorithm::initialize();
+    TcpAlgorithm::initializeAlgorithm();
 
     rexmitTimer = new cMessage("REXMIT");
     rexmitTimer->setContextPointer(conn);
@@ -83,18 +83,33 @@ void DumbTcp::receiveSeqChanged()
     conn->sendAck();
 }
 
-void DumbTcp::receivedDataAck(uint32_t)
+void DumbTcp::receivedAckForUnackedData(uint32_t)
 {
     // ack may have freed up some room in the window, try sending.
     conn->sendData(65535);
 }
 
-void DumbTcp::receivedDuplicateAck()
+void DumbTcp::receivedAckForAlreadyAckedData(const TcpHeader *tcpHeader, uint32_t payloadLength)
 {
-    EV_INFO << "Duplicate ACK #" << state->dupacks << "\n";
+    // DumbTcp does not react to duplicate ACKs; the counter feeds the dupAcks statistic only
+    if (state->snd_una == tcpHeader->getAckNo() && payloadLength == 0 && state->snd_una != state->snd_max) {
+        state->dupacks++;
+        conn->emit(dupAcksSignal, state->dupacks);
+        EV_INFO << "Duplicate ACK #" << state->dupacks << "\n";
+    }
+    else {
+        if (payloadLength == 0) {
+            if (state->snd_una != tcpHeader->getAckNo())
+                EV_DETAIL << "Old ACK: ackNo < snd_una\n";
+            else if (state->snd_una == state->snd_max)
+                EV_DETAIL << "ACK looks duplicate but we have currently no unacked data (snd_una == snd_max)\n";
+        }
+        state->dupacks = 0;
+        conn->emit(dupAcksSignal, state->dupacks);
+    }
 }
 
-void DumbTcp::receivedAckForDataNotYetSent(uint32_t seq)
+void DumbTcp::receivedAckForUnsentData(uint32_t seq)
 {
     EV_INFO << "ACK acks something not yet sent, sending immediate ACK\n";
     conn->sendAck();
@@ -128,6 +143,11 @@ bool DumbTcp::shouldMarkAck()
 
 void DumbTcp::processEcnInEstablished()
 {
+}
+
+uint32_t DumbTcp::getBytesInFlight() const
+{
+    return state->snd_nxt - conn->getDataSndUna();
 }
 
 } // namespace tcp

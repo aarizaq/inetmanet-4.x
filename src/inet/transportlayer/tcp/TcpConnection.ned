@@ -17,6 +17,10 @@ import inet.common.SimpleModule;
 // Provides extensive statistics collection for various TCP metrics including
 // window sizes, sequence numbers, RTT measurements, and congestion parameters.
 //
+// The connection creates its congestion control and loss recovery algorithm
+// as its submodule `algorithm`, a ~TcpAlgorithm, when it opens. The signals
+// of the algorithm stay signals of the connection.
+//
 simple TcpConnection extends SimpleModule {
     parameters:
         @class(TcpConnection);
@@ -25,6 +29,7 @@ simple TcpConnection extends SimpleModule {
         @signal[rcvWnd];    // Rcv_wnd
         @signal[rcvAdv];    // Current advertised window (=rcv_adv)
         @signal[sndNxt];    // Sent seqNo
+        @signal[sndMax];    // Snd_max
         @signal[sndAck];    // Sent ackNo
         @signal[rcvSeq];    // Received seqNo
         @signal[rcvAck];    // Received ackNo (=snd_una)
@@ -36,6 +41,8 @@ simple TcpConnection extends SimpleModule {
         @signal[rcvOooSeg];    // Number of received out-of-order segments
         @signal[rcvNASeg];    // Number of received not acceptable segments
         @signal[sackedBytes];    // Current number of received sacked bytes
+        @signal[deliveredCe];    // AccECN: the CE marks that the ACE field of the peer reported (RFC 9768)
+        @signal[delivered];    // Cumulative newly-delivered (acked + sacked) bytes (RFC 8985/6937)
         @signal[tcpRcvQueueBytes];    // Current amount of used bytes in TCP receive queue
         @signal[tcpRcvQueueDrops];    // Number of drops in TCP receive queue
         @signal[tcpRcvPayloadBytes];   // Amount of payload bytes received (including duplicates, out of order, etc.) for TCP throughput

@@ -1,0 +1,273 @@
+%description:
+Check S1 recipient delivery through RecipientQosMacDataService.
+Supply accepted Basic agreements with known buffer sizes.
+Check fragment capacity, complete gap release, cyclic delivery, and BAR before DATA.
+Check window movement, incomplete-unit disposal, peer/TID isolation, and A-MSDU order.
+The fixture supplies agreements; it does not test ADDBA negotiation or Compressed exchanges.
+
+%extraargs: -r 0..7
+
+%file: RecipientReordering.cc
+#include "inet/common/packet/chunk/ByteCountChunk.h"
+#include "inet/linklayer/ieee80211/mac/aggregation/MsduAggregation.h"
+#include "inet/linklayer/ieee80211/mac/blockack/RecipientBlockAckAgreementHandler.h"
+#include "inet/linklayer/ieee80211/mac/recipient/RecipientQosMacDataService.h"
+
+namespace inet::ieee80211 {
+
+class ReorderingProbe : public BlockAckReordering {
+  public:
+    ReceiveBuffer *findBuffer(Tid tid, MacAddress peer) const {
+        auto it = receiveBuffers.find({tid, peer});
+        return it == receiveBuffers.end() ? nullptr : it->second;
+    }
+    size_t getBufferCount() const { return receiveBuffers.size(); }
+};
+
+class ReorderingRecipient : public RecipientQosMacDataService {
+  protected:
+    void initialize() override {
+        RecipientQosMacDataService::initialize();
+        delete blockAckReordering;
+        blockAckReordering = new ReorderingProbe();
+    }
+  public:
+    const ReorderingProbe *getReordering() const {
+        return static_cast<const ReorderingProbe *>(blockAckReordering);
+    }
+};
+Define_Module(ReorderingRecipient);
+
+class ReorderingAgreements : public RecipientBlockAckAgreementHandler {
+  public:
+    void accept(MacAddress peer, Tid tid, int start, int size) {
+        auto agreement = new RecipientBlockAckAgreement(peer, tid, SequenceNumberCyclic(start), size, SIMTIME_ZERO);
+        agreement->addbaResposneSent();
+        blockAckAgreements[{peer, tid}] = agreement;
+    }
+};
+
+class RecipientReorderingTest : public cSimpleModule {
+  protected:
+    ReorderingRecipient *recipient = nullptr;
+    ReorderingAgreements agreements;
+    const MacAddress peer = MacAddress("02:00:00:00:00:02");
+    const MacAddress otherPeer = MacAddress("02:00:00:00:00:03");
+    const MacAddress receiver = MacAddress("02:00:00:00:00:01");
+
+    Packet *makeData(int sequence, const char *name, int fragment = 0, bool more = false,
+            MacAddress transmitter = MacAddress("02:00:00:00:00:02"), Tid tid = 5) {
+        auto header = makeShared<Ieee80211DataHeader>();
+        header->setType(ST_DATA_WITH_QOS);
+        header->addChunkLength(QOSCONTROL_PART_LENGTH);
+        header->setTransmitterAddress(transmitter);
+        header->setReceiverAddress(receiver);
+        header->setAddress3(transmitter);
+        header->setTid(tid);
+        header->setAckPolicy(BLOCK_ACK);
+        header->setSequenceNumber(SequenceNumberCyclic(sequence));
+        header->setFragmentNumber(fragment);
+        header->setMoreFragments(more);
+        auto packet = new Packet(name, header);
+        packet->insertAtBack(makeShared<ByteCountChunk>(B(10)));
+        packet->insertAtBack(makeShared<Ieee80211MacTrailer>());
+        return packet;
+    }
+
+    std::vector<Packet *> receive(Packet *packet) {
+        auto header = packet->peekAtFront<Ieee80211DataHeader>();
+        return recipient->dataFrameReceived(packet, header, &agreements);
+    }
+
+    std::vector<Packet *> receiveBar(int start, MacAddress transmitter, Tid tid = 5, int fragment = 0) {
+        auto header = makeShared<Ieee80211BasicBlockAckReq>();
+        header->setTransmitterAddress(transmitter);
+        header->setReceiverAddress(receiver);
+        header->setTidInfo(tid);
+        header->setFragmentNumber(fragment);
+        header->setStartingSequenceNumber(SequenceNumberCyclic(start));
+        auto packet = new Packet("bar", header);
+        auto result = recipient->controlFrameReceived(packet, header, &agreements);
+        delete packet;
+        return result;
+    }
+
+    void checkDelivery(std::vector<Packet *> frames, std::initializer_list<const char *> names) {
+        std::vector<std::string> actualNames;
+        for (auto frame : frames) {
+            actualNames.push_back(frame->getName());
+            take(frame);
+            delete frame;
+        }
+        std::vector<std::string> expectedNames(names.begin(), names.end());
+        std::cout << "Delivered:";
+        for (const auto& name : actualNames)
+            std::cout << " " << name;
+        std::cout << "\n";
+        ASSERT(actualNames == expectedNames);
+    }
+
+    void checkWindow(int start, int length, MacAddress transmitter, Tid tid = 5) {
+        auto buffer = recipient->getReordering()->findBuffer(tid, transmitter);
+        ASSERT(buffer != nullptr);
+        std::cout << "Window start=" << buffer->getNextExpectedSequenceNumber()
+                  << " positions=" << buffer->getLength() << "\n";
+        ASSERT(buffer->getNextExpectedSequenceNumber() == SequenceNumberCyclic(start));
+        ASSERT(buffer->getLength() == length);
+    }
+
+    Packet *makeAggregate(int sequence, const char *first, const char *second) {
+        std::vector<Packet *> frames = {makeData(sequence, first), makeData(sequence, second)};
+        MsduAggregation aggregation;
+        auto packet = aggregation.aggregateFrames(&frames);
+        auto header = packet->removeAtFront<Ieee80211DataHeader>();
+        header->setSequenceNumber(SequenceNumberCyclic(sequence));
+        header->setAckPolicy(BLOCK_ACK);
+        packet->insertAtFront(header);
+        return packet;
+    }
+
+    void handleMessage(cMessage *message) override {
+        delete message;
+        recipient = check_and_cast<ReorderingRecipient *>(getModuleByPath("^.recipient"));
+        int scenario = par("scenario");
+        std::cout << "Recipient scenario " << scenario << "\n";
+        switch (scenario) {
+            case 0: // Two Basic fragments occupy one sequence position.
+                agreements.accept(peer, 5, 100, 1);
+                checkDelivery(receive(makeData(100, "fragmented-frag0", 0, true)), {});
+                checkWindow(100, 1, peer);
+                checkDelivery(receive(makeData(100, "duplicate-frag0", 0, true)), {});
+                checkWindow(100, 1, peer);
+                checkDelivery(receive(makeData(100, "fragmented-frag1", 1)), {"fragmented"});
+                checkWindow(101, 0, peer);
+                break;
+            case 1: // DATA fills a gap without a later DATA or BAR.
+            case 2: { // The same operation crosses 4095 -> 0.
+                int start = scenario == 1 ? 100 : 4094;
+                agreements.accept(peer, 5, start, 8);
+                checkDelivery(receive(makeData((start + 1) % 4096, "second")), {});
+                checkDelivery(receive(makeData((start + 2) % 4096, "third")), {});
+                checkDelivery(receive(makeData(start, "first")), {"first", "second", "third"});
+                checkWindow((start + 3) % 4096, 0, peer);
+                checkDelivery(receive(makeData(start, "old")), {});
+                break;
+            }
+            case 3: // BAR establishes state before the first DATA.
+                agreements.accept(peer, 5, 100, 8);
+                ASSERT(recipient->getReordering()->getBufferCount() == 0);
+                {
+                    auto unsupported = makeShared<Ieee80211MultiTidBlockAckReq>();
+                    unsupported->setTransmitterAddress(peer);
+                    unsupported->setReceiverAddress(receiver);
+                    auto packet = new Packet("unsupported-bar", unsupported);
+                    checkDelivery(recipient->controlFrameReceived(packet, unsupported, &agreements), {});
+                    delete packet;
+                }
+                checkDelivery(receiveBar(104, otherPeer), {});
+                checkDelivery(receiveBar(104, peer, 6), {});
+                checkDelivery(receiveBar(104, peer, 5, 1), {});
+                ASSERT(recipient->getReordering()->getBufferCount() == 0);
+                checkDelivery(receiveBar(104, peer), {});
+                checkWindow(104, 0, peer);
+                checkDelivery(receive(makeData(104, "first")), {"first"});
+                checkWindow(105, 0, peer);
+                break;
+            case 4: // BAR releases preceding and consecutive units in cyclic order.
+                agreements.accept(peer, 5, 4093, 8);
+                checkDelivery(receive(makeData(4094, "incomplete-frag0", 0, true)), {});
+                checkDelivery(receive(makeAggregate(4095, "before-a", "before-b")), {});
+                checkDelivery(receive(makeAggregate(0, "after-a", "after-b")), {});
+                checkDelivery(receive(makeData(1, "last")), {});
+                checkDelivery(receiveBar(0, peer), {"before-a", "before-b", "after-a", "after-b", "last"});
+                checkWindow(2, 0, peer);
+                checkDelivery(receiveBar(4095, peer), {});
+                checkDelivery(receiveBar(2, peer), {});
+                checkDelivery(receiveBar(2050, peer), {});
+                checkWindow(2, 0, peer);
+                checkDelivery(receive(makeData(4094, "old-frag1", 1)), {});
+                break;
+            case 5: // DATA beyond the window releases complete older units.
+                agreements.accept(peer, 5, 100, 4);
+                checkDelivery(receive(makeData(100, "incomplete-frag0", 0, true)), {});
+                checkDelivery(receive(makeData(101, "preceding")), {});
+                checkDelivery(receive(makeData(103, "following")), {});
+                checkDelivery(receive(makeData(106, "new")), {"preceding", "following"});
+                checkWindow(104, 1, peer);
+                checkDelivery(receive(makeData(100, "old-frag1", 1)), {});
+                checkDelivery(receive(makeData(104, "gap-one")), {"gap-one"});
+                checkDelivery(receive(makeData(105, "gap-two")), {"gap-two", "new"});
+                checkWindow(107, 0, peer);
+                break;
+            case 6: // Peer and TID state remain independent.
+                agreements.accept(peer, 5, 100, 8);
+                agreements.accept(otherPeer, 5, 100, 8);
+                agreements.accept(peer, 6, 100, 8);
+                checkDelivery(receive(makeData(101, "peer-one")), {});
+                checkDelivery(receive(makeData(101, "peer-two", 0, false, otherPeer)), {});
+                checkDelivery(receive(makeData(101, "tid-six", 0, false, peer, 6)), {});
+                checkDelivery(receiveBar(101, peer), {"peer-one"});
+                checkWindow(102, 0, peer);
+                checkWindow(100, 1, otherPeer);
+                checkWindow(100, 1, peer, 6);
+                checkDelivery(receive(makeData(100, "peer-two-first", 0, false, otherPeer)),
+                        {"peer-two-first", "peer-two"});
+                checkDelivery(receive(makeData(100, "tid-six-first", 0, false, peer, 6)),
+                        {"tid-six-first", "tid-six"});
+                break;
+            case 7: // An incomplete unit stops consecutive release.
+                agreements.accept(peer, 5, 100, 4);
+                checkDelivery(receive(makeData(101, "fragmented-frag0", 0, true)), {});
+                checkDelivery(receive(makeData(102, "third")), {});
+                checkDelivery(receive(makeData(100, "first")), {"first"});
+                checkWindow(101, 2, peer);
+                checkDelivery(receive(makeData(101, "fragmented-frag1", 1)), {"fragmented", "third"});
+                checkWindow(103, 0, peer);
+                break;
+            default:
+                throw cRuntimeError("Unknown recipient scenario");
+        }
+        std::cout << "Recipient reordering checks passed.\n";
+    }
+
+    void initialize() override { scheduleAt(SIMTIME_ZERO, new cMessage("checkRecipient")); }
+};
+Define_Module(RecipientReorderingTest);
+}
+
+%file: RecipientReorderingNetwork.ned
+import inet.common.SimpleModule;
+import inet.linklayer.ieee80211.mac.recipient.RecipientQosMacDataService;
+
+module ReorderingRecipient extends RecipientQosMacDataService
+{
+    parameters:
+        @class(::inet::ieee80211::ReorderingRecipient);
+}
+
+simple RecipientReorderingTest extends SimpleModule
+{
+    parameters:
+        int scenario;
+        @class(::inet::ieee80211::RecipientReorderingTest);
+}
+
+network RecipientReorderingNetwork
+{
+    submodules:
+        recipient: ReorderingRecipient;
+        test: RecipientReorderingTest;
+}
+
+%inifile: omnetpp.ini
+[General]
+network = RecipientReorderingNetwork
+sim-time-limit = 1ms
+seed-set = 0
+cmdenv-express-mode = true
+record-vector-results = false
+record-scalar-results = false
+*.test.scenario = ${scenario=0..7}
+
+%contains: stdout
+Recipient reordering checks passed.

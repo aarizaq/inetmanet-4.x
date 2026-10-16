@@ -47,6 +47,10 @@ class Ieee80211Mac;
  */
 class INET_API Hcf : public ICoordinationFunction, public IFrameSequenceHandler::ICallback, public IChannelAccess::ICallback, public ITx::ICallback, public IProcedureCallback, public IBlockAckAgreementHandlerCallback, public ModeSetListener
 {
+  private:
+    enum class BlockAckVariant { BASIC, COMPRESSED };
+    BlockAckVariant blockAckVariant = BlockAckVariant::BASIC;
+
   public:
     static simsignal_t edcaCollisionDetectedSignal;
     static simsignal_t blockAckAgreementAddedSignal;
@@ -58,6 +62,7 @@ class INET_API Hcf : public ICoordinationFunction, public IFrameSequenceHandler:
 
     cMessage *startRxTimer = nullptr;
     cMessage *inactivityTimer = nullptr;
+    cMessage *dataLifetimeTimer = nullptr;
 
     // Transmission and Reception
     IRx *rx = nullptr;
@@ -113,11 +118,23 @@ class INET_API Hcf : public ICoordinationFunction, public IFrameSequenceHandler:
     void startFrameSequence(AccessCategory ac);
     void handleInternalCollision(std::vector<Edcaf *> internallyCollidedEdcafs);
 
-    void sendUp(const std::vector<Packet *>& completeFrames);
+    // Tests can consume received frames here without an upper protocol stack.
+    virtual void sendUp(const std::vector<Packet *>& completeFrames);
     FrameSequenceContext *buildContext(AccessCategory ac);
+    static simtime_t encodeDuration(simtime_t duration, bool holder);
+    simtime_t computeImmediateResponseDuration(Packet *packet, const Ptr<const Ieee80211DataOrMgmtHeader>& header);
+    simtime_t forecastSingleProtectionSuccessor(Packet *packet, const Ptr<const Ieee80211DataOrMgmtHeader>& header,
+            TxopProcedure *txop, InProgressFrames *frames, simtime_t completionTime);
+    static simtime_t computeMultipleProtectionDuration(simtime_t limit, simtime_t remaining,
+            simtime_t reservation, simtime_t ppduDuration, simtime_t exchangeDuration, bool reservationEstablished);
+    simtime_t estimateZeroLimitExchange(Packet *packet, const Ptr<const Ieee80211MacHeader>& header,
+            TxopProcedure *txop, simtime_t ppduDuration);
     virtual bool hasFrameToTransmit();
     virtual bool hasFrameToTransmit(AccessCategory ac);
     virtual bool isReceptionInProgress();
+    void scheduleDataLifetimeTimer();
+    void expireDataFrames(bool preserveSequence = true);
+    std::set<const Packet *> getReferencedDataFrames() const;
 
     // Recipient
     virtual void recipientProcessReceivedFrame(Packet *packet, const Ptr<const Ieee80211MacHeader>& header);
@@ -143,8 +160,9 @@ class INET_API Hcf : public ICoordinationFunction, public IFrameSequenceHandler:
     virtual void originatorProcessTransmittedFrame(Packet *packet) override;
     virtual void originatorProcessReceivedFrame(Packet *packet, Packet *lastTransmittedPacket) override;
     virtual void originatorProcessFailedFrame(Packet *packet) override;
+    virtual void frameSequenceStarted() override;
     virtual void frameSequenceFinished() override;
-    virtual void transmitFrame(Packet *packet, simtime_t ifs) override;
+    virtual bool transmitFrame(Packet *packet, simtime_t ifs) override;
     virtual void scheduleStartRxTimer(simtime_t timeout) override;
 
     // IChannelAccess::ICallback
@@ -175,4 +193,3 @@ class INET_API Hcf : public ICoordinationFunction, public IFrameSequenceHandler:
 } /* namespace inet */
 
 #endif
-

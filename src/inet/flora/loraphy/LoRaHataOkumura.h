@@ -38,7 +38,7 @@ class INET_API LoRaHataOkumura : public FreeSpacePathLoss
   public:
     LoRaHataOkumura();
     virtual std::ostream& printToStream(std::ostream& stream, int level, int evFlags = 0) const override;
-    virtual double computePathLoss(mps propagationSpeed, Hz frequency, m distance) const override;
+    virtual double computeDistancePathLoss(mps propagationSpeed, Hz frequency, m distance) const override;
 };
 
 } // namespace physicallayer

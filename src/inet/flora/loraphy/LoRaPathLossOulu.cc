@@ -37,7 +37,7 @@ void LoRaPathLossOulu::initialize(int stage)
     }
 }
 
-double LoRaPathLossOulu::computePathLoss(mps propagationSpeed, Hz frequency, m distance) const
+double LoRaPathLossOulu::computeDistancePathLoss(mps propagationSpeed, Hz frequency, m distance) const
 {
     //EPL = B + 10nlog10( d / d0 )
     //double PL_d0_db = 127.41;
