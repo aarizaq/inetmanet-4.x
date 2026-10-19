@@ -165,6 +165,9 @@ TcpEventCode TcpConnection::processSegment1stThru8th(Packet *tcpSegment, const P
 
     bool acceptable = true;
 
+    // the reordering detection compares with the SACK state before this segment
+    state->priorFack = rexmitQueue->getHighestSackedSeqNum();
+
     if (tcpHeader->getHeaderLength() > TCP_MIN_HEADER_LENGTH) { // Header options present? TCP_HEADER_OCTETS = 20
         // PAWS, RFC 7323 section 5.3: "R1) If there is a Timestamps option in the arriving
         // segment, SEG.TSval < TS.Recent, TS.Recent is valid (see later discussion), and if
@@ -293,6 +296,14 @@ TcpEventCode TcpConnection::processSegment1stThru8th(Packet *tcpSegment, const P
     if (tcpHeader->getCwrBit() == true && !state->accEcnNegotiated) {
         EV_INFO << "Received CWR... Leaving ecnEcho State\n";
         state->ecnEchoState = false;
+    }
+
+    // RFC 3168 section 6.1.3: a CE packet starts the echo state when it arrives, so
+    // that a delayed ACK echoes it also after a later packet without CE. A CWR of the
+    // same packet comes first (Linux tcp_ecn_accept_cwr(), then tcp_ecn_check_ce()).
+    if (state->ect && state->gotCeIndication && !state->accEcnNegotiated && !state->ecnEchoState) {
+        EV_INFO << "Received CE... Entering ecnEcho state\n";
+        state->ecnEchoState = true;
     }
 
     //
@@ -574,7 +585,9 @@ TcpEventCode TcpConnection::processSegment1stThru8th(Packet *tcpSegment, const P
         // signal the user again.
         //"
 
-        // TODO URG currently not supported
+        // urgent data is not supported, except the out-of-band byte of Linux
+        if (state->urgentOutOfBand)
+            processUrgentPointer(tcpHeader->getSequenceNo() + tcpHeader->getUrgentPointer());
     }
 
     //
@@ -639,6 +652,10 @@ TcpEventCode TcpConnection::processSegment1stThru8th(Packet *tcpSegment, const P
         // transmitted if possible without incurring undue delay.
         //"
 
+        // the receive RTT of Linux, after the ACK and before the data (tcp_rcv_established())
+        if (fsm.getState() == TCP_S_ESTABLISHED)
+            measureRcvRttTs(tcpHeader, payloadLength);
+
         // only data beyond RCV.NXT: a segment of old data comes here only for its FIN,
         // which the eighth step processes
         if (payloadLength > 0 && seqGreater(tcpHeader->getSequenceNo() + payloadLength, state->rcv_nxt)) {
@@ -679,20 +696,30 @@ TcpEventCode TcpConnection::processSegment1stThru8th(Packet *tcpSegment, const P
                                 tcpHeader->getSequenceNo() + payloadLength, dupStart, dupEnd);
                 }
                 uint32_t oldRcvNxt = state->rcv_nxt;
+                uint32_t oldBufferedBytes = receiveQueue->getAmountOfBufferedBytes();
                 state->rcv_nxt = receiveQueue->insertBytesFromSegment(tcpSegment, tcpHeader);
+                // the bytes that this arrival added: a duplicate adds none, as Linux
+                // drops it, and a partial duplicate adds its new part
+                uint32_t addedBytes = receiveQueue->getAmountOfBufferedBytes() - oldBufferedBytes;
+                // in-order data (Linux tcp_event_data_recv() in tcp_data_queue())
+                if (!seqGreater(tcpHeader->getSequenceNo(), oldRcvNxt) && seqGreater(state->rcv_nxt, oldRcvNxt))
+                    measureRcvRtt();
                 if (payloadLength > 0) {
                     // rcv_mwnd_seq is still the highest edge before this arrival: a
                     // segment beyond it came in by acceptBeyondBufferAtEmptyQueue
                     if (seqGreater(tcpHeader->getSequenceNo() + payloadLength, state->rcv_mwnd_seq))
                         overWindowAcceptPending = true;
-                    chargeRcvBuffer(payloadLength);
+                    if (addedBytes > 0)
+                        chargeRcvBuffer(addedBytes);
                     // windowAutoTuning, as Linux (tcp_clamp_window()): when the charged
                     // segments outgrow the receive buffer of a connection that the
                     // application owns, the buffer grows; a connection that the
                     // application did not accept yet keeps its buffer, and so does a
                     // buffer that SO_RCVBUF locked
-                    if (state->rcv_ssthresh > 0 && !state->rcvbufLocked && appOwned && !isToBeAccepted() && rcvBufOccupancy > state->rcvBufferSize) {
-                        state->rcvBufferSize = (uint32_t)std::min<uint64_t>(rcvBufOccupancy, UINT32_MAX);
+                    if (state->rcv_ssthresh > 0 && !state->rcvbufLocked && appOwned && !isToBeAccepted() && rcvBufOccupancy > state->rcvBufferSize
+                        && state->rcvBufferSize < state->rcvBufferMax)
+                    {
+                        state->rcvBufferSize = (uint32_t)std::min<uint64_t>(rcvBufOccupancy, state->rcvBufferMax);
                         if (state->maxRcvBuffer < state->rcvBufferSize)
                             state->maxRcvBuffer = state->rcvBufferSize;
                         EV_DETAIL << "Window auto-tuning: the receive buffer grows to " << state->rcvBufferSize << "\n";
@@ -1081,17 +1108,19 @@ TcpEventCode TcpConnection::processSynInListen(Packet *tcpSegment, const Ptr<con
 
     // Linux tcp_syncookies=2 (syncookiesAlways): the connection is built again from
     // the cookie at the handshake ACK, and the 2-bit MSS field of the cookie
-    // quantizes the MSS of the peer down to the IPv4 msstab of
-    // net/ipv4/syncookies.c: the largest entry not above it. Window scale, SACK and
-    // timestamps come through the timestamp encoding and stay exact.
-    if (tcpMain->par("syncookiesAlways").boolValue() && state->snd_mss > 536) {
+    // quantizes the MSS of the peer (mss_clamp: the MSS option, or the default, at
+    // most TCP_MAXSEG) down to the IPv4 msstab of net/ipv4/syncookies.c: the largest
+    // entry not above it. The local MSS then limits it as before. Window scale, SACK
+    // and timestamps come through the timestamp encoding and stay exact.
+    uint32_t peerMss = getMssClamp();
+    if (tcpMain->par("syncookiesAlways").boolValue() && peerMss > 536) {
         static const uint32_t msstab[] = { 536, 1300, 1440, 1460 };
         uint32_t clamped = msstab[0];
         for (uint32_t entry : msstab)
-            if (entry <= state->snd_mss)
+            if (entry <= peerMss)
                 clamped = entry;
         if (clamped < state->snd_mss) {
-            EV_DETAIL << "syncookiesAlways: peer MSS " << state->snd_mss << " quantized to " << clamped << "\n";
+            EV_DETAIL << "syncookiesAlways: peer MSS " << peerMss << " quantized to " << clamped << "\n";
             state->snd_mss = clamped;
             state->snd_effmss = calculateEffectiveMss();
         }
@@ -1133,7 +1162,7 @@ TcpEventCode TcpConnection::processSynInListen(Packet *tcpSegment, const Ptr<con
     // server MUST disable TFO for all new connection requests": no cookie, and the
     // data of the SYN is not acknowledged (section 5.1)
     if (state->fastopenServerEnabled && (fastOpenOption || synData)
-        && tcpMain->getNumPendingFastOpenRequests(localAddr, localPort) >= (int)tcpMain->par("fastopenMaxPendingRequests"))
+        && tcpMain->getNumPendingFastOpenRequests(listenAddr, localPort) >= (int)tcpMain->par("fastopenMaxPendingRequests"))
     {
         EV_INFO << "Fast Open: the limit of pending Fast Open connections is reached, no Fast Open for this SYN\n";
         state->fastopenCookieValid = false;
@@ -1182,9 +1211,6 @@ TcpEventCode TcpConnection::processSynInListen(Packet *tcpSegment, const Ptr<con
 
     startSynRexmitTimer();
 
-    if (!connEstabTimer->isScheduled())
-        scheduleAfter(TCP_TIMEOUT_CONN_ESTAB, connEstabTimer);
-
     //"
     // Note that any other incoming control or data (combined with SYN)
     // will be processed in the SYN-RECEIVED state, but processing of SYN
@@ -1197,7 +1223,11 @@ TcpEventCode TcpConnection::processSynInListen(Packet *tcpSegment, const Ptr<con
     // The text of a SYN with a Fast Open option was accepted above, or it is
     // not acknowledged.
     //
-    if (!fastOpenOption && !state->fastopenAccelerated && synData) {
+    // dropSynData, as Linux tcp_conn_request(): the data of such a SYN is dropped, and
+    // the client sends it again after the SYN-ACK, which acknowledges only the SYN
+    if (!fastOpenOption && !state->fastopenAccelerated && synData && state->dropSynData)
+        EV_INFO << "Dropping the text of the SYN (dropSynData)\n";
+    else if (!fastOpenOption && !state->fastopenAccelerated && synData) {
         updateRcvQueueVars();
 
         // RFC 9293: "any other control or text should be queued for processing later".
@@ -2032,17 +2062,20 @@ void TcpConnection::startSynRexmitTimer()
 void TcpConnection::process_TIMEOUT_SYN_REXMIT(TcpEventCode& event)
 {
     // synRetries: Linux net.ipv4.tcp_syn_retries, also for the SYN-ACK (INET has one
-    // value for both); an active open also ends at the CONN-ESTAB timeout
+    // value for both); the retransmissions alone limit the setup (RFC 9293 MUST-23)
     if (++state->syn_rexmit_count > state->synRetries) {
         EV_INFO << "Retransmission count during connection setup exceeds " << state->synRetries << ", giving up\n";
-        // Note ABORT will take the connection to closed, and cancel CONN-ESTAB timer as well
-        event = TCP_E_ABORT;
+        // the setup times out: an active open tells the application (TCP_I_TIMED_OUT, as
+        // ETIMEDOUT of Linux), and a passive open returns to LISTEN, or closes if it was
+        // forked (RFC 9293 section 3.10.7.3)
+        event = TCP_E_TIMEOUT_CONN_ESTAB;
+        process_TIMEOUT_CONN_ESTAB();
         return;
     }
 
     // TCP Fast Open: the third transmission of a SYN with a Fast Open option or
-    // data suggests a path that drops them (RFC 7413 section 4.1.3.1; Linux
-    // tcp_fastopen_active_detect_blackhole())
+    // data suggests a path that drops them (RFC 7413 section 4.1.3.1); Linux
+    // tcp_fastopen_active_detect_blackhole() detects it one timeout later
     if (fsm.getState() == TCP_S_SYN_SENT && (state->fastopenSynCarriedOption || state->fastopenSynDataLen > 0)
         && state->syn_rexmit_count == TFO_BLACKHOLE_REXMIT_COUNT)
         tcpMain->recordFastOpenBlackhole();
@@ -2057,6 +2090,8 @@ void TcpConnection::process_TIMEOUT_SYN_REXMIT(TcpEventCode& event)
 
         case TCP_S_SYN_RCVD:
             sendSynAck();
+            if (state->fastopenAccelerated)
+                tcpAlgorithm->synAckRetransmitted();
             break;
 
         default:

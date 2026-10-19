@@ -118,6 +118,46 @@ FastRetransmit also changed its observable. The model keeps the window of Linux:
 
 On the branch, each new guard and assertion was checked to fail on a copy with one changed detail, and each copy failed at the intended place.
 
+## Linux equivalence: the packetdrill suite
+
+This is not a pass of the workflow. It is the run of the implementation oracle of TCP ([Evidence from an implementation oracle](../../../guide/derive-tests-from-a-standard.md#evidence-from-an-implementation-oracle)): the packetdrill scripts of Linux run in the `PacketDrillApp` of inet-gpl, each one through its wrapper in [`tests/protocol/tcp/linux/`](../../../../../tests/protocol/tcp/linux/README.md) or [`tests/protocol/tcp/packetdrill/`](../../../../../tests/protocol/tcp/packetdrill/README.md). The `tcp.ini` of the suite selects `LinuxTcp`, so each result speaks for `LinuxTcp`, not for the RFC defaults of `Tcp`.
+
+- Date: 2026-10-15 18:01 +0200
+- INET: master `3d3b535fc8`, the code of this run; the commit of this section changes only documents
+- inet-gpl: master `4a3894d`
+- Scripts: 321 in `tests/protocol/tcp` of inet-gpl: 159 Linux selftests in `linux/`, and 162 scripts of upstream packetdrill `2c4001c4d6fc` in `packetdrill/`
+- Oracle: Linux 7.1.3, with the result of each script in `tests/packetdrill/tcp/linux-results.csv` of inet-gpl
+- OMNeT++: 6.4.0, commit `cf58891643`
+- Build: debug, INET and inet-gpl built from these commits
+- Compiler: Ubuntu clang version 23.0.0
+- Platform: Ubuntu 26.04.1 LTS, Linux 7.0.0-38-generic x86_64
+- Commands: `make test` and `make summary` in `tests/packetdrill` of inet-gpl; then, with `INETGPL_ROOT` set, `inet_run_protocol_tests -p inet --filter 'tcp/'`
+- Result of the suite: 318 scripts run, **303 MATCH**, 12 KERNEL_DRIFT, 3 UNSUPPORTED_FEATURE; 3 scripts are skipped, because they need IPv6
+- Result of INET's runner: TCP 333 tests, **329 PASS, 4 FAIL (expected), 0 FAIL (unexpected)**. The 306 wrappers give 303 PASS and 3 FAIL (expected); the 27 RFC tests give 26 PASS and 1 FAIL (expected), gap 2
+
+The 15 scripts without a wrapper are the 12 that Linux 7.1.3 itself does not pass (kernel drift) and the 3 that need IPv6; the READMEs of the two folders list them with the reason. The 3 wrappers that expect `FAIL` change a `tc qdisc` in the middle of the script, and INET does not model the drops of the local queue: an unimplemented feature.
+
+**What the run shows.** Each of the 303 wrappers that expect `PASS` passes: on every script that Linux passes and INET can run, `LinuxTcp` sends and accepts the same segments as Linux 7.1.3. Eleven features of the feature map have scripts, and the column "Linux equivalence" of [conformance.md](conformance.md#part-2--conformance-matrix) gives their counts. Most scripts exercise documents that the TCP catalogs do not have, and so show where the catalogs stop:
+
+| Document outside the TCP catalogs | Scripts |
+| --- | --- |
+| RFC 7413, TCP Fast Open | 80 |
+| RFC 9768, Accurate ECN | 58 |
+| RFC 2018 and RFC 6675, SACK and its loss recovery | 8 |
+| RFC 6937, Proportional Rate Reduction | 8 |
+| RFC 9293 section 3.7.4, the Nagle algorithm | 6 |
+| RFC 7323, timestamps | 5 |
+| RFC 3042, Limited Transmit | 4 |
+| RFC 5482, the user timeout | 4 (2 of them expect `FAIL`) |
+| RFC 9438, CUBIC | 4 (1 of them expects `FAIL`) |
+| RFC 3168, ECN | 2 |
+| RFC 2385, the MD5 signature option | 2 |
+| RFC 2883, D-SACK; RFC 4821, the path MTU search; RFC 4987, SYN cookies; RFC 5961, the checks of a segment | 1 each |
+
+Other scripts exercise interfaces of Linux that no standard defines: `MSG_ZEROCOPY` (21), `MSG_EOR` (8), blocking socket calls (8), `SO_TIMESTAMPING` (7), `TCP_INFO` (6), the checks of system call arguments (6), `TCP_INQ` (4), `TCP_USER_TIMEOUT` (4), `TCP_MAXSEG` (3), `TCP_NOTSENT_LOWAT`, `sendfile` and `splice` (2 each), `epoll`, `ioctl` and the cwnd moderation of Linux (1 each).
+
+**What the run does not show.** A match is not a pass of a catalog statement, and the ledger and the verdicts of the matrix do not change. Where the defaults of `LinuxTcp` depart from the RFCs by design ([conformance.md finding 9](conformance.md#9-where-linux-departs-from-an-rfc-the-default-follows-the-rfc)), for example the initial window of ten segments in the scripts of slow start, a match shows the behavior of Linux, not that of the RFC; such a departure is known, and it is not a new finding. This record did not compare each script with the statements of the catalogs, so it reports no other finding.
+
 ## Gap 5 (pass 4): the first round-trip measurement is smoothed — defect
 
 RFC 6298 section 2.2 gives the first measurement a case of its own: the smoothed value becomes R and the variance becomes R/2. The model has no such case. `TcpBaseAlg::receivedDataAck` applies the smoothing formula of section 2.3 to every measurement, the first one included ([TcpAlgorithmBase.cc:576-591](../../../../../src/inet/transportlayer/tcp/flavours/TcpAlgorithmBase.cc#L576-L591), the code after the repair). The run states it in one line:
@@ -173,7 +213,7 @@ All four failures of this suite were reviewed against that line, each against th
 | --- | --- | --- | --- |
 | Rfc9293Push | no call to `setPshBit` exists anywhere in the sender; two comments say so | unimplemented feature; closed 2026-10-14 | yes; removed 2026-10-14 |
 | Rfc9293SourceQuench | `Icmp::processIcmpMessage` still has no branch for type 4, but its default discards instead of throwing, which meets the rule | closed 2026-09-14 | no, removed |
-| Rfc9293ChecksumDefault | **Defect, and the repair is blocked.** `TcpChecksumInsertionHook::computeChecksum` computes the value and the `computed` mode runs it; what is wrong is the default, which `Tcp.ned` sets to `declared`. Changing it to `computed` was tried on 2026-09-15 and reverted. Computing a checksum serializes the segment, and the copy that comes back has lost the region tags its payload carried: `examples/inet/nclients -c lwip__inet` then stops with "Received 1 B of TCP data without a GenericAppMsgReq region tag at its front". The protocol suite cannot see this, because none of its scenarios uses a region-tagged payload; the fingerprint run found it. **TCP cannot default to a computed checksum until a serialized payload keeps its region tags.** This is the same blocker that stops the UDP default, where QUIC has no serializer at all | **defect with a blocked repair** | **yes, since 2026-09-17** |
+| Rfc9293ChecksumDefault | **Defect, and the repair is blocked.** `TcpChecksumInsertionHook::computeChecksum` computes the value and the `computed` mode runs it; what is wrong is the default, which `Tcp.ned` sets to `declared`. Changing it to `computed` was tried on 2026-09-15 and reverted. With a computed default, `examples/inet/nclients -c lwip__inet` stops with "Received 1 B of TCP data without a GenericAppMsgReq region tag at its front". The protocol suite cannot see this, because none of its scenarios uses a region-tagged payload; the fingerprint run found it. Corrected on 2026-10-16: the cause is not the serialization, see below. **TCP keeps the declared default by the decision of the owner, and two defects of other modules stop a computed default.** The UDP default waits for a limitation of its own | **defect with a blocked repair** | **yes, since 2026-09-17** |
 | Rfc9293ShrunkWindowNoNewData | **Reclassified 2026-09-15: a test error, and the model obeys the rule.** `sendData` refuses the send and says so: `Effective window is zero (advertised window 100, congestion window 2144), cannot send.` Host A had 2320 octets buffered, so it wanted to send and did not. 59 microseconds later host B advertises 7504 again, because only the relay shrank anything, and host A then sends lawfully. The old watch ran for 0.3 seconds and caught that lawful send. It runs for 50 microseconds now, inside the interval the shrunk edge stands | **test error** | **no, removed** |
 
 Two declarations were removed. The suite result moves from 18 TOTAL, 14 PASS, 4 FAIL (expected) — reported as PASS — to 18 TOTAL, 14 PASS, 2 FAIL (expected), 2 FAIL (unexpected), reported as **FAIL**. That is the intended signal: a defect keeps the suite red until somebody fixes it.
@@ -181,6 +221,13 @@ Two declarations were removed. The suite result moves from 18 TOTAL, 14 PASS, 4 
 Since 2026-09-17 the checksum default is declared again, as a **defect with a blocked repair**. The guide now allows a declaration when a named limitation keeps the repair away for a long time, and the description of the test names it: a serialized TCP payload loses its region tags. The suite is 27 tests: 25 PASS and 2 FAIL (expected), and it reports PASS.
 
 Since 2026-10-14 gap 1 is closed, and its declaration is removed. The suite is 27 tests: 26 PASS and 1 FAIL (expected).
+
+Since 2026-10-16 the declaration of gap 2 names other causes. Item T9 of the open TCP items found that the payload keeps its region tags, and that two defects of other modules stop a computed default (the record of T9 in commit `742884a572`):
+
+- The receive cache of `TcpLwip` (`TcpLwipReceiveQueue::notifyAboutIncomingSegmentProcessing()`) reads the payload with `Packet::peekAt()`, which counts from the start of the packet. With a declared checksum, `TcpLwip` trims the headers below TCP first; with a computed one, it does not, and the cache takes one byte of the IPv4 header.
+- `TcpChecksumInsertionHook` expects the TCP header right after the network header of the `NetworkProtocolInd` tag. Mobile IPv6 adds extension headers in its local-out hook and does not update that tag, so `MIPv6_tcp_handover` with a computed checksum stops in the hook.
+
+The owner dropped T9 on 2026-10-16 and keeps the declared default (D-165). The test stays FAIL (expected), and its description names the decision and the two defects.
 
 Neither defect is a large repair. One is a NED default; the other is one comparison in the send decision.
 

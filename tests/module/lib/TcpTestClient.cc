@@ -40,6 +40,7 @@ class INET_API TcpTestClient : public cSimpleModule
     Commands keepAliveCommands; // when to turn keepalive on (1) or off (0)
     Commands noDelayCommands; // when to turn TCP_NODELAY on (1) or off (0)
     Commands maxSegCommands; // when to set TCP_MAXSEG, and its value
+    Commands notsentLowatCommands; // when to set TCP_NOTSENT_LOWAT, and its value
     Commands pathMtuCommands; // when to set the route MTU, and its value
     Commands corkCommands; // when to turn TCP_CORK on (1) or off (0)
     Commands rcvBufCommands; // when to set SO_RCVBUF, and its value
@@ -48,7 +49,7 @@ class INET_API TcpTestClient : public cSimpleModule
     static const int NUM_EXTRA = 2; // the optional second and third connection (tOpen2, tOpen3)
     Commands extraCommands[NUM_EXTRA]; // the SEND of each extra connection
 
-    enum { TEST_OPEN, TEST_SEND, TEST_CLOSE, TEST_ABORT, TEST_STATUS, TEST_READ, TEST_WRITER_BLOCKED, TEST_KEEPALIVE, TEST_NODELAY, TEST_MAXSEG, TEST_PATHMTU, TEST_CORK, TEST_RCVBUF, TEST_SYN_RETRIES, TEST_TCP_PAR, TEST_OPEN_EXTRA, TEST_SEND_EXTRA = TEST_OPEN_EXTRA + NUM_EXTRA };
+    enum { TEST_OPEN, TEST_SEND, TEST_CLOSE, TEST_ABORT, TEST_STATUS, TEST_READ, TEST_WRITER_BLOCKED, TEST_KEEPALIVE, TEST_NODELAY, TEST_MAXSEG, TEST_PATHMTU, TEST_CORK, TEST_RCVBUF, TEST_SYN_RETRIES, TEST_TCP_PAR, TEST_NOTSENT_LOWAT, TEST_OPEN_EXTRA, TEST_SEND_EXTRA = TEST_OPEN_EXTRA + NUM_EXTRA };
 
     int ctr;
 
@@ -166,6 +167,7 @@ void TcpTestClient::printStatus(TcpStatusInfo *status)
             << "\n";
     EV_INFO << "STATUS: skRcvbuf=" << status->getSkRcvbuf() << " sndbufLimited=" << status->getSndbufLimited() << "\n";
     EV_INFO << "STATUS: lastDataRecvTime=" << status->getLastDataRecvTime() << "\n";
+    EV_INFO << "STATUS: rcvRtt=" << status->getRcvRtt() << " rcvSpace=" << status->getRcvSpace() << "\n";
 }
 
 void TcpTestClient::initialize()
@@ -220,6 +222,9 @@ void TcpTestClient::initialize()
     parseScript(par("maxSegScript"), maxSegCommands);
     for (const auto& command : maxSegCommands)
         scheduleAt(command.tSend, new cMessage("MaxSeg", TEST_MAXSEG));
+    parseScript(par("notsentLowatScript"), notsentLowatCommands);
+    for (const auto& command : notsentLowatCommands)
+        scheduleAt(command.tSend, new cMessage("NotsentLowat", TEST_NOTSENT_LOWAT));
     parseScript(par("pathMtuScript"), pathMtuCommands);
     for (const auto& command : pathMtuCommands)
         scheduleAt(command.tSend, new cMessage("PathMtu", TEST_PATHMTU));
@@ -382,6 +387,11 @@ void TcpTestClient::handleSelfMessage(cMessage *msg)
             maxSegCommands.pop_front();
             delete msg;
             break;
+        case TEST_NOTSENT_LOWAT:
+            socket.setNotsentLowat(notsentLowatCommands.front().numBytes);
+            notsentLowatCommands.pop_front();
+            delete msg;
+            break;
         case TEST_PATHMTU:
             socket.setPathMtu(pathMtuCommands.front().numBytes);
             pathMtuCommands.pop_front();
@@ -411,7 +421,7 @@ void TcpTestClient::handleSelfMessage(cMessage *msg)
             if (msg->getKind() >= TEST_OPEN_EXTRA && msg->getKind() < TEST_OPEN_EXTRA + NUM_EXTRA) {
                 int i = msg->getKind() - TEST_OPEN_EXTRA;
                 const char *localAddress = par("localAddress");
-                const char *connectAddress = par("connectAddress");
+                const char *connectAddress = *extraPar("connectAddress", i).stringValue() ? extraPar("connectAddress", i).stringValue() : par("connectAddress").stringValue();
                 extraSockets[i].bind(*localAddress ? L3Address(localAddress) : L3Address(), extraPar("localPort", i));
                 extraSockets[i].setAutoRead(par("autoRead"));
                 if (extraPar("active", i))

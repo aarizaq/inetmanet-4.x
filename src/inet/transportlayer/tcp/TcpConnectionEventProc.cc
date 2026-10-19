@@ -9,7 +9,6 @@
 
 #include "inet/common/socket/SocketTag_m.h"
 #include "inet/transportlayer/contract/tcp/TcpCommand_m.h"
-#include "inet/transportlayer/contract/tcp/TcpTimestampingTag_m.h"
 #include "inet/transportlayer/tcp/Tcp.h"
 #include "inet/transportlayer/tcp/TcpAlgorithm.h"
 #include "inet/transportlayer/tcp/TcpConnection.h"
@@ -74,18 +73,17 @@ void TcpConnection::process_OPEN_ACTIVE(TcpEventCode& event, TcpCommand *tcpComm
                 if (tcpMain->getFastOpenCookie(remoteAddr, cookie) || state->fastopenClientNoCookieRequired) {
                     selectInitialSeqNum();
                     state->fastopenSynDeferred = true;
-                    scheduleAfter(TCP_TIMEOUT_CONN_ESTAB, connEstabTimer);
+                    scheduleAfter(TCP_TIMEOUT_DEFERRED_SYN, deferredSynTimer);
                     EV_DETAIL << "Fast Open: the SYN waits for the first SEND\n";
                     break;
                 }
                 state->fastopenCookieRequestPending = true;
             }
 
-            // send initial SYN
+            // send initial SYN; the SYN retransmissions limit the open (synRetries)
             selectInitialSeqNum();
             sendSyn();
             startSynRexmitTimer();
-            scheduleAfter(TCP_TIMEOUT_CONN_ESTAB, connEstabTimer);
             break;
 
         default:
@@ -119,6 +117,7 @@ void TcpConnection::process_OPEN_PASSIVE(TcpEventCode& event, TcpCommand *tcpCom
             EV_DETAIL << "Starting to listen on: " << localAddr << ":" << localPort << "\n";
 
             tcpMain->addSockPair(this, localAddr, L3Address(), localPort, -1);
+            this->listenAddr = localAddr;
             break;
 
         default:
@@ -154,7 +153,6 @@ void TcpConnection::process_SEND(TcpEventCode& event, TcpCommand *tcpCommand, cM
             selectInitialSeqNum();
             sendSyn();
             startSynRexmitTimer();
-            scheduleAfter(TCP_TIMEOUT_CONN_ESTAB, connEstabTimer);
             enqueueSendCommandData(packet); // queue up for later
             EV_DETAIL << sendQueue->getBytesAvailable(state->snd_una) << " bytes in queue\n";
             break;
@@ -241,14 +239,10 @@ void TcpConnection::process_READ_REQUEST(TcpEventCode& event, TcpCommand *tcpCom
         uint32_t requestedEndPos = receiveQueue->getFirstSeqNo() + maxByteCountRequested;
         if (seqLess(requestedEndPos, endSeqNo))
             endSeqNo = requestedEndPos;
-        if (Packet *dataMsg = receiveQueue->extractBytesUpTo(endSeqNo)) {
-            releaseRcvBuffer(dataMsg->getByteLength());
-            if (rxTimestampingEnabled)
-                dataMsg->addTag<TcpRxTimestampInd>(); // the time of the delivery
-            dataMsg->setKind(TCP_I_DATA);
-            dataMsg->addTag<SocketInd>()->setSocketId(socketId);
+        if (Packet *dataMsg = extractDataForApp(endSeqNo)) {
             sendToApp(dataMsg);
             maxByteCountRequested = 0;
+            adjustRcvSpace(); // Linux tcp_rcv_space_adjust(), before the window update of the read
             // windowUpdateAfterRead, as Linux __tcp_cleanup_rbuf(): when the receiver can
             // now offer at least twice the window that is still open, an ACK tells the peer
             // at once; not after the FIN of the peer, because no more data comes
@@ -290,8 +284,17 @@ void TcpConnection::process_OPTIONS(TcpEventCode& event, TcpCommand *tcpCommand,
     else if (auto cmd = dynamic_cast<TcpSetNotsentLowatCommand *>(tcpCommand)) {
         // the command can come before the open: configureStateVariables() takes it then
         notsentLowatSockopt = cmd->getValue();
-        if (state != nullptr)
+        if (state != nullptr) {
             state->notsentLowat = notsentLowatSockopt < 0 ? (uint32_t)-1 : (uint32_t)notsentLowatSockopt;
+            // a writer that waits for the old mark is told at once when the unsent bytes
+            // are at the new one, or when the mark is off (Linux calls sk_write_space()
+            // in the setsockopt)
+            uint32_t notsentBytes = sendQueue->getBytesAvailable(state->snd_nxt);
+            if (!state->notsentLowatUpdate && (state->notsentLowat == (uint32_t)-1 || notsentBytes <= state->notsentLowat)) {
+                sendIndicationToApp(TCP_I_SEND_MSG, notsentBytes);
+                state->notsentLowatUpdate = true;
+            }
+        }
     }
     else if (auto cmd = dynamic_cast<TcpSetTimestampingCommand *>(tcpCommand)) {
         rxTimestampingEnabled = cmd->getEnabled();
@@ -324,13 +327,12 @@ void TcpConnection::process_OPTIONS(TcpEventCode& event, TcpCommand *tcpCommand,
         // the search, because the mss parameter limits it otherwise
         pathMtuSockopt = cmd->getValue();
         if (state != nullptr && pathMtuSockopt > 0) {
-            uint32_t headers = (remoteAddr.getType() == L3Address::IPv6 ? 40 : 20) + B(TCP_MIN_HEADER_LENGTH).get();
             state->pathMtu = pathMtuSockopt;
             limitMtuSearch(state->pathMtu);
-            if ((uint32_t)pathMtuSockopt > headers && (uint32_t)pathMtuSockopt - headers < state->snd_mss) {
-                state->snd_mss = pathMtuSockopt - headers;
+            uint32_t oldMss = state->snd_mss;
+            limitMssByPathMtuSockopt();
+            if (state->snd_mss != oldMss)
                 state->snd_effmss = calculateEffectiveMss();
-            }
             EV_DETAIL << "The route MTU is " << state->pathMtu << ", SMSS is " << state->snd_mss << "\n";
         }
     }
@@ -403,8 +405,8 @@ void TcpConnection::process_CLOSE(TcpEventCode& event, TcpCommand *tcpCommand, c
     // of Linux close(), which also shuts the receive side down (RFC 1122 section
     // 4.2.2.13 lets a host implement such a "half-duplex" close). state is still null
     // for a CLOSE that reaches a new connection in INIT.
-    if (state != nullptr && tcpMain->par("abortOnDataAfterClose").boolValue()
-            && (tcpCommand == nullptr || !tcpCommand->getHalfClose()))
+    fullClose = tcpCommand == nullptr || !tcpCommand->getHalfClose();
+    if (state != nullptr && tcpMain->par("abortOnDataAfterClose").boolValue() && fullClose)
         state->rcvShutdown = true;
     delete tcpCommand;
     delete msg;
@@ -569,6 +571,8 @@ void TcpConnection::process_STATUS(TcpEventCode& event, TcpCommand *tcpCommand, 
     // tp->reordering). Report the live degree, not the static dupthresh.
     statusInfo->setReordering(state->reordering);
     statusInfo->setMinRtt(state->minRtt.dbl());
+    statusInfo->setRcvRtt((state->rcvRttUs >> 3) / 1e6);
+    statusInfo->setRcvSpace(rcvqSpace);
     statusInfo->setFlightSize(tcpAlgorithm->getBytesInFlight());
     statusInfo->setSackedBytes(state->sackedBytes);
     statusInfo->setDeliveredBytes(state->deliveredBytes);

@@ -33,7 +33,7 @@ class TcpAlgorithm;
 
 /** @name Timeout values */
 //@{
-#define TCP_TIMEOUT_CONN_ESTAB        75  // 75 seconds
+#define TCP_TIMEOUT_DEFERRED_SYN        75  // 75 seconds: a deferred SYN of Fast Open waits so long for a SEND
 #define TCP_TIMEOUT_FIN_WAIT_2        600  // 10 minutes
 //@}
 
@@ -43,7 +43,7 @@ class TcpAlgorithm;
 #define TCP_ECN_MODE_RFC3168          2
 #define TCP_ECN_MODE_ACCECN           3
 #define TCP_ECN_MODE_ACCECN_PASSIVE   4
-#define TFO_BLACKHOLE_REXMIT_COUNT    2   // TCP Fast Open: the retransmission of a Fast Open SYN that suggests a blackhole (the third transmission, as Linux)
+#define TFO_BLACKHOLE_REXMIT_COUNT    2   // TCP Fast Open: the retransmission of a Fast Open SYN that suggests a black hole (the third transmission; Linux takes the fourth)
 #define TCP_MAX_WIN                   65535lu  // 65535 bytes, largest value (16 bit) for (unscaled) window size
 #define TCP_MAX_WIN_SCALED            0x3fffffffL // 2^30-1 bytes, largest value for scaled window size
 #define MAX_SACK_BLOCKS               60  // will only be used with SACK
@@ -52,7 +52,7 @@ class TcpAlgorithm;
 /**
  * Manages a TCP connection. This class itself implements the TCP state
  * machine as well as handling control PDUs (SYN, SYN+ACK, RST, FIN, etc.),
- * timers (2MSL, CONN-ESTAB, FIN-WAIT-2) and events (OPEN, SEND, etc)
+ * timers (2MSL, SYN-REXMIT, FIN-WAIT-2) and events (OPEN, SEND, etc)
  * associated with TCP state changes.
  *
  * The implementation largely follows the functional specification at the end
@@ -92,7 +92,7 @@ class TcpAlgorithm;
  *     in this step.
  *  -# if there was a state change (for example, we entered the
  *     TCP_S_ESTABLISHED state), performStateTransition() invokes stateEntered(),
- *     which performs some necessary housekeeping (cancel the CONN-ESTAB timer).
+ *     which performs some necessary housekeeping (cancel the SYN-REXMIT timer).
  *
  * When the CLOSED state is reached, TCP will delete the TcpConnection object.
  *
@@ -118,6 +118,9 @@ class INET_API TcpConnection : public SimpleModule
     short tos = -1;
     bool autoRead = true;
     bool peerClosedSentUp = false;
+    bool fullClose = false; // the application closed without halfClose: it will not read again (Linux close(), an orphaned socket)
+    bool timeWaitSocket = false; // the connection is where Linux keeps only a time-wait socket: TIME_WAIT, and FIN_WAIT_2 after a full close
+    L3Address listenAddr; // the local address of the listening socket of this connection (unspecified: each address), for the pending Fast Open limit of the listener
     long maxByteCountRequested = 0;  // from READ requests
 
     Tcp *tcpMain = nullptr; // Tcp module
@@ -138,7 +141,7 @@ class INET_API TcpConnection : public SimpleModule
 
     // timers
     cMessage *the2MSLTimer = nullptr;
-    cMessage *connEstabTimer = nullptr;
+    cMessage *deferredSynTimer = nullptr;
     cMessage *finWait2Timer = nullptr;
     cMessage *synRexmitTimer = nullptr; // for retransmitting SYN and SYN+ACK
     cMessage *rackReoTimer = nullptr; // RACK reordering timer (Linux ICSK_TIME_REO_TIMEOUT): fires when a not-yet-lost segment's RACK.rtt+reo_wnd deadline matures between ACKs
@@ -521,6 +524,12 @@ class INET_API TcpConnection : public SimpleModule
     /** Utility: sends data or data notification to application */
     virtual void sendAvailableDataToApp();
 
+    /** Utility: takes the next delivery to the application from the receive queue, at most up to endSeqNo; with urgentOutOfBand, never across the urgent mark; nullptr: no data */
+    virtual Packet *extractDataForApp(uint32_t endSeqNo);
+
+    /** urgentOutOfBand: a received urgent pointer, the octet after the urgent data (Linux tcp_check_urg()) */
+    virtual void processUrgentPointer(uint32_t urgentPointer);
+
   public:
     /** Utility: prints local/remote addr/port and app gate index/socketId */
     virtual void printConnBrief() const;
@@ -556,6 +565,19 @@ class INET_API TcpConnection : public SimpleModule
     virtual void releaseRcvBuffer(uint64_t readBytes);
     /** windowAutoTuning: the growth of the receive buffer with out-of-order data that end at endSeq */
     virtual void growRcvBufferForOutOfOrderData(uint32_t endSeq);
+    /** windowAutoTuning: the receive space becomes newSpace, and the buffer grows to its window (Linux tcp_rcvbuf_grow()) */
+    virtual void growRcvBuffer(uint32_t newSpace);
+    /** windowAutoTuning: the receive space at the end of the handshake (Linux tcp_init_buffer_space()) */
+    virtual void initRcvSpace();
+    /** windowAutoTuning: Dynamic Right-Sizing at each read of the application (Linux tcp_rcv_space_adjust()) */
+    virtual void adjustRcvSpace();
+
+    /** The receive RTT of Linux: a sample without timestamps, once per window (tcp_rcv_rtt_measure()) */
+    virtual void measureRcvRtt();
+    /** The receive RTT of Linux: a sample from the TSecr of a segment of at least one MSS (tcp_rcv_rtt_measure_ts()) */
+    virtual void measureRcvRttTs(const Ptr<const TcpHeader>& tcpHeader, uint32_t payloadLength);
+    /** The receive RTT of Linux: the update of the estimate by a sample (tcp_rcv_rtt_update()) */
+    virtual void updateRcvRtt(uint32_t sampleUs, bool winDep);
 
     /** Utility: returns true when receive queue has enough space for store the tcpHeader */
     virtual bool hasEnoughSpaceForSegmentInReceiveQueue(Packet *tcpSegment, const Ptr<const TcpHeader>& tcpHeader);
@@ -570,6 +592,9 @@ class INET_API TcpConnection : public SimpleModule
      *  Returns the (scaled) receive window size.
      */
     virtual uint16_t updateRcvWnd();
+
+    /** Utility: the window field of a SYN or a SYN-ACK, which is not scaled; call after updateRcvWnd(). */
+    virtual uint16_t synWindow();
 
     /** Utility: update window information (snd_wnd, snd_wl1, snd_wl2) */
     /**
@@ -600,6 +625,8 @@ class INET_API TcpConnection : public SimpleModule
     virtual void retransmitSynAfterMtuReduction(uint32_t newMss);
     /** A new route MTU bounds the path MTU search (Linux tcp_sync_mss()) */
     virtual void limitMtuSearch(uint32_t mtu);
+    /** The route MTU of TcpSocket::setPathMtu() bounds the MSS */
+    virtual void limitMssByPathMtuSockopt();
     /** Arms the path MTU search when the MSS is settled (Linux tcp_mtup_init()) */
     virtual void initMtuProbing();
     /** The payload of the probe to send now; 0: wait for room for a probe; -1: no probe (Linux tcp_mtu_probe()) */

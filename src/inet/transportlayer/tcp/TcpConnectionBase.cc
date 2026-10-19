@@ -101,13 +101,13 @@ void TcpConnection::initConnection(Tcp *_mod, int _socketId)
     // queues and algorithm will be created on active or passive open
 
     the2MSLTimer = new cMessage("2MSL");
-    connEstabTimer = new cMessage("CONN-ESTAB");
+    deferredSynTimer = new cMessage("DEFERRED-SYN");
     finWait2Timer = new cMessage("FIN-WAIT-2");
     synRexmitTimer = new cMessage("SYN-REXMIT");
     rackReoTimer = new cMessage("RACK-REO");
 
     the2MSLTimer->setContextPointer(this);
-    connEstabTimer->setContextPointer(this);
+    deferredSynTimer->setContextPointer(this);
     finWait2Timer->setContextPointer(this);
     synRexmitTimer->setContextPointer(this);
     rackReoTimer->setContextPointer(this);
@@ -131,7 +131,7 @@ void TcpConnection::initConnection(Tcp *_mod, int _socketId)
     WATCH(rexmitQueue);
     WATCH(tcpAlgorithm);
     WATCH(the2MSLTimer);
-    WATCH(connEstabTimer);
+    WATCH(deferredSynTimer);
     WATCH(finWait2Timer);
     WATCH(synRexmitTimer);
     WATCH(rcvdSegments);
@@ -150,8 +150,8 @@ TcpConnection::~TcpConnection()
 
     if (the2MSLTimer)
         delete cancelEvent(the2MSLTimer);
-    if (connEstabTimer)
-        delete cancelEvent(connEstabTimer);
+    if (deferredSynTimer)
+        delete cancelEvent(deferredSynTimer);
     if (finWait2Timer)
         delete cancelEvent(finWait2Timer);
     if (synRexmitTimer)
@@ -182,22 +182,16 @@ bool TcpConnection::processTimer(cMessage *msg)
         event = TCP_E_TIMEOUT_2MSL;
         process_TIMEOUT_2MSL();
     }
-    else if (msg == connEstabTimer) {
-        if (state->fastopenSynDeferred) {
-            // TCP Fast Open: no SEND came for the SYN that waits for one. The SYN
-            // goes out now without data (with the cookie, which RFC 7413 allows),
-            // and the handshake gets its full time.
-            EV_DETAIL << "Fast Open: no SEND, sending the SYN without data\n";
-            sendSyn();
-            state->fastopenSynDeferred = false;
-            startSynRexmitTimer();
-            scheduleAfter(TCP_TIMEOUT_CONN_ESTAB, connEstabTimer);
-            event = TCP_E_IGNORE;
-        }
-        else {
-            event = TCP_E_TIMEOUT_CONN_ESTAB;
-            process_TIMEOUT_CONN_ESTAB();
-        }
+    else if (msg == deferredSynTimer) {
+        // TCP Fast Open: no SEND came for the SYN that waits for one. The SYN goes
+        // out now without data (with the cookie, which RFC 7413 allows), and its
+        // retransmissions limit the handshake. Only a deferred SYN uses this timer.
+        ASSERT(state->fastopenSynDeferred);
+        EV_DETAIL << "Fast Open: no SEND, sending the SYN without data\n";
+        sendSyn();
+        state->fastopenSynDeferred = false;
+        startSynRexmitTimer();
+        event = TCP_E_IGNORE;
     }
     else if (msg == finWait2Timer) {
         event = TCP_E_TIMEOUT_FIN_WAIT_2;
@@ -683,8 +677,8 @@ void TcpConnection::stateEntered(int state, int oldState, TcpEventCode event)
 
         case TCP_S_LISTEN:
             // we may get back to LISTEN from SYN_RCVD
-            ASSERT(connEstabTimer && synRexmitTimer);
-            cancelEvent(connEstabTimer);
+            ASSERT(deferredSynTimer && synRexmitTimer);
+            cancelEvent(deferredSynTimer);
             cancelEvent(synRexmitTimer);
             break;
 
@@ -694,9 +688,10 @@ void TcpConnection::stateEntered(int state, int oldState, TcpEventCode event)
 
         case TCP_S_ESTABLISHED:
             // we're in ESTABLISHED, these timers are no longer needed
-            delete cancelEvent(connEstabTimer);
+            delete cancelEvent(deferredSynTimer);
             delete cancelEvent(synRexmitTimer);
-            connEstabTimer = synRexmitTimer = nullptr;
+            deferredSynTimer = synRexmitTimer = nullptr;
+            initRcvSpace(); // Linux tcp_init_buffer_space() in tcp_init_transfer()
             // TCP_I_ESTAB notification moved inside event processing
             break;
 
@@ -705,20 +700,25 @@ void TcpConnection::stateEntered(int state, int oldState, TcpEventCode event)
         case TCP_S_FIN_WAIT_1:
         case TCP_S_FIN_WAIT_2:
         case TCP_S_CLOSING:
+            // Linux tcp_rcv_state_process(): the ACK of our FIN, without a FIN, turns an
+            // orphaned socket in FIN_WAIT_2 into a time-wait socket (tcp_time_wait())
+            if (state == TCP_S_FIN_WAIT_2 && oldState == TCP_S_FIN_WAIT_1 && fullClose)
+                timeWaitSocket = true;
             if (!peerClosedSentUp && state == TCP_S_CLOSE_WAIT && this->receiveQueue->getQueueLength() == 0) {
                 sendIndicationToApp(TCP_I_PEER_CLOSED);
                 peerClosedSentUp = true;
             }
             // whether connection setup succeeded (ESTABLISHED) or not (others),
             // cancel these timers
-            if (connEstabTimer)
-                cancelEvent(connEstabTimer);
+            if (deferredSynTimer)
+                cancelEvent(deferredSynTimer);
             if (synRexmitTimer)
                 cancelEvent(synRexmitTimer);
             break;
 
         case TCP_S_TIME_WAIT:
             sendIndicationToApp(TCP_I_CLOSED);
+            timeWaitSocket = true;
             break;
 
         case TCP_S_CLOSED:
@@ -730,8 +730,8 @@ void TcpConnection::stateEntered(int state, int oldState, TcpEventCode event)
             // all timers need to be cancelled
             if (the2MSLTimer)
                 cancelEvent(the2MSLTimer);
-            if (connEstabTimer)
-                cancelEvent(connEstabTimer);
+            if (deferredSynTimer)
+                cancelEvent(deferredSynTimer);
             if (finWait2Timer)
                 cancelEvent(finWait2Timer);
             if (synRexmitTimer)

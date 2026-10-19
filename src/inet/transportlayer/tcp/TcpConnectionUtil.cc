@@ -278,6 +278,7 @@ void TcpConnection::initClonedConnection(TcpConnection *listenerConn)
     noDelaySockopt = listenerConn->noDelaySockopt;
     maxSegSockopt = listenerConn->maxSegSockopt;
     pathMtuSockopt = listenerConn->pathMtuSockopt;
+    notsentLowatSockopt = listenerConn->notsentLowatSockopt;
     corkSockopt = listenerConn->corkSockopt;
     rcvBufSockopt = listenerConn->rcvBufSockopt;
     state = tcpAlgorithm->getStateVariables();
@@ -291,6 +292,7 @@ void TcpConnection::initClonedConnection(TcpConnection *listenerConn)
     state->fork = true;
     state->forked = true;
     localAddr = listenerConn->localAddr;
+    listenAddr = listenerConn->localAddr;
     localPort = listenerConn->localPort;
     autoRead = listenerConn->autoRead;
 
@@ -502,10 +504,10 @@ void TcpConnection::sendToIP(Packet *tcpSegment, const Ptr<TcpHeader>& tcpHeader
     // back the IP ECN codepoint of the SYN-ACK instead (section 3.2.2.1, Table 3):
     // "If the TCP Client (A) in AccECN mode uses a pure ACK with no SACK blocks to
     // acknowledge the SYN/ACK, it MUST use the binary encoding in Table 3". The
-    // ACKs that TIME_WAIT sends carry no ACE field in Linux (tcp_v4_send_ack()),
+    // ACKs of a time-wait socket carry no ACE field in Linux (tcp_v4_send_ack()),
     // selected by accEcnBareTimeWaitAck.
     if (state->accEcnNegotiated && tcpHeader->getAckBit() && !tcpHeader->getSynBit()
-        && !(tcpMain->accEcnBareTimeWaitAck && the2MSLTimer != nullptr && the2MSLTimer->isScheduled()))
+        && !(tcpMain->accEcnBareTimeWaitAck && timeWaitSocket))
     {
         bool pureAck = tcpSegment->getByteLength() == 0;
         bool sackBlocks = false;
@@ -522,6 +524,27 @@ void TcpConnection::sendToIP(Packet *tcpSegment, const Ptr<TcpHeader>& tcpHeader
         tcpHeader->setAeBit((ace & 4) != 0);
         tcpHeader->setCwrBit((ace & 2) != 0);
         tcpHeader->setEceBit((ace & 1) != 0);
+    }
+
+    // Classic ECN, rfc-3168, pages 19-20:
+    // When TCP receives a CE data packet at the destination end-system, the
+    // TCP data receiver sets the ECN-Echo flag in the TCP header of the
+    // subsequent ACK packet.
+    // ...
+    // After a TCP receiver sends an ACK packet with the ECN-Echo bit set,
+    // that TCP receiver continues to set the ECN-Echo flag in all the ACK
+    // packets it sends (whether they acknowledge CE data packets or non-CE
+    // data packets) until it receives a CWR packet (a packet with the CWR
+    // flag set).  After the receipt of the CWR packet, acknowledgments for
+    // subsequent non-CE data packets do not have the ECN-Echo flag set.
+    //
+    // "All the ACK packets" are also the data and FIN segments, as in Linux
+    // (tcp_ecn_send()).
+    if (state->ect && !state->accEcnNegotiated && tcpHeader->getAckBit() && !tcpHeader->getSynBit()
+        && !tcpHeader->getRstBit() && tcpAlgorithm != nullptr && tcpAlgorithm->shouldMarkAck())
+    {
+        tcpHeader->setEceBit(true);
+        EV_INFO << "In ecnEcho state... send ACK with ECE bit set\n";
     }
 
     // AccECN option (RFC 9768 section 3.2.3.3): remember the counts that it reported,
@@ -668,11 +691,14 @@ bool TcpConnection::processIcmpv4Error(Indication *indication)
     // RFC 9293 section 3.9.2.2: a hard error SHOULD abort the connection (SHLD-26), also
     // in SYN_RCVD; a connection that is neither active nor forked nor Fast Open returns to
     // LISTEN, and its application, which has no socket for it yet, is not informed
-    // softIcmpErrorsAbortSetup: as Linux tcp_v4_err(), also a soft Destination Unreachable
-    // (codes 0, 1 and 5) aborts a connection setup (RFC 5461 section 4)
-    bool softAborts = state->softIcmpErrorsAbortSetup && errorInd->getType() == ICMP_DESTINATION_UNREACHABLE
-        && (errorInd->getCode() == ICMP_DU_NETWORK_UNREACHABLE || errorInd->getCode() == ICMP_DU_HOST_UNREACHABLE
-            || errorInd->getCode() == ICMP_DU_SOURCE_ROUTE_FAILED);
+    // softIcmpErrorsAbortSetup: as Linux tcp_v4_err(), also a soft error aborts a
+    // connection setup (RFC 5461 section 4): a Destination Unreachable with the codes 0,
+    // 1 and 5, a Time Exceeded and a Parameter Problem (RFC 9293 section 3.9.2.2)
+    bool softAborts = state->softIcmpErrorsAbortSetup
+        && ((errorInd->getType() == ICMP_DESTINATION_UNREACHABLE
+             && (errorInd->getCode() == ICMP_DU_NETWORK_UNREACHABLE || errorInd->getCode() == ICMP_DU_HOST_UNREACHABLE
+                 || errorInd->getCode() == ICMP_DU_SOURCE_ROUTE_FAILED))
+            || errorInd->getType() == ICMP_TIME_EXCEEDED || errorInd->getType() == ICMP_PARAMETER_PROBLEM);
     if ((isHardIcmpv4Error(errorInd->getType(), errorInd->getCode()) || softAborts)
         && (fsm.getState() == TCP_S_SYN_SENT || fsm.getState() == TCP_S_SYN_RCVD))
     {
@@ -703,6 +729,10 @@ bool TcpConnection::processIcmpv4Error(Indication *indication)
             if (newMss < state->snd_mss) {
                 EV_DETAIL << "PMTUD: reducing snd_mss from " << state->snd_mss
                           << " to " << newMss << " (reported MTU=" << mtu << ")\n";
+                // in SYN_SENT, the MSS of the handshake comes later: keep the MSS from
+                // before the error for the restore (pmtudTimeout)
+                if (state->pmtudOriginalMss == 0)
+                    state->pmtudOriginalMss = state->snd_mss;
                 state->snd_mss = newMss;
                 state->snd_effmss = calculateEffectiveMss();
                 state->pmtudLastMssReduction = simTime();
@@ -757,10 +787,13 @@ bool TcpConnection::processIcmpv6Error(Indication *indication)
     // RFC 9293 section 3.9.2.2: a hard error SHOULD abort the connection (SHLD-26), also
     // in SYN_RCVD; a connection that is neither active nor forked nor Fast Open returns to
     // LISTEN, and its application, which has no socket for it yet, is not informed
-    // softIcmpErrorsAbortSetup: as Linux tcp_v6_err(), also a soft Destination Unreachable
-    // (codes 0 and 3) aborts a connection setup (RFC 5461 section 4)
-    bool softAborts = state->softIcmpErrorsAbortSetup && errorInd->getType() == ICMPv6_DESTINATION_UNREACHABLE
-        && (errorInd->getCode() == NO_ROUTE_TO_DEST || errorInd->getCode() == ADDRESS_UNREACHABLE);
+    // softIcmpErrorsAbortSetup: as Linux tcp_v6_err(), also a soft error aborts a
+    // connection setup (RFC 5461 section 4): a Destination Unreachable with the codes 0
+    // and 3, a Time Exceeded and a Parameter Problem (RFC 9293 section 3.9.2.2)
+    bool softAborts = state->softIcmpErrorsAbortSetup
+        && ((errorInd->getType() == ICMPv6_DESTINATION_UNREACHABLE
+             && (errorInd->getCode() == NO_ROUTE_TO_DEST || errorInd->getCode() == ADDRESS_UNREACHABLE))
+            || errorInd->getType() == ICMPv6_TIME_EXCEEDED || errorInd->getType() == ICMPv6_PARAMETER_PROBLEM);
     if ((isHardIcmpv6Error(errorInd->getType(), errorInd->getCode()) || softAborts)
         && (fsm.getState() == TCP_S_SYN_SENT || fsm.getState() == TCP_S_SYN_RCVD))
     {
@@ -791,6 +824,10 @@ bool TcpConnection::processIcmpv6Error(Indication *indication)
             if (newMss < state->snd_mss) {
                 EV_DETAIL << "PMTUD: reducing snd_mss from " << state->snd_mss
                           << " to " << newMss << " (reported MTU=" << mtu << ")\n";
+                // in SYN_SENT, the MSS of the handshake comes later: keep the MSS from
+                // before the error for the restore (pmtudTimeout)
+                if (state->pmtudOriginalMss == 0)
+                    state->pmtudOriginalMss = state->snd_mss;
                 state->snd_mss = newMss;
                 state->snd_effmss = calculateEffectiveMss();
                 state->pmtudLastMssReduction = simTime();
@@ -921,20 +958,63 @@ void TcpConnection::sendAvailableDataToApp()
                 if (seqLess(requestedEndPos, endSeqNo))
                     endSeqNo = requestedEndPos;
             }
-            while (auto msg = receiveQueue->extractBytesUpTo(endSeqNo)) {
-                releaseRcvBuffer(msg->getByteLength());
-                if (rxTimestampingEnabled)
-                    msg->addTag<TcpRxTimestampInd>(); // SO_TIMESTAMPING: the time of the delivery
-                msg->setKind(TCP_I_DATA);    // TBD currently we never send TCP_I_URGENT_DATA
-                msg->addTag<SocketInd>()->setSocketId(socketId);
+            while (auto msg = extractDataForApp(endSeqNo)) {
                 sendToApp(msg);
                 if (!autoRead) {
                     maxByteCountRequested = 0;
                     break;
                 }
             }
+            // a delivery is a read of the application (D-146)
+            adjustRcvSpace();
         }
     }
+}
+
+Packet *TcpConnection::extractDataForApp(uint32_t endSeqNo)
+{
+    // urgentOutOfBand, as Linux tcp_recvmsg() without SO_OOBINLINE: the mark is the last
+    // urgent byte (urg_seq); a read stops before it, and at the mark the byte leaves the
+    // stream and does not count toward the bytes of the read
+    if (state->urgentOutOfBand && state->rcvUrgentPending) {
+        uint32_t markSeqNo = state->rcv_up - 1;
+        uint32_t firstSeqNo = receiveQueue->getFirstSeqNo();
+        if (firstSeqNo == markSeqNo && receiveQueue->getAcknowledgedDataLength() > 0) {
+            state->rcvUrgentPending = false;
+            Packet *oobByte = receiveQueue->extractBytesUpTo(markSeqNo + 1);
+            releaseRcvBuffer(oobByte->getByteLength());
+            delete oobByte;
+            EV_INFO << "Urgent data: the out-of-band byte at " << markSeqNo << " leaves the stream\n";
+            uint32_t dataEndSeqNo = receiveQueue->getFirstSeqNo() + receiveQueue->getAcknowledgedDataLength();
+            endSeqNo = seqLess(endSeqNo + 1, dataEndSeqNo) ? endSeqNo + 1 : dataEndSeqNo;
+        }
+        else if (seqLess(firstSeqNo, markSeqNo) && seqLess(markSeqNo, endSeqNo))
+            endSeqNo = markSeqNo;
+    }
+    Packet *msg = receiveQueue->extractBytesUpTo(endSeqNo);
+    if (msg == nullptr)
+        return nullptr;
+    releaseRcvBuffer(msg->getByteLength());
+    if (rxTimestampingEnabled)
+        msg->addTag<TcpRxTimestampInd>(); // SO_TIMESTAMPING: the time of the delivery
+    msg->setKind(TCP_I_DATA);
+    msg->addTag<SocketInd>()->setSocketId(socketId);
+    return msg;
+}
+
+void TcpConnection::processUrgentPointer(uint32_t urgentPointer)
+{
+    // urgentOutOfBand, as Linux tcp_check_urg(): RCV.UP from a URG segment, but no pointer
+    // whose urgent data the application received, none whose last urgent byte is before
+    // RCV.NXT ("Do not replay urg ptr"), and none that does not advance
+    uint32_t consumed = receiveQueue->getFirstSeqNo();
+    if (seqGE(consumed, urgentPointer) || seqLE(urgentPointer, state->rcv_nxt))
+        return;
+    if (state->rcvUrgentPending && seqLE(urgentPointer, state->rcv_up))
+        return;
+    state->rcv_up = urgentPointer;
+    state->rcvUrgentPending = true;
+    EV_INFO << "Urgent data: the urgent pointer is " << state->rcv_up << "\n";
 }
 
 void TcpConnection::initConnection(TcpOpenCommand *openCmd)
@@ -1027,6 +1107,8 @@ void TcpConnection::configureStateVariables()
     // window auto-tuning (Linux tcp_grow_window()): the offer starts at the advertised
     // window and grows toward half the receive buffer (tcp_win_from_space() at the
     // default scaling ratio)
+    if (tcpMain->par("windowAutoTuning").boolValue() && state->rcvBufferSize == 0)
+        throw cRuntimeError("windowAutoTuning needs a receive buffer, but receiveBufferSize is not set");
     if (tcpMain->par("windowAutoTuning").boolValue() && state->rcvBufferSize > 0) {
         state->rcv_ssthresh = advertisedWindow;
         state->window_clamp = std::max(advertisedWindow, state->rcvBufferSize / 2);
@@ -1046,13 +1128,17 @@ void TcpConnection::configureStateVariables()
     // a receive buffer smaller than the advertised window limits the first offer too
     if (state->rcvBufferSize > 0 && state->rcv_wnd > state->rcvBufferSize)
         state->rcv_wnd = state->rcv_adv = state->rcvBufferSize;
-    if (state->rcv_ssthresh > 0)
-        rcvqSpace = std::min(state->rcv_ssthresh, state->rcv_wnd);
+    state->rcvBufferLowRttUs = (uint32_t)tcpMain->par("receiveBufferLowRtt").doubleValueInUnit("us");
+    state->rcvBufferMax = (uint32_t)std::min<double>(tcpMain->par("receiveBufferMax").doubleValueInUnit("B"), UINT32_MAX);
     state->delayed_acks_enabled = tcpMain->par("delayedAcksEnabled"); // delayed ACK algorithm (RFC 1122) enabled/disabled
-    state->delayedAckFrameCount = tcpMain->par("delayedAckFrameCount");
+    int delayedAckFrameCount = tcpMain->par("delayedAckFrameCount");
+    if (delayedAckFrameCount < 1)
+        throw cRuntimeError("delayedAckFrameCount must be 1 or more, but it is %d", delayedAckFrameCount);
+    state->delayedAckFrameCount = delayedAckFrameCount;
     state->adaptiveDelayedAcks = tcpMain->par("adaptiveDelayedAcks");
     state->synRetries = socketSynRetries >= 0 ? socketSynRetries : (int)tcpMain->par("synRetries");
     state->synLinearTimeouts = tcpMain->par("synLinearTimeouts");
+    state->dropSynData = tcpMain->par("dropSynData");
     state->linuxZeroWindowProbe = !strcmp(tcpMain->par("zeroWindowProbe").stringValue(), "linux");
     state->nagle_enabled = tcpMain->par("nagleEnabled"); // Nagle's algorithm (RFC 896) enabled/disabled
     if (corkSockopt >= 0)
@@ -1065,6 +1151,7 @@ void TcpConnection::configureStateVariables()
     state->tsRecentAfterAckCheck = tcpMain->par("tsRecentAfterAckCheck");
     state->rfc5961AckCheck = tcpMain->par("rfc5961AckCheck");
     state->dropBeyondWindowEdge = tcpMain->par("dropBeyondWindowEdge");
+    state->urgentOutOfBand = tcpMain->par("urgentOutOfBand");
     state->windowUpdateAfterRead = tcpMain->par("windowUpdateAfterRead");
     state->abortRstWithAck = tcpMain->par("abortRstWithAck");
     state->softIcmpErrorsAbortSetup = tcpMain->par("softIcmpErrorsAbortSetup");
@@ -1092,12 +1179,13 @@ void TcpConnection::configureStateVariables()
     // Maximum Segment Size (RFC 9293 section 3.7.1); mss = -1 waits for the address of the peer, and
     // until then the connection has the 536 bytes of RFC 9293 (MUST-15)
     int mss = tcpMain->par("mss");
-    if (mss < -1)
-        throw cRuntimeError("mss must be -1 or more, but it is %d", mss);
+    if (mss != -1 && mss < 88) // Linux TCP_MIN_MSS: a smaller MSS leaves no room for the options
+        throw cRuntimeError("mss must be -1 or at least 88, but it is %d", mss);
     mssFromAddressFamily = mss == -1;
     state->snd_mss = mssFromAddressFamily ? 536 : mss;
     if (maxSegSockopt > 0 && (uint32_t)maxSegSockopt < state->snd_mss)
         state->snd_mss = maxSegSockopt; // TCP_MAXSEG of this connection, as Linux user_mss
+    limitMssByPathMtuSockopt(); // the route MTU of this connection, also from before the open
     state->advertisedMss = state->snd_mss; // our own receive limit; stays when snd_mss falls to the MSS of the peer
     state->ts_support = tcpMain->par("timestampSupport"); // if set, this means that current host supports TS (RFC 7323 section 3)
     const char *tcpEcnMode = tcpMain->par("tcpEcnMode");
@@ -1120,7 +1208,10 @@ void TcpConnection::configureStateVariables()
         state->ecnMode = TCP_ECN_MODE_OFF;
     state->ecnWillingness = state->ecnMode != TCP_ECN_MODE_OFF;
     state->accEcnOptionEnabled = tcpMain->par("accEcnOptionEnabled");
-    state->dupthresh = tcpMain->par("dupthresh");
+    int dupthresh = tcpMain->par("dupthresh");
+    if (dupthresh < 1)
+        throw cRuntimeError("dupthresh must be 1 or more, but it is %d", dupthresh);
+    state->dupthresh = dupthresh;
     state->sack_support = tcpMain->par("sackSupport"); // if set, this means that current host supports SACK (RFC 2018, 2883, 3517)
     // SACK-based (RFC 6675) loss recovery is provided by flavours whose createRecovery()
     // can return an Rfc6675Recovery (TcpReno, TcpNewReno). Other flavours (TcpTahoe,
@@ -1148,7 +1239,10 @@ void TcpConnection::configureStateVariables()
     state->tlpEnabled = tcpMain->par("tlpEnabled");
     state->adaptiveReorderingEnabled = tcpMain->par("adaptiveReorderingEnabled");
     state->dsack_enabled = tcpMain->par("dsackEnabled");
-    state->maxReordering = tcpMain->par("maxReordering");
+    int maxReordering = tcpMain->par("maxReordering");
+    if (maxReordering < (int)state->dupthresh)
+        throw cRuntimeError("maxReordering must be at least dupthresh (%d), but it is %d", (int)state->dupthresh, maxReordering);
+    state->maxReordering = maxReordering;
     state->reordering = state->dupthresh; // dynamic DupThresh starts at the static value
     state->lossDetectionMode = !strcmp(tcpMain->par("lossDetectionMode"), "rack") ? 1 : 0;
     if (state->lossDetectionMode == 1 && !state->sack_support) {
@@ -1177,6 +1271,8 @@ void TcpConnection::configureStateVariables()
     // the parameter
     int notsentLowat = notsentLowatSockopt != INT_MIN ? notsentLowatSockopt : (int)tcpMain->par("notsentLowat").intValue();
     state->notsentLowat = notsentLowat < 0 ? (uint32_t)-1 : (uint32_t)notsentLowat;
+    if (state->notsentLowat != (uint32_t)-1)
+        EV_DETAIL << "TCP_NOTSENT_LOWAT: the low-water mark is " << state->notsentLowat << "\n";
     state->sndbufLimitedStartTime = -1;
 
     WATCH_EXPR("snd_nxt", state->snd_nxt);
@@ -1196,6 +1292,7 @@ void TcpConnection::selectInitialSeqNum()
 
     state->snd_una = state->snd_nxt = state->snd_max = state->iss;
     state->pushed_seq = state->iss + 1; // Linux tcp_connect_init(): no PSH mark yet
+    state->snd_sml = state->iss; // Linux tcp_connect_init(): no small segment yet (minshallNagle)
 
     sendQueue->init(state->iss + 1); // + 1 is for SYN
     rexmitQueue->init(state->iss + 1); // + 1 is for SYN
@@ -1283,7 +1380,7 @@ void TcpConnection::sendSyn()
     tcpHeader->setSequenceNo(state->iss);
     tcpHeader->setSynBit(true);
     updateRcvWnd();
-    tcpHeader->setWindow(state->rcv_wnd);
+    tcpHeader->setWindow(synWindow());
 
     // TCP Fast Open (RFC 7413 section 4.2.2): the data that process_SEND() gave
     // the SYN takes the sequence numbers after the SYN
@@ -1371,7 +1468,7 @@ void TcpConnection::sendSynAck()
     tcpHeader->setSynBit(true);
     tcpHeader->setAckBit(true);
     updateRcvWnd();
-    tcpHeader->setWindow(state->rcv_wnd);
+    tcpHeader->setWindow(synWindow());
 
     // The SYN-ACK takes the ISS: snd_nxt and snd_max are at least ISS+1. A
     // retransmitted SYN-ACK of a TCP Fast Open server that sent data in SYN_RCVD
@@ -1528,6 +1625,10 @@ void TcpConnection::sendRstAck(uint32_t seq, uint32_t ack, L3Address src, L3Addr
 
     Packet *fp = new Packet("RST+ACK");
 
+    // RFC 8257 section 3.6: the RST of a DCTCP connection carries ECT, as in sendRst()
+    if (state != nullptr && state->ect && tcpAlgorithm != nullptr && tcpAlgorithm->needsEcn())
+        fp->addTag<EcnReq>()->setExplicitCongestionNotification(IP_ECN_ECT_0);
+
     // send it
     sendToIP(fp, tcpHeader, src, dest);
 
@@ -1548,26 +1649,7 @@ void TcpConnection::sendAck()
     tcpHeader->setAckNo(state->rcv_nxt);
     tcpHeader->setWindow(updateRcvWnd());
 
-    // rfc-3168, pages 19-20:
-    // When TCP receives a CE data packet at the destination end-system, the
-    // TCP data receiver sets the ECN-Echo flag in the TCP header of the
-    // subsequent ACK packet.
-    // ...
-    // After a TCP receiver sends an ACK packet with the ECN-Echo bit set,
-    // that TCP receiver continues to set the ECN-Echo flag in all the ACK
-    // packets it sends (whether they acknowledge CE data packets or non-CE
-    // data packets) until it receives a CWR packet (a packet with the CWR
-    // flag set).  After the receipt of the CWR packet, acknowledgments for
-    // subsequent non-CE data packets do not have the ECN-Echo flag set.
-
-    // (an AccECN connection uses the ECE bit for the ACE field, see sendToIP())
-    TcpStateVariables *state = getStateForUpdate();
-    if (state && state->ect && !state->accEcnNegotiated) {
-        if (tcpAlgorithm->shouldMarkAck()) {
-            tcpHeader->setEceBit(true);
-            EV_INFO << "In ecnEcho state... send ACK with ECE bit set\n";
-        }
-    }
+    // (sendToIP() sets the ECE bit)
 
     // write header options
     writeHeaderOptions(tcpHeader);
@@ -1609,10 +1691,20 @@ uint32_t TcpConnection::sendSegment(uint32_t bytes)
     if (state->pmtudEnabled && state->pmtudLastMssReduction >= SIMTIME_ZERO
         && simTime() - state->pmtudLastMssReduction >= state->pmtudTimeout)
     {
-        EV_INFO << "PMTUD: probe timeout elapsed, restoring snd_mss from " << state->snd_mss
-                << " to original " << state->pmtudOriginalMss << "\n";
-        state->snd_mss = state->pmtudOriginalMss;
-        state->snd_effmss = calculateEffectiveMss();
+        // the MSS of the handshake, at most TCP_MAXSEG and the route MTU of now
+        uint32_t mss = state->pmtudOriginalMss;
+        if (maxSegSockopt > 0 && (uint32_t)maxSegSockopt < mss)
+            mss = maxSegSockopt;
+        int pathMtu = pathMtuSockopt > 0 ? pathMtuSockopt : (int)tcpMain->par("pathMtu");
+        uint32_t headers = (remoteAddr.getType() == L3Address::IPv6 ? 40 : 20) + B(TCP_MIN_HEADER_LENGTH).get();
+        if (pathMtu > 0 && (uint32_t)pathMtu > headers && (uint32_t)pathMtu - headers < mss)
+            mss = pathMtu - headers;
+        if (mss > state->snd_mss) {
+            EV_INFO << "PMTUD: probe timeout elapsed, restoring snd_mss from " << state->snd_mss
+                    << " to original " << mss << "\n";
+            state->snd_mss = mss;
+            state->snd_effmss = calculateEffectiveMss();
+        }
         state->pmtudLastMssReduction = -1;
     }
 
@@ -2068,7 +2160,13 @@ bool TcpConnection::sendData(uint32_t congestionWindow)
         // handshake carries the data of a Fast Open SYN that the SYN-ACK did not
         // acknowledge (RFC 7413 section 4.2.2: "include the data after SND.UNA if
         // data is available"), without Nagle.
-        bool unacknowledgedData = (getDataSndUna() != state->snd_max) && fsm.getState() != TCP_S_SYN_SENT;
+        // Nagle holds only new data. After a go-back (a retransmission timeout, or a
+        // SYN-ACK that did not acknowledge the data of a Fast Open SYN), snd_nxt is below
+        // snd_max, and the partial segment at snd_nxt is a retransmission: RFC 9293
+        // section 3.7.4 tests SND.NXT > SND.UNA, and Linux never sends a retransmission
+        // through Nagle.
+        bool unacknowledgedData = seqGE(state->snd_nxt, state->snd_max) && (getDataSndUna() != state->snd_max)
+                && fsm.getState() != TCP_S_SYN_SENT;
         // minshallNagle, as Linux (tcp_minshall_check()): only an unacknowledged small
         // segment holds, not a flight of full-sized segments
         if (state->minshallNagle)
@@ -2604,8 +2702,10 @@ bool TcpConnection::processMSSOption(const Ptr<const TcpHeader>& tcpHeader, cons
     if (state->snd_mss == 0)
         state->snd_mss = 536;
 
-    // Store negotiated MSS for PMTUD: this is the value we restore after the probe timeout
-    state->pmtudOriginalMss = state->snd_mss;
+    // the MSS that the path MTU discovery restores after pmtudTimeout: that of the
+    // handshake, without the reduction of an ICMP error in SYN_SENT
+    uint32_t peerMss = option.getMaxSegmentSize() > 0 ? option.getMaxSegmentSize() : 536;
+    state->pmtudOriginalMss = std::min(state->pmtudOriginalMss > 0 ? state->pmtudOriginalMss : state->snd_mss, peerMss);
 
     EV_INFO << "Tcp Header Option MSS(=" << option.getMaxSegmentSize() << ") received, SMSS is set to " << state->snd_mss << "\n";
     return true;
@@ -2626,8 +2726,9 @@ void TcpConnection::applyDefaultSendMss(const Ptr<const TcpHeader>& tcpHeader, c
     if (state->snd_mss > defaultMss) {
         EV_INFO << "No MSS option received, SMSS is set to the default " << defaultMss << " (RFC 9293 MUST-15)\n";
         state->snd_mss = defaultMss;
-        state->pmtudOriginalMss = state->snd_mss;
     }
+    // the MSS that the path MTU discovery restores, as in processMSSOption()
+    state->pmtudOriginalMss = std::min(state->pmtudOriginalMss > 0 ? state->pmtudOriginalMss : state->snd_mss, defaultMss);
 }
 
 bool TcpConnection::processWSOption(const Ptr<const TcpHeader>& tcpHeader, const TcpOptionWindowScale& option)
@@ -2722,6 +2823,14 @@ void TcpConnection::updateTsRecent(const Ptr<const TcpHeader>& tcpHeader)
         EV_DETAIL << "Not updating ts_recent: the segment acknowledges unsent data\n";
         return;
     }
+    // ... and not from a segment that rfc5961AckCheck drops (Linux tcp_ack() returns
+    // before tcp_replace_ts_recent())
+    if (state->tsRecentAfterAckCheck && tcpHeader->getAckBit() && state->rfc5961AckCheck && state->max_window > 0
+        && seqLess(tcpHeader->getAckNo(), state->snd_una - state->max_window))
+    {
+        EV_DETAIL << "Not updating ts_recent: the ACK of the segment is below SND.UNA - MAX.SND.WND\n";
+        return;
+    }
     bool tsRecentValid = (simTime() - state->ts_recent_stamp) <= PAWS_IDLE_TIME_THRESH;
     bool olderTsval = seqLess(option->getSenderTimestamp(), state->ts_recent);
     if ((!olderTsval || !tsRecentValid) && seqLE(tcpHeader->getSequenceNo(), state->last_ack_sent)) {
@@ -2774,6 +2883,7 @@ void TcpConnection::resolveAddressFamilyMss()
     state->snd_mss = remoteAddr.getType() == L3Address::IPv6 ? 1440 : 1460;
     if (maxSegSockopt > 0 && (uint32_t)maxSegSockopt < state->snd_mss)
         state->snd_mss = maxSegSockopt;
+    limitMssByPathMtuSockopt();
     state->advertisedMss = state->snd_mss;
     state->snd_effmss = calculateEffectiveMss();
     EV_DETAIL << "The MSS of the address family is " << state->snd_mss << "\n";
@@ -2834,6 +2944,14 @@ void TcpConnection::limitMtuSearch(uint32_t mtu)
             << state->mtupSearchLow << " to " << state->mtupSearchHigh << "\n";
 }
 
+void TcpConnection::limitMssByPathMtuSockopt()
+{
+    // TcpSocket::setPathMtu(): the MSS does not exceed the route MTU of this connection
+    uint32_t headers = (remoteAddr.getType() == L3Address::IPv6 ? 40 : 20) + B(TCP_MIN_HEADER_LENGTH).get();
+    if (pathMtuSockopt > 0 && (uint32_t)pathMtuSockopt > headers && (uint32_t)pathMtuSockopt - headers < state->snd_mss)
+        state->snd_mss = pathMtuSockopt - headers;
+}
+
 void TcpConnection::initMtuProbing()
 {
     // mtuProbing, as Linux tcp_mtup_init(): the search runs between the MTU of the base MSS
@@ -2843,7 +2961,10 @@ void TcpConnection::initMtuProbing()
         return;
     uint32_t headers = (remoteAddr.getType() == L3Address::IPv6 ? 40 : 20) + B(TCP_MIN_HEADER_LENGTH).get();
     state->mtupSearchHigh = getMssClamp() + headers;
-    state->mtupSearchLow = mssToMtu((int)tcpMain->par("baseMss"));
+    int baseMssPar = tcpMain->par("baseMss");
+    if (baseMssPar < 88) // Linux TCP_MIN_MSS, as mss
+        throw cRuntimeError("baseMss must be at least 88, but it is %d", baseMssPar);
+    state->mtupSearchLow = mssToMtu(baseMssPar);
     state->mtupProbeSize = 0;
     int pathMtu = pathMtuSockopt > 0 ? pathMtuSockopt : (int)tcpMain->par("pathMtu");
     state->pathMtu = pathMtu > 0 ? pathMtu : state->snd_mss + headers;
@@ -2872,10 +2993,12 @@ int64_t TcpConnection::getMtuProbeBytes(uint32_t buffered, uint32_t congestionWi
     if (state->mtupProbeSize != 0 || seqLess(state->snd_nxt, state->snd_max) || deriveLinuxCaState() != 0
         || state->dupacks > 0 || congestionWindow < 11 * mss || sackBlocksToSend)
         return -1;
-    // the middle of the search; none when the search is narrower than 8 bytes (Linux
-    // tcp_probe_threshold), and none at or below the MSS in use
-    uint32_t probe = mtuToMss((state->mtupSearchHigh + state->mtupSearchLow) / 2);
-    if (probe > mtuToMss(state->mtupSearchHigh) || state->mtupSearchHigh - state->mtupSearchLow < 8 || probe <= mss)
+    // the middle of the search, whose upper end is at most the route MTU (pathMtu); none
+    // when the search is narrower than 8 bytes (Linux tcp_probe_threshold), and none at
+    // or below the MSS in use
+    uint32_t searchHigh = std::min(state->mtupSearchHigh, state->pathMtu);
+    uint32_t probe = mtuToMss((searchHigh + state->mtupSearchLow) / 2);
+    if (probe > mtuToMss(searchHigh) || searchHigh < state->mtupSearchLow + 8 || probe <= mss)
         return -1;
     // and none larger than the route MTU, which the packet could not leave
     if (mssToMtu(probe) > state->pathMtu)
@@ -2969,7 +3092,9 @@ bool TcpConnection::processFastOpenCookieBytes(const std::vector<uint8_t>& cooki
             state->fastopenSendCookieOption = true;
             EV_INFO << "Fast Open: cookie requested\n";
         }
-        else if (state->fastopenLenientCookieValidation || cookie == tcpMain->generateFastOpenCookie(localAddr, remoteAddr, cookieLength)) {
+        else if (state->fastopenLenientCookieValidation
+                 || (cookieLength == (size_t)state->fastopenCookieBytes && cookie == tcpMain->generateFastOpenCookie(localAddr, remoteAddr, cookieLength)))
+        {
             state->fastopenCookieValid = true;
             EV_INFO << "Fast Open: valid cookie\n";
         }
@@ -3064,8 +3189,12 @@ TcpHeader TcpConnection::writeHeaderOptions(const Ptr<TcpHeader>& tcpHeader)
             }
             else {
                 // the largest window that the connection can offer: the advertised window,
-                // or with windowAutoTuning the window that auto-tuning can reach
+                // or with windowAutoTuning the window that auto-tuning can reach: the bound
+                // of the receive buffer, unless SO_RCVBUF locks the buffer (Linux
+                // tcp_select_initial_window() represents tcp_rmem[2])
                 ulong scaled_rcv_wnd = receiveQueue->getFirstSeqNo() + std::max(state->maxRcvBuffer, state->window_clamp) - state->rcv_nxt;
+                if (state->rcv_ssthresh > 0 && !state->rcvbufLocked)
+                    scaled_rcv_wnd = std::max<ulong>(scaled_rcv_wnd, state->rcvBufferMax);
                 state->rcv_wnd_scale = 0;
 
                 while (scaled_rcv_wnd > TCP_MAX_WIN && state->rcv_wnd_scale < 14) { // RFC 7323 section 2.3: "the shift count MUST be limited to 14"
@@ -3215,8 +3344,10 @@ TcpHeader TcpConnection::writeHeaderOptions(const Ptr<TcpHeader>& tcpHeader)
 
         // AccECN option (RFC 9768 section 3.2.3), after the SACK option, which leaves
         // room for the fields that changed (see addSacks())
+        // (a time-wait socket of Linux writes no AccECN option, see sendToIP())
         int accEcnOrder, accEcnWanted, accEcnRequired;
-        if (tcpHeader->getAckBit() && getAccEcnOptionFields(accEcnOrder, accEcnWanted, accEcnRequired))
+        if (tcpHeader->getAckBit() && !(tcpMain->accEcnBareTimeWaitAck && timeWaitSocket)
+            && getAccEcnOptionFields(accEcnOrder, accEcnWanted, accEcnRequired))
             appendAccEcnOption(tcpHeader, accEcnOrder, accEcnWanted, accEcnRequired);
 
         // TODO add new TCPOptions here once they are implemented
@@ -3344,22 +3475,121 @@ void TcpConnection::growRcvBufferForOutOfOrderData(uint32_t endSeq)
     if (seqLE(oooHighestEnd, state->rcv_nxt) || seqGreater(endSeq, oooHighestEnd))
         oooHighestEnd = endSeq;
     // windowAutoTuning, as Linux (tcp_rcvbuf_grow() at the end of tcp_data_queue_ofo()):
-    // out-of-order data grow the buffer of a connection that the application accepted
-    // to the window of twice the receive space and the out-of-order span, at the payload
-    // ratio, and the clamp of the offer follows; a buffer that SO_RCVBUF locked does not
-    // grow. The receive space is the first offer, at most 10 MSS: INET has no DRS that
-    // grows it, and Linux does not either before it measures the receive RTT.
+    // out-of-order data grow the buffer with the receive space as it is
+    growRcvBuffer(rcvqSpace);
+}
+
+void TcpConnection::initRcvSpace()
+{
+    // Linux tcp_init_buffer_space(): the receive space starts at the smallest of the
+    // offer, the window and the initial window of 10 MSS, and the measurement of DRS
+    // starts now, at the first unread byte
+    rcvqSpace = std::min<uint32_t>({state->rcv_ssthresh > 0 ? state->rcv_ssthresh : state->rcv_wnd, state->rcv_wnd, 10 * (uint32_t)state->advertisedMss});
+    state->rcvqSpaceTime = simTime();
+    state->rcvqSpaceSeq = receiveQueue->getFirstSeqNo();
+}
+
+void TcpConnection::adjustRcvSpace()
+{
+    // Linux tcp_rcv_space_adjust(), at each read: after one receive RTT, the bytes that
+    // the application read in it, less the unread bytes, grow the receive space and the
+    // buffer when they are more than the space; the measurement starts again
+    if (state->rcvRttUs == 0)
+        return;
+    if ((simTime() - state->rcvqSpaceTime).inUnit(SIMTIME_US) < (int64_t)(state->rcvRttUs >> 3))
+        return;
+    uint32_t copiedSeq = receiveQueue->getFirstSeqNo();
+    int64_t copied = (int64_t)(uint32_t)(copiedSeq - state->rcvqSpaceSeq) - (int64_t)(uint32_t)(state->rcv_nxt - copiedSeq);
+    if (copied > (int64_t)rcvqSpace) {
+        EV_DETAIL << "Dynamic Right-Sizing: " << copied << " bytes read in one receive RTT\n";
+        growRcvBuffer((uint32_t)copied);
+    }
+    state->rcvqSpaceSeq = copiedSeq;
+    state->rcvqSpaceTime = simTime();
+}
+
+void TcpConnection::growRcvBuffer(uint32_t newSpace)
+{
+    // Linux tcp_rcvbuf_grow(): the receive space becomes newSpace; the buffer of a
+    // connection that the application accepted grows to the window of twice the space
+    // and the out-of-order span, at the payload ratio (tcp_space_from_win()), and the
+    // clamp of the offer follows; a buffer that SO_RCVBUF locked does not grow
+    uint32_t oldSpace = rcvqSpace;
+    rcvqSpace = newSpace;
     if (state->rcv_ssthresh == 0 || state->rcvbufLocked || !appOwned || isToBeAccepted())
         return;
-    uint32_t space = std::min<uint32_t>(rcvqSpace, 10 * state->advertisedMss);
-    uint64_t rcvwin = 2 * (uint64_t)space + (seqGreater(oooHighestEnd, state->rcv_nxt) ? oooHighestEnd - state->rcv_nxt : 0);
-    uint64_t rcvbuf = (rcvwin << 8) / rcvScalingRatio;
+    // DRS is one RTT late: the window is twice the space, and it grows by the window times
+    // the receive RTT over receiveBufferLowRtt below that RTT, else by twice the window
+    // times the relative growth of the space, so that the sender can double its rate
+    uint64_t rcvwin = 2 * (uint64_t)newSpace;
+    uint64_t rttUs = state->rcvRttUs >> 3;
+    uint64_t grow;
+    if (rttUs < state->rcvBufferLowRttUs)
+        grow = rcvwin * rttUs / state->rcvBufferLowRttUs;
+    else
+        grow = oldSpace > 0 && newSpace > oldSpace ? ((rcvwin << 1) * (newSpace - oldSpace)) / oldSpace : 0;
+    rcvwin += grow + (seqGreater(oooHighestEnd, state->rcv_nxt) ? oooHighestEnd - state->rcv_nxt : 0);
+    // the buffer of that window, at most tcp_rmem[2] (receiveBufferMax)
+    uint64_t rcvbuf = std::min<uint64_t>((rcvwin << 8) / rcvScalingRatio, state->rcvBufferMax);
     if (rcvbuf > state->rcvBufferSize) {
         state->rcvBufferSize = (uint32_t)std::min<uint64_t>(rcvbuf, UINT32_MAX);
         if (state->maxRcvBuffer < state->rcvBufferSize)
             state->maxRcvBuffer = state->rcvBufferSize;
         state->window_clamp = (uint32_t)(((uint64_t)state->rcvBufferSize * rcvScalingRatio) >> 8);
-        EV_DETAIL << "Window auto-tuning: out-of-order data grow the receive buffer to " << state->rcvBufferSize << "\n";
+        EV_DETAIL << "Window auto-tuning: the receive buffer grows to " << state->rcvBufferSize << "\n";
+    }
+}
+
+void TcpConnection::updateRcvRtt(uint32_t sampleUs, bool winDep)
+{
+    // Linux tcp_rcv_rtt_update(): the estimate is in microseconds times 8. A smaller
+    // sample replaces it; without timestamps (winDep) the estimate is a minimum; with
+    // them, a sample when the application read all data moves it by 1/8
+    uint32_t oldSample = state->rcvRttUs;
+    uint64_t m = (uint64_t)sampleUs << 3;
+    uint32_t newSample;
+    if (oldSample == 0 || m < oldSample)
+        newSample = (uint32_t)std::min<uint64_t>(m, UINT32_MAX);
+    else {
+        if (winDep)
+            return;
+        if (state->rcv_nxt != receiveQueue->getFirstSeqNo()) // unread data
+            return;
+        newSample = oldSample - (oldSample >> 3) + sampleUs;
+    }
+    state->rcvRttUs = newSample;
+}
+
+void TcpConnection::measureRcvRtt()
+{
+    // Linux tcp_rcv_rtt_measure(), at each segment of in-order data: one sample for each
+    // window, the time until rcv_nxt passes the right edge of the window at its start
+    if (state->rcvRttTime != SIMTIME_ZERO) {
+        if (seqLess(state->rcv_nxt, state->rcvRttSeq))
+            return;
+        int64_t deltaUs = (simTime() - state->rcvRttTime).inUnit(SIMTIME_US);
+        updateRcvRtt(deltaUs > 0 ? (uint32_t)std::min<int64_t>(deltaUs, UINT32_MAX) : 1, true);
+    }
+    state->rcvRttSeq = state->rcv_nxt + state->rcv_wnd;
+    state->rcvRttTime = simTime();
+}
+
+void TcpConnection::measureRcvRttTs(const Ptr<const TcpHeader>& tcpHeader, uint32_t payloadLength)
+{
+    // Linux tcp_rcv_rtt_measure_ts(), at each segment in ESTABLISHED: a new TSecr on a
+    // segment of at least the received MSS gives a sample, now minus TSecr, in the
+    // milliseconds of the timestamp clock; a delta of 0 gives none
+    const TcpOptionTimestamp *tsOption = state->ts_enabled ? findTSOption(tcpHeader) : nullptr;
+    if (tsOption == nullptr)
+        return;
+    uint32_t tsecr = tsOption->getEchoedTimestamp();
+    if (tsecr == state->rcvRttLastTsecr)
+        return;
+    state->rcvRttLastTsecr = tsecr;
+    if (payloadLength >= rcvMssEstimate) {
+        uint32_t delta = convertSimtimeToTS(simTime()) - tsecr;
+        if (delta > 0 && delta < INT32_MAX / 1000)
+            updateRcvRtt(delta * 1000, false);
     }
 }
 
@@ -3433,7 +3663,9 @@ uint32_t TcpConnection::selectRcvWnd()
 
     // a buffer that SO_RCVBUF locked does not grow, so the offer may promise only its
     // free space, charged at the truesize of the Linux skbs (tcp_space())
-    uint32_t fullSpace = state->maxRcvBuffer;
+    // (the full space of the SWS rule is the receive buffer, RCV.BUFF of RFC 9293
+    // section 3.8.6.2.2, when there is one)
+    uint32_t fullSpace = state->rcvBufferSize > 0 ? std::min(state->maxRcvBuffer, state->rcvBufferSize) : state->maxRcvBuffer;
     if (state->rcvbufLocked && state->rcvBufferSize > 0) {
         uint64_t freeSpace = rcvBufOccupancy < state->rcvBufferSize ? (((uint64_t)state->rcvBufferSize - rcvBufOccupancy) * rcvScalingRatio) >> 8 : 0;
         win = (uint32_t)std::min<uint64_t>(win, freeSpace);
@@ -3448,6 +3680,19 @@ uint32_t TcpConnection::selectRcvWnd()
         win = 0;
 
     return win;
+}
+
+uint16_t TcpConnection::synWindow()
+{
+    // RFC 7323 section 2.2: "The window field in a segment where the SYN bit is set
+    // (i.e., a <SYN> or <SYN,ACK>) MUST NOT be scaled", so the window of a SYN or a
+    // SYN-ACK is at most 65535, also after the SYN of the peer turned window scaling
+    // on; the right edge offered moves back with it
+    if (state->rcv_wnd <= TCP_MAX_WIN)
+        return state->rcv_wnd;
+    state->rcv_adv = state->rcv_nxt + TCP_MAX_WIN;
+    emit(rcvAdvSignal, state->rcv_adv);
+    return TCP_MAX_WIN;
 }
 
 uint16_t TcpConnection::updateRcvWnd()

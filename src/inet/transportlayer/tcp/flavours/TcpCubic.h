@@ -94,6 +94,8 @@ class INET_API TcpCubic : public TcpClassicAlgorithmBase
 
     virtual void initializeAlgorithm() override;
 
+    virtual void established(bool active) override;
+
     virtual void processRexmitTimer(TcpEventCode& event) override;
     virtual void receivedAckForUnackedData(uint32_t firstSeqAcked) override;
 
@@ -110,6 +112,9 @@ class INET_API TcpCubic : public TcpClassicAlgorithmBase
 
     /** CUBIC reduces to cwnd*beta on fast-recovery entry, not to FlightSize/2. */
     virtual uint32_t calculateSsthreshForFastRecovery() override { return calculateSsthresh(state->snd_cwnd); }
+
+    /** CUBIC reacts to an ECN-Echo with its decrease, as to a loss (RFC 9438 section 4.6). */
+    virtual uint32_t calculateSsthreshForEce() override { return calculateSsthresh(state->snd_cwnd); }
 };
 
 } // namespace tcp

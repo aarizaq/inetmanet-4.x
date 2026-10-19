@@ -78,6 +78,10 @@ void TcpAlgorithmBase::initializeAlgorithm()
 {
     TcpAlgorithm::initializeAlgorithm();
 
+    intval_t initialSsthresh = conn->getTcpMain()->par("initialSsthresh");
+    if (initialSsthresh < 1 || initialSsthresh > 0xFFFFFFFFLL)
+        throw cRuntimeError("initialSsthresh must be 1 to 4294967295, but it is %" PRId64, (int64_t)initialSsthresh);
+
     rexmitTimer = new cMessage("REXMIT");
     persistTimer = new cMessage("PERSIST");
     delayedAckTimer = new cMessage("DELAYEDACK");
@@ -103,6 +107,36 @@ void TcpAlgorithmBase::initializeAlgorithm()
     state->keepalive_idle_time = conn->getTcpMain()->par("keepAliveIdleTime");
     state->keepalive_interval = conn->getTcpMain()->par("keepAliveInterval");
     state->keepalive_max_probes = conn->getTcpMain()->par("keepAliveProbeCount");
+}
+
+bool TcpAlgorithmBase::isInitialWindowKept() const
+{
+    // the increased initial window after the SYN and SYN-ACK retransmissions so far (see
+    // established()): "rfc3390" falls to one segment at the first, "rfc6928" and
+    // initialCwnd at the second
+    uint32_t synRexmitsKeepingIw = (state->init_cwnd_mode == 2 || state->initialCwndSegments != 0) ? 1 : 0;
+    return state->syn_rexmit_count <= synRexmitsKeepingIw && (state->init_cwnd_mode != 0 || state->initialCwndSegments != 0);
+}
+
+void TcpAlgorithmBase::synAckRetransmitted()
+{
+    // a Fast Open server set its initial window at the SYN (established()), before it
+    // knew that the SYN-ACK arrived; a lost SYN-ACK reduces the window as it does for a
+    // server without Fast Open, which sets it at the ACK of the SYN-ACK (RFC 7413
+    // section 4.2.2: the server "MUST follow [RFC5681]")
+    if (!isInitialWindowKept() && state->snd_cwnd > state->snd_effmss) {
+        state->snd_cwnd = state->snd_effmss;
+        conn->emit(cwndSignal, state->snd_cwnd);
+        EV_INFO << "The SYN-ACK of the Fast Open server timed out, CWND is set to " << state->snd_cwnd << "\n";
+    }
+}
+
+uint32_t TcpAlgorithmBase::getReceiveMss() const
+{
+    // RMSS of RFC 9293: the MSS that this side announced, else the default (MUST-15)
+    if (conn->getTcpMain()->sendMssOption && state->advertisedMss > 0)
+        return state->advertisedMss;
+    return conn->getRemoteAddress().getType() == L3Address::IPv6 ? 1220 : 536;
 }
 
 uint32_t TcpAlgorithmBase::getInitialWindow() const
@@ -178,7 +212,12 @@ void TcpAlgorithmBase::established(bool active)
     // If the SYN or SYN/ACK is
     // lost, the initial window used by a sender after a correctly
     // transmitted SYN MUST be one segment consisting of MSS bytes."
-    if (state->syn_rexmit_count == 0 && (state->init_cwnd_mode != 0 || state->initialCwndSegments != 0)) {
+    //
+    // RFC 6928 section 2 relaxes this for IW10: "it is RECOMMENDED that
+    // implementations refrain from resetting the initial window to 1 segment, unless
+    // there have been more than one SYN or SYN/ACK retransmissions". Linux does the
+    // same for its initial window and for initcwnd (tcp_init_transfer()).
+    if (isInitialWindowKept()) {
         state->snd_cwnd = getInitialWindow();
         EV_DETAIL << "Increased Initial Window, CWND is set to " << state->snd_cwnd << "\n";
     }
@@ -201,6 +240,12 @@ void TcpAlgorithmBase::established(bool active)
         }
     }
 
+    startKeepAlive();
+}
+
+void TcpAlgorithmBase::startKeepAlive()
+{
+    // with keepalive, the idle time starts at the end of the handshake
     if (state->keepalive_enabled) {
         state->time_last_segment_received = simTime();
         state->keepalive_probes_sent = 0;
@@ -521,6 +566,11 @@ void TcpAlgorithmBase::processKeepAliveTimer(TcpEventCode& event)
         return;
     }
 
+    // a segment after the last probe answers the probes, also when the interval is
+    // longer than the idle time (Linux tcp_ack() clears icsk_probes_out)
+    if (state->keepalive_probes_sent > 0 && state->time_last_segment_received > state->keepalive_last_probe_time)
+        state->keepalive_probes_sent = 0;
+
     // MUST-29: one probe without an answer is not a dead connection; after
     // keepAliveProbeCount of them, abort, and tell the application (TCP_I_TIMED_OUT)
     if (state->keepalive_probes_sent >= state->keepalive_max_probes) {
@@ -533,6 +583,7 @@ void TcpAlgorithmBase::processKeepAliveTimer(TcpEventCode& event)
     EV_INFO << "Keepalive: the connection is idle, sending probe #" << (state->keepalive_probes_sent + 1) << "\n";
     conn->sendKeepAliveProbe();
     state->keepalive_probes_sent++;
+    state->keepalive_last_probe_time = simTime();
     conn->scheduleAfter(state->keepalive_interval, keepAliveTimer);
 }
 
@@ -697,7 +748,9 @@ bool TcpAlgorithmBase::isDataWaiting() const
 
 void TcpAlgorithmBase::startPersistTimer()
 {
-    state->persist_timeout = state->rexmit_timeout; // the first probe after one RTO (SHLD-29)
+    // the first probe after one RTO (SHLD-29), at most maxPersistTimeout, as the later
+    // ones (Linux caps the first interval too)
+    state->persist_timeout = std::min(state->rexmit_timeout, maxPersistTimeout);
     conn->scheduleAfter(state->persist_timeout, persistTimer);
 }
 
@@ -841,9 +894,15 @@ void TcpAlgorithmBase::receiveSeqChanged()
                 conn->sendAck();
             }
             // RFC 9293 section 3.8.6.3: "the delay MUST be less than 0.5 seconds (MUST-40).
-            // An ACK SHOULD be generated for at least every second full-sized segment"
-            // (SHLD-19); delayedAckTimeout and delayedAckFrameCount set both.
-            else if (state->full_sized_segment_counter >= state->delayedAckFrameCount) {
+            // An ACK SHOULD be generated for at least every second full-sized segment or
+            // 2*RMSS bytes of new data (where RMSS is the MSS specified by the TCP endpoint
+            // receiving the segments to be acknowledged, or the default value if not
+            // specified)" (SHLD-19); delayedAckTimeout and delayedAckFrameCount set both.
+            // The bytes count also when the segments of the peer are shorter than the
+            // send MSS of this side.
+            else if (state->full_sized_segment_counter >= state->delayedAckFrameCount
+                     || state->rcv_nxt - state->last_ack_sent >= state->delayedAckFrameCount * getReceiveMss())
+            {
                 EV_INFO << "rcv_nxt changed to " << state->rcv_nxt << ", (delayed ACK enabled, but full_sized_segment_counter=" << state->full_sized_segment_counter << ") sending ACK now\n";
                 conn->sendAck();
             }
@@ -1120,20 +1179,10 @@ bool TcpAlgorithmBase::shouldMarkAck()
     // flag set).  After the receipt of the CWR packet, acknowledgments for
     // subsequent non-CE data packets do not have the ECN-Echo flag set.
 
-    if (state && state->ect) {
-        if (state->gotCeIndication) {
-            EV_INFO << "Received CE... ";
-            if (state->ecnEchoState)
-                EV_INFO << "Already in ecnEcho state\n";
-            else {
-                state->ecnEchoState = true;
-                EV << "Entering ecnEcho state\n";
-            }
-            state->gotCeIndication = false;
-        }
-        return state->ecnEchoState;
-    }
-    return false;
+    //
+    // The connection enters the echo state when the CE packet arrives (see
+    // TcpConnection::processSegment1stThru8th()).
+    return state && state->ect && state->ecnEchoState;
 }
 
 void TcpAlgorithmBase::processEcnInEstablished()

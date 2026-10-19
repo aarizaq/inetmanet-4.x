@@ -45,14 +45,17 @@ simple LinuxTcp extends Tcp
         maxPersistTimeout = default(120s);
         zeroWindowProbe = default("linux");
         msl = default(30s);
-        // sending and receiving: the delayed ACK, Nagle, PSH and the receive window of Linux
+        // sending and receiving: the delayed ACK, Nagle, PSH, and the receive window and
+        // buffer of Linux (tcp_rmem[1] = 131072)
         adaptiveDelayedAcks = default(true);
         minshallNagle = default(true);
         pushSegmentsOnWriteBoundary = default(true);
+        receiveBufferSize = default(131072B);
         windowAutoTuning = default(true);
         windowUpdateAfterRead = default(true);
         acceptBeyondBufferAtEmptyQueue = default(true);
         dropBeyondWindowEdge = default(true);
+        urgentOutOfBand = default(true);
         // the checks of a segment and of an ICMP error, and the reset at an abort
         softIcmpErrorsAbortSetup = default(true);
         icmpSequenceCheck = default(true);
@@ -68,4 +71,6 @@ simple LinuxTcp extends Tcp
         fastopenClientEnabled = default(true);
         fastopenBlackholeTimeout = default(0s);
         fastopenExpOptionEnabled = default(true);
+        // connection setup: tcp_conn_request() keeps no data of a SYN without Fast Open
+        dropSynData = default(true);
 }

@@ -402,6 +402,36 @@ Notable backward incompatible changes are the following:
 
    A TCP algorithm implemented outside INET needs a simple module type that extends TcpAlgorithm, and Define_Module() in place of Register_Class(); without the type, the connection stops with an error. Its initialize() is now initializeAlgorithm(), and the cancelEvent() helper of TcpAlgorithmBase is now cancelTimer(). See the migration guide.
 
+50. A TCP connection setup lasts as long as its SYN retransmissions
+
+   An active open of Tcp no longer fails after 75 s, and a passive open no longer leaves SYN_RCVD after 75 s. The SYN and SYN-ACK retransmissions alone limit the setup (the synRetries parameter, or TcpSocket::setSynRetries() for one connection), as in Linux. With the defaults of Tcp, 12 retransmissions take about 24 minutes; RFC 9293 section 3.8.3 asks for at least 3 minutes (MUST-23). LinuxTcp keeps the 11 s of Linux. Simulations in which a SYN or a SYN-ACK gets no answer for more than 75 s change.
+
+   When the retransmissions run out, the setup now times out: an active open tells the application with TCP_I_TIMED_OUT, as connect() of Linux fails with ETIMEDOUT, and a passive open returns to LISTEN, or closes if it was forked. Before, the connection aborted without an indication to the application, and a listener that does not fork closed.
+
+   The timer that waits for the SEND of a deferred Fast Open SYN is now TcpConnection::deferredSynTimer, with the constant TCP_TIMEOUT_DEFERRED_SYN. See the migration guide.
+
+51. LinuxTcp drops the data of a SYN without Fast Open
+
+   A TCP listener keeps the data of a SYN that carries no Fast Open option and delivers it after the handshake, as RFC 9293 section 3.10.7.2 allows. A Linux listener drops such data, and the client sends it again after the SYN-ACK. The new parameter dropSynData selects the behavior of Linux; LinuxTcp sets it, and Tcp keeps the data. Simulations with LinuxTcp in which a client sends data on a SYN without Fast Open change. The data of a SYN with an invalid Fast Open cookie is dropped in each mode, as RFC 7413 section 4.2.2 asks, as before.
+
+52. Dynamic Right-Sizing of the TCP receive buffer, as Linux
+
+   With windowAutoTuning and a receive buffer (receiveBufferSize), a TCP receiver now grows its buffer in a long transfer as Linux does (Dynamic Right-Sizing). At each read of the application after one receive RTT, the bytes read in that RTT become the receive space when they are more, and the buffer grows to twice the space, more during slow start, up to the new parameter receiveBufferMax (32 MiB, as tcp_rmem[2] of Linux). In the autoRead mode, each delivery to the application is a read. The new parameter receiveBufferLowRtt (1 ms, as tcp_rcvbuf_low_rtt) selects a smaller growth for small RTTs. The receiver estimates the receive RTT as Linux, with and without timestamps, and the status of a connection reports it with the receive space (rcvRtt, rcvSpace of TcpStatusInfo). Simulations that turn windowAutoTuning on with a receive buffer change, and LinuxTcp has a receive buffer by default (entry 53).
+
+53. LinuxTcp has the receive buffer of Linux, and the window scale covers auto-tuning
+
+   LinuxTcp now has a receive buffer of 131072 bytes (receiveBufferSize), the tcp_rmem[1] that Linux gives each socket, so its window auto-tuning and Dynamic Right-Sizing act with its defaults. Before, LinuxTcp set no receive buffer, and its offered window stayed at advertisedWindow. Tcp keeps no receive buffer apart from the window.
+
+   With windowScalingFactor = -1, windowAutoTuning and a receive buffer that SO_RCVBUF does not lock, the window scale now also represents receiveBufferMax, as Linux tcp_select_initial_window() represents tcp_rmem[2]: with the default of 32 MiB, the shift is 10. Before, the shift represented only the window at the time of the SYN: a buffer of 131072 bytes got a shift of 1, and the offered window could not grow above 131070 bytes, although the buffer grew. A buffer that SO_RCVBUF locks keeps the shift of its own window. Simulations with LinuxTcp, and simulations that turn windowAutoTuning on with a receive buffer, change.
+
+54. The out-of-band byte of received TCP urgent data, as Linux
+
+   The new parameter urgentOutOfBand, which LinuxTcp sets, gives the receive side of urgent data of Linux without SO_OOBINLINE: the last byte of urgent data leaves the stream, and a read stops before it. INET does not deliver that byte, which Linux gives to recv(MSG_OOB), and it sends no urgent data. Tcp keeps treating URG-marked bytes as ordinary data. Simulations change only where a peer sends urgent data to LinuxTcp.
+
+55. A sink can pull a packet that it accepts
+
+   IPassivePacketSource has two new methods, canPullPacket(gate, filter) and pullPacket(gate, filter). The filter, an IPacketFilterFunction, is the acceptance condition of the sink. The source answers and pulls as if it held only the packets that the filter matches, and the pull has the effects of a normal pull of that packet. This is the pull counterpart of canPushPacket(packet, gate): a sink can now take a packet behind a packet that it cannot accept at the moment. PassivePacketSource and EmptyPacketSource support the filter. PacketQueue offers the first packet in queue order that the filter matches. PriorityScheduler and WrrScheduler decide as if each input held only the accepted packets, and a filtered pull spends the credit of a WrrScheduler as a normal pull does. A compound queue, such as CompoundPendingQueue, passes the filter to its parts. IPacketQueue has the new method dequeuePacket(filter): it dequeues the packet that dequeuePacket() would dequeue if the queue held only the packets that the filter matches. The base classes of the queueing model throw an error for it, so a module that cannot choose among its packets refuses the filtered call. A class outside INET that implements IPassivePacketSource or IPacketQueue directly no longer compiles until it declares the new methods. See the migration guide. Simulation results do not change.
+
 Notable backward compatible changes are the following:
 
 1. IEEE 802.11 per-station rate statistics
@@ -489,6 +519,34 @@ Notable bug fixes are the following:
 1. IEEE 802.11 HT modes preserve the requested band and preamble
 
    The HT mode factory now includes band and preamble format in its cache key. A 5 GHz request after an equivalent 2.4 GHz request therefore receives the requested band and timing. Previously, that request could receive the earlier mode. Identical complete requests still reuse one object.
+
+2. TCP Limited Transmit sends only new data
+
+   With SACK and lossDetectionMode = "dupthresh", the first duplicate ACK of a flight with no more new data retransmitted the first hole: Limited Transmit took its segment from NextSeg(), whose rule 3 returns an old segment. The fast retransmit then sent the hole again, and the receiver reported a D-SACK. Limited Transmit now sends only previously unsent data, as RFC 3042 and step (3.3) of RFC 6675 say, in both loss detection modes. No fingerprint or statistical baseline of INET moves; simulations that select the dupthresh mode with SACK can change.
+
+3. DumbTcp no longer sends an acknowledged FIN again
+
+   The retransmission timer of DumbTcp restarted at each expiry, also when nothing was outstanding, so DumbTcp sent an acknowledged FIN again every 2 seconds until the connection closed; with a peer that does not close, it went on to the end of the simulation. The timer now stops when all data, the FIN included, is acknowledged, as RFC 6298 section 5.2 says. Simulations that select DumbTcp can change.
+
+4. Nagle no longer holds a TCP retransmission
+
+   Nagle's algorithm counted data as unacknowledged up to the highest sequence number sent. After a go-back, after a retransmission timeout or after a SYN-ACK that did not acknowledge the data of a Fast Open SYN, the partial segment at the end is a retransmission, and Nagle held it until the next retransmission timeout. Nagle now holds only new data, as RFC 9293 section 3.7.4 says and as Linux does. Simulations with losses and Nagle on (the default of Tcp and LegacyTcp) can change; 27 fingerprints and 11 statistical results of the INET examples moved. LinuxTcp, with the Nagle variant of Minshall, was not affected in the packetdrill suite.
+
+5. TCP repairs that reach the algorithms of INET 4.7
+
+   A review of all TCP parameters found defects. Most of their repairs concern features that are new in this release (entry 34), but the repairs below also reach the algorithms and the parameters of INET 4.7. Simulations that use them can change; 30 fingerprints and 20 statistical results of the INET examples moved.
+
+   TcpVegas decided once per RTT to grow or to shrink cwnd by one segment, but it applied the step again at each later ACK until the next decision. So in congestion avoidance, cwnd moved by more than one segment per RTT, and alpha and beta did not hold the number of extra segments between them. TcpVegas now applies the step once per RTT, as the Vegas paper and Linux tcp_vegas_cong_avoid() do. TcpVegas and TcpWestwood also ignored initialSsthresh and ended slow start at 64 KiB; now they take initialSsthresh, as the other algorithms do.
+
+   After a retransmission timeout, TcpReno, TcpNewReno and DcTcp restarted slow start with a cwnd of the MSS. With the timestamp option, a segment carries 12 bytes less data, so a segment of 12 bytes went out after the retransmission. The loss window is now one full-sized segment of data, as RFC 5681 section 3.1 says. Also as RFC 5681 says, only the first timeout of a segment sets ssthresh now; the value of these algorithms stays the same, but their ssthresh statistic no longer records it a second time.
+
+   A receiver with delayedAcksEnabled acknowledged at once only after two segments of the length of its own send MSS. When the segments of the peer were shorter, for example after the path MTU discovery of the sender, each ACK waited for the delayed ACK timeout. Now the ACK also goes at once when the unacknowledged data reach 2*RMSS bytes, as RFC 9293 SHLD-19 says. RMSS is the MSS that the receiver announced.
+
+   With windowScalingSupport and an advertisedWindow above 65535, a SYN-ACK wrote the window into its 16-bit field without a limit, so 131072 became 0. The SYN and the SYN-ACK now carry at most 65535, because RFC 7323 section 2.2 says that their window is never scaled.
+
+   A receiver with classic ECN echoed a CE mark only on a pure ACK, and only for the last segment that arrived. A delayed ACK lost the echo when a segment without CE came after the marked one, and data and FIN segments never had ECE. Now each segment that acknowledges has ECE in the echo state, as RFC 3168 section 6.1.3 says.
+
+   Values without a meaning now stop the simulation with an error that names the parameter and its range: an mss below 88, other than -1; a dupthresh or an initialSsthresh below 1; and a gain g of DcTcp (formerly dctcpGamma) that is not in the range 0 < g <= 1. Before, mss = 0 stalled the connection, dupthresh = 0 gave contradictory loss detection, and a g out of its range moved alpha out of the range 0 to 1. The new parameters of Tcp and TcpCubic check their ranges in the same way.
 
 
 INET-4.7 (July 2026) — feature release

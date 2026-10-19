@@ -165,7 +165,9 @@ struct TcpStateVariables
     // receive sequence number variables
     uint32_t rcv_nxt = 0;           // receive next
     uint32_t rcv_wnd = 0;           // receive window
-    uint32_t rcv_up = 0;            // receive urgent pointer;
+    uint32_t rcv_up = 0;            // receive urgent pointer: the octet after the urgent data
+    bool rcvUrgentPending = false;  // urgentOutOfBand: RCV.UP is valid, and its out-of-band byte is still in the stream
+    bool urgentOutOfBand = false;   // urgentOutOfBand: the last urgent byte leaves the stream, as Linux
     uint32_t irs = 0;               // initial receive sequence number
     uint32_t rcv_adv = 0;           // the right edge of the window in force (Linux rcv_wup + rcv_wnd)
     uint32_t rcv_mwnd_seq = 0;      // the highest right edge ever offered (Linux rcv_mwnd_seq): a peer may still send up to it after the window shrank
@@ -177,6 +179,15 @@ struct TcpStateVariables
     int synRetries = 12;            // the retransmissions of a SYN or a SYN-ACK, after which the open fails (synRetries parameter)
     bool linuxZeroWindowProbe = false; // the zero-window probe of Linux, without data (zeroWindowProbe parameter)
     int synLinearTimeouts = 0;      // the retransmissions of a SYN after which its timeout does not double yet (synLinearTimeouts parameter)
+    bool dropSynData = false;       // the data of a SYN that Fast Open does not accept is dropped (dropSynData parameter)
+    uint32_t rcvRttUs = 0;          // the receive RTT of Linux, in microseconds times 8 (rcv_rtt_est.rtt_us of tcp_rcv_rtt_update()); 0: no sample yet
+    uint32_t rcvRttSeq = 0;         // the sequence number that ends the current measurement without timestamps (rcv_rtt_est.seq)
+    simtime_t rcvRttTime = SIMTIME_ZERO; // the start of that measurement (rcv_rtt_est.time); 0: none started
+    uint32_t rcvRttLastTsecr = 0;   // the TSecr of the last segment with timestamps (rcv_rtt_last_tsecr)
+    uint32_t rcvqSpaceSeq = 0;      // DRS: the first unread byte at the start of the measurement (rcvq_space.seq)
+    simtime_t rcvqSpaceTime = SIMTIME_ZERO; // DRS: the start of the measurement (rcvq_space.time)
+    uint32_t rcvBufferLowRttUs = 1000; // DRS: the receive RTT below which the growth is proportional to the RTT (receiveBufferLowRtt parameter)
+    uint32_t rcvBufferMax = 33554432; // windowAutoTuning: the largest buffer that auto-tuning reaches (receiveBufferMax parameter, tcp_rmem[2])
 
     // whether ACK of our FIN has been received. Needed in FIN bit processing
     // to decide between transition to TIME-WAIT and CLOSING (set event code
@@ -356,6 +367,7 @@ struct TcpStateVariables
     uint32_t rackEndSeq = 0;      // end sequence number of that segment
     simtime_t rackRtt = 0;        // RTT of the ACK that last advanced the RACK point
     bool rackReordSeen = false;   // whether reordering has been observed (widens the reordering window)
+    uint32_t priorFack = 0;       // the highest SACKed sequence number before the options of the current segment (Linux prior_fack)
     bool adaptiveReorderingEnabled = false; // set from the adaptiveReorderingEnabled parameter
     bool dsack_enabled = false;    // report duplicate segments by D-SACK blocks (RFC 2883), set from the dsackEnabled parameter
     uint32_t reordering = 3;       // learned reordering degree in segments; initialized to dupthresh

@@ -38,6 +38,7 @@ simple TcpTestClient like IApp
         string synRetriesScript = default(""); // "time value; ..." -- at each time, set the SYN retries of the first connection (TcpSocket::setSynRetries(), TCP_SYNCNT on an open socket)
         string corkScript = default(""); // "time 1; time 0; ..." -- at each time, turn TCP_CORK on (1) or off (0) for the first connection (TcpSocket::setCork()), also before its open
         string maxSegScript = default(""); // "time value; ..." -- at each time, set TCP_MAXSEG of the first connection (TcpSocket::setMaxSeg()), also before its open
+        string notsentLowatScript = default(""); // "time value; ..." -- at each time, set TCP_NOTSENT_LOWAT of the first connection (TcpSocket::setNotsentLowat())
         string pathMtuScript = default(""); // "time value; ..." -- at each time, set the route MTU of the first connection (TcpSocket::setPathMtu(), as ip route change), also before its open
         string noDelayScript = default(""); // "time 1; time 0; ..." -- at each time, turn TCP_NODELAY on (1) or off (0) for the first connection (TcpSocket::setNoDelay()), also before its open
         string keepAliveScript = default(""); // "time 1; time 0; ..." -- at each time, turn keepalive on (1) or off (0) for the first connection (TcpSocket::setKeepAlive()), also before its open
@@ -51,12 +52,14 @@ simple TcpTestClient like IApp
         bool logData = default(false); // log the first bytes (at most 8) of each data packet that arrives, as "received data: ..."
         bool fastOpen = default(false); // active open: request TCP Fast Open (RFC 7413) for the connection
         double tOpen2 @unit(s) = default(-1s); // the open of a second connection of this application (and Tcp module), for example to use the Fast Open cookie that the first connection got; -1s: no second connection
+        string connectAddress2 = default(""); // the address of the server of the second connection; "": connectAddress
         bool active2 = default(false); // the second connection: active open (to connectAddress:connectPort), or passive open (listenOnce())
         int localPort2 = default(-1); // the local port of the second connection
         double tSend2 @unit(s) = default(-1s); // the time of the SEND of the second connection
         int sendBytes2 @unit(B) = default(0B); // the number of bytes of the SEND of the second connection; 0B: no SEND
         bool fastOpen2 = default(false); // the second connection: request TCP Fast Open
         double tOpen3 @unit(s) = default(-1s); // a third connection, as the second one
+        string connectAddress3 = default(""); // the address of the server of the third connection; "": connectAddress
         bool active3 = default(false);
         int localPort3 = default(-1);
         double tSend3 @unit(s) = default(-1s);

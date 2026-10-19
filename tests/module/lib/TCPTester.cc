@@ -173,6 +173,9 @@ void TCPScriptableTester::parseScript(const char *script)
             if (!strncmp(s,"fin",3)) {
                 cmd.fin = true; s+=3;
             }
+        } else if (!strncmp(s,"nodata",6)) {
+            // "nodata": remove the payload of the segment
+            cmd.command = CMD_NODATA; s+=6;
         } else if (!strncmp(s,"fin",3)) {
             cmd.command = CMD_DATA; s+=3;
             cmd.fin = true;
@@ -185,6 +188,13 @@ void TCPScriptableTester::parseScript(const char *script)
             if (!isdigit(*s))
                 throw cRuntimeError("syntax error in script: ACE value expected");
             cmd.ace = strtol(s, &const_cast<char *&>(s), 10);
+        } else if (!strncmp(s,"cookie",6)) {
+            // "cookie <bytes>": cut the cookie of the Fast Open option to this length
+            cmd.command = CMD_COOKIE; s+=6;
+            while (isspace(*s)) s++;
+            if (!isdigit(*s))
+                throw cRuntimeError("syntax error in script: cookie length expected");
+            cmd.cookieLength = strtol(s, &const_cast<char *&>(s), 10);
         } else if (!strncmp(s,"strip",5)) {
             // "strip <kind>": remove the options of this kind
             cmd.command = CMD_STRIP; s+=5;
@@ -391,6 +401,16 @@ void TCPScriptableTester::processIncomingSegment(Packet *pk, bool fromA)
         dump(pk->peekAtFront<TcpHeader>(), pk->getByteLength(), fromA, "adding data");
         send(pk, fromA ? "out2" : "out1");
     }
+    else if (cmd->command==CMD_NODATA)
+    {
+        bubble("removing the payload");
+        auto header = pk->removeAtFront<TcpHeader>();
+        if (pk->getDataLength() > b(0))
+            pk->removeAtBack(pk->getDataLength());
+        pk->insertAtFront(header);
+        dump(pk->peekAtFront<TcpHeader>(), pk->getByteLength(), fromA, "removing the payload");
+        send(pk, fromA ? "out2" : "out1");
+    }
     else if (cmd->command==CMD_ACE)
     {
         bubble("changing ACE bits");
@@ -414,6 +434,35 @@ void TCPScriptableTester::processIncomingSegment(Packet *pk, bool fromA)
             }
         pk->insertAtFront(header);
         dump(pk->peekAtFront<TcpHeader>(), pk->getByteLength(), fromA, "zeroing the AccECN option");
+        send(pk, fromA ? "out2" : "out1");
+    }
+    else if (cmd->command==CMD_COOKIE)
+    {
+        bubble("cutting the Fast Open cookie");
+        auto header = pk->removeAtFront<TcpHeader>();
+        std::vector<TcpOption *> options;
+        for (size_t i = 0; i < header->getHeaderOptionArraySize(); i++) {
+            TcpOption *option = header->getHeaderOption(i)->dup();
+            if (auto fastOpen = dynamic_cast<TcpOptionTcpFastOpen *>(option)) {
+                if ((int)fastOpen->getCookieArraySize() > cmd->cookieLength)
+                    fastOpen->setCookieArraySize(cmd->cookieLength);
+                fastOpen->setLength(2 + fastOpen->getCookieArraySize());
+            }
+            if (option->getKind() != TCPOPTION_END_OF_OPTION_LIST)
+                options.push_back(option);
+            else
+                delete option;
+        }
+        header->dropHeaderOptions();
+        for (auto option : options)
+            header->appendHeaderOption(option);
+        while (header->getHeaderOptionArrayLength().get() % 4 != 0)
+            header->appendHeaderOption(new TcpOptionEnd());
+        B headerLength = TCP_MIN_HEADER_LENGTH + header->getHeaderOptionArrayLength();
+        header->setHeaderLength(headerLength);
+        header->setChunkLength(headerLength);
+        pk->insertAtFront(header);
+        dump(pk->peekAtFront<TcpHeader>(), pk->getByteLength(), fromA, "cutting the Fast Open cookie");
         send(pk, fromA ? "out2" : "out1");
     }
     else if (cmd->command==CMD_STRIP)

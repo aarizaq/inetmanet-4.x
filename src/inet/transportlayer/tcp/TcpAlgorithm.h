@@ -103,6 +103,8 @@ class INET_API TcpAlgorithm : public SimpleModule
         retainSackAfterRto = tcpMain->par("retainSackAfterRto");
         maxRexmitCount = tcpMain->par("maxRexmitCount");
         maxPersistTimeout = tcpMain->par("maxPersistTimeout");
+        if (maxPersistTimeout <= SIMTIME_ZERO)
+            throw cRuntimeError("maxPersistTimeout must be more than 0, but it is %s", maxPersistTimeout.str().c_str());
         delayedAckTimeout = tcpMain->par("delayedAckTimeout");
         sendDataWithFirstAck = tcpMain->par("sendDataWithFirstAck");
     }
@@ -139,7 +141,7 @@ class INET_API TcpAlgorithm : public SimpleModule
      * Place to process timers specific to this TcpAlgorithm class.
      * TcpConnection will invoke this method on any timer (self-message)
      * it doesn't recognize (that is, any timer other than the 2MSL,
-     * CONN-ESTAB and FIN-WAIT-2 timers).
+     * SYN-REXMIT, DEFERRED-SYN and FIN-WAIT-2 timers).
      *
      * Method may also change the event code (by default set to TCP_E_IGNORE)
      * to cause the state transition of TCP FSM.
@@ -209,6 +211,12 @@ class INET_API TcpAlgorithm : public SimpleModule
      * the delayed-ACK timer.
      */
     virtual void ackSent() = 0;
+
+    /**
+     * Called when a Fast Open server retransmits its SYN-ACK: it set its initial
+     * window at the SYN, before it knew that the SYN-ACK arrived.
+     */
+    virtual void synAckRetransmitted() {}
 
     /**
      * Called after we sent data. This hook can be used to schedule the
