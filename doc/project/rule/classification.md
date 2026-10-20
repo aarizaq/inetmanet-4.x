@@ -201,8 +201,8 @@ The values, in full:
 | `statistical` | a statistical baseline | the same |
 | `expected` | the expected output inside a `.test` file | [TR-SHIP-WITH](testing.md#tr-ship-with) |
 | `test` | a new or changed test | [TR-SHIP-WITH](testing.md#tr-ship-with), [TR-CAT-MATCH](testing.md#tr-cat-match) |
-| `whatsnew` | an entry in `WHATSNEW` | [RR-WHATSNEW](release.md#rr-whatsnew) |
-| `migration` | an entry in `doc/src/migration-guide/` | [RR-BREAK-MIGRATE](release.md#rr-break-migrate) |
+| `whatsnew` | a release note file in `doc/whatsnew/` | [RR-WHATSNEW](release.md#rr-whatsnew), [RR-WHATSNEW-FILE](release.md#rr-whatsnew-file) |
+| `migration` | a section file in `doc/src/migration-guide/development/` | [RR-BREAK-MIGRATE](release.md#rr-break-migrate), [RR-MIGRATE-FILE](release.md#rr-migrate-file) |
 | `seals` | a seal that rests on a changed rule, and is now stale | [SR-RULE-CHANGE-STALES](sealing.md#sr-rule-change-stales) |
 | `-` | nothing moves | — |
 | `?` | the author does not know yet | — |

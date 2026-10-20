@@ -18,8 +18,9 @@ using namespace inet::queueing;
 class INET_API DynamicClassifier : public PacketClassifier
 {
   protected:
-    const char *submoduleName = nullptr;
-    cModuleType *moduleType = nullptr;
+    const char *submoduleName = nullptr; // submodule vector that holds the branches
+    cModuleType *moduleType = nullptr; // type of the per-class branch module (may be a compound)
+    const char *aggregatorSubmoduleName = nullptr; // downstream aggregator submodule (multiplexer or scheduler)
     std::map<int, int> classIndexToGateItMap;
 
   protected:
@@ -27,9 +28,12 @@ class INET_API DynamicClassifier : public PacketClassifier
     virtual int getClassIndex(Packet *packet) const;
     virtual int classifyPacket(Packet *packet) const override;
     virtual void createBranchIfNeeded(Packet *packet);
+    virtual int createBranch();
+    virtual cModule *createBranchModule(int index, cGate *classifierOutputGate);
     virtual void startPacketStreaming(Packet *packet) override;
 
   public:
+    virtual bool canPushSomePacket(const cGate *gate) const override;
     virtual bool canPushPacket(Packet *packet, const cGate *gate) const override;
     virtual void pushPacket(Packet *packet, const cGate *gate) override;
 };

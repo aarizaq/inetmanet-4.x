@@ -13,8 +13,10 @@ A rule has a stable identifier `RR-<AREA>`, and the identifier is the heading: [
 | [RR-VERSION](#rr-version) | A version number says what kind of change happened |
 | [RR-KERNEL-VERSION](#rr-kernel-version) | Every release states the kernel version it needs |
 | [RR-BREAK-MIGRATE](#rr-break-migrate) | A breaking change ships with its migration instructions |
+| [RR-MIGRATE-FILE](#rr-migrate-file) | A migration section of the version in development is a file of its own |
 | [RR-DEPRECATE-FIRST](#rr-deprecate-first) | A removal is deprecated for one release before it happens |
 | [RR-WHATSNEW](#rr-whatsnew) | A user-visible change earns a WHATSNEW entry, written for a user |
+| [RR-WHATSNEW-FILE](#rr-whatsnew-file) | A release note of the version in development is a file of its own |
 | [RR-FINGERPRINT-NOTE](#rr-fingerprint-note) | A release that moves a trajectory says so |
 | [RR-FEATURE-STABLE](#rr-feature-stable) | A feature identifier is part of the interface |
 | [RR-NUMERIC-STABLE](#rr-numeric-stable) | An externally exposed enum value or named numeric code has an explicit stable assignment |
@@ -46,6 +48,16 @@ Name what broke, what it becomes, and the mechanical steps. Where the change can
 
 *Enforced at T4 — agent review of the release diff; T5 for whether the guidance is enough.*
 
+### RR-MIGRATE-FILE
+
+**A section of the migration guide for the version in development is a file of its own in `doc/src/migration-guide/development/`, and no change writes it into `index.rst`.**
+
+Each section is one file with the name `<area>-<topic>.rst`, as a release note has ([RR-WHATSNEW-FILE](#rr-whatsnew-file)). Line 1 is the title, line 2 underlines it with `~`, and a subsection uses `^`. [doc/whatsnew/README.md](../../whatsnew/README.md) gives the format. `index.rst` has one heading for each version, with the text of the version heading in `WHATSNEW`, and below it the directive `include-files`, which inserts the files of the folder of that version in the order of their names. At the release, the files of `development/` move into the folder of the version, for example `4.8/`. A change of a section changes its file.
+
+The reason is the same as for the release notes. When each pull request adds its section at the top of `index.rst`, all of them change the same lines, and each landing makes every other open pull request conflict: on 2026-10-20, 18 of the 70 open pull requests that conflicted with `master` conflicted in the migration guide. The version folders also tell a reader which sections are new since the version that they use.
+
+*Enforced at T3 — [check-whatsnew.sh](../enforcement/check-whatsnew.sh), a series gate of the pull-request CI; [whatsnew.py](../enforcement/whatsnew.py) `check` by hand.*
+
 ### RR-DEPRECATE-FIRST
 
 **A name, a parameter or a module is deprecated in one release before it is removed in the next.**
@@ -61,6 +73,16 @@ The deprecation says what to use instead and still works. This gives a user one 
 The entry says what a user can now do, or what changed under them — not which files moved. A reader of `WHATSNEW` is deciding whether to upgrade, and what to check after they do. An entry that reads like a commit subject does not help them decide.
 
 *Enforced at T4 — agent review: does the release have an entry for every user-visible change?*
+
+### RR-WHATSNEW-FILE
+
+**A release note of the version in development is a file of its own in `doc/whatsnew/`, and no change writes it into `WHATSNEW`.**
+
+Each entry is one file in `doc/whatsnew/incompatible/`, `compatible/` or `fixes/`, with the name `<area>-<topic>.txt`. [doc/whatsnew/README.md](../../whatsnew/README.md) gives the format. A change of an entry changes its file. At the release, `whatsnew.py release` writes the files into `WHATSNEW` as numbered lists, in the order of the file names, and removes them.
+
+The reason is parallel work. When each pull request adds its entry as the next number at the end of a list in `WHATSNEW`, all of them change the same lines and choose the same number. Each landing then makes every other open pull request conflict. On 2026-10-20, 29 of the 70 open pull requests that conflicted with `master` conflicted in `WHATSNEW`, and the numbers on `master` were already wrong. Two files cannot conflict, and a number that a tool writes cannot be wrong.
+
+*Enforced at T3 — [check-whatsnew.sh](../enforcement/check-whatsnew.sh), a series gate of the pull-request CI; [whatsnew.py](../enforcement/whatsnew.py) `check` by hand.*
 
 ### RR-FINGERPRINT-NOTE
 
