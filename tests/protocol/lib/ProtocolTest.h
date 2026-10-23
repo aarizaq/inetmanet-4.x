@@ -30,9 +30,10 @@ namespace protocoltest {
 //  Unordered    -- a group of patterns that must all match, in any order
 //  AnyOf        -- a group of patterns; the first to match wins
 //  Delivery     -- a "from" send correlated to a "to" receive of the same packet (treeId)
+//  Intercept    -- start a rule of a tap (meanwhile(tap(...))), then advance at once
 // A pattern may select a packet signal or a scalar signal (e.g. an FSM state via is(v)); the
 // same cardinalities apply to both (once = "reaches the value", never = "must not").
-enum class StepType { Once, AtMostOnce, Never, ExactlyTimes, Count, Inject, Unordered, AnyOf, Delivery };
+enum class StepType { Once, AtMostOnce, Never, ExactlyTimes, Count, Inject, Unordered, AnyOf, Delivery, Intercept };
 
 //
 // A packet injection. When the engine reaches an inject step it resolves the target
@@ -61,25 +62,37 @@ class INET_API Injection
 };
 
 //
-// A man-in-the-middle interception rule, applied by a named PacketTap spliced on a link.
-// The tap selects frames by a PacketFilter expression (over the dissected frame), an
-// optional minimum size, and an occurrence index, and applies an action:
-//   drop  -- discard the frame (force a retransmission)
-//   delay -- forward it after a hold time
-//   mutate-- run a C++ mutator on the (inner) frame, then forward it
+// A man-in-the-middle interception rule, applied by a named tap: a PacketTap spliced on a
+// link. The tap selects frames by a PacketFilter expression (over the dissected frame), an
+// optional minimum size, the nodes the frame comes from and goes to, and an occurrence
+// index, and applies an action:
+//   drop      -- discard the frame (force a retransmission)
+//   delay     -- forward it after a hold time
+//   mutate    -- run a C++ mutator on the (inner) frame, then forward it
+//   corrupt   -- forward it with a bit error, so that the receiver discards it
+//   duplicate -- forward it, then copies of it at a given spacing
+//   pass      -- forward it unchanged
 // The ProtocolTester installs these on the tap module at startup (see tap(...)).
 //
 class INET_API Interception
 {
   public:
-    std::string tapName;          // PacketTap module name (a sibling of the tester)
+    std::string tapName;          // tap module name (a sibling of the tester)
     std::string matchExpression;  // PacketFilter expression over the dissected frame
     long minimumBytes = 0;        // also require the (inner) frame to be at least this big
+    std::string fromNode;         // the frame comes from this node; "" = any
+    std::string toNode;           // the frame goes to this node; "" = any
+    bool onlyCopies = false;      // select only the copies that a duplicate rule made
     int occurrence = 0;               // act on the Nth selected frame (1-based); 0 = every
     int fromOccurrence = 0;           // act on the Nth and every one after it; 0 = unused
-    std::string action = "drop";  // "drop" | "delay" | "mutate"
+    std::string action = "drop";  // "drop" | "delay" | "mutate" | "corrupt" | "duplicate" | "pass"
     simtime_t delayTime = 0;
     std::function<void(Packet *)> mutator; // for action == "mutate"
+    simtime_t spacing = 0;        // for action == "duplicate": the time between two copies
+    int numCopies = 0;            // for action == "duplicate"
+    bool hasWithin = false;       // the rule ends withinTime after its start
+    simtime_t withinTime = 0;
+    bool startsAtStep = false;    // set by meanwhile(...): the rule waits for its step
     std::string description;      // optional human phrase
 
     Interception& filterPacket(const char *expr) { matchExpression = expr; return *this; }
@@ -90,6 +103,14 @@ class INET_API Interception
     // the window still reaches the receiver, which answers with the duplicate
     // acknowledgments that repair the loss before the timer can see it.
     Interception& fromNth(int k) { fromOccurrence = k; return *this; }
+    // The node the frame comes from, and the node it goes to. On a tap, each names a side of
+    // the link: the node behind that side.
+    Interception& from(const char *node) { fromNode = node; return *this; }
+    Interception& to(const char *node) { toNode = node; return *this; }
+    // Select only the copies that a duplicate(...) rule made. A copy goes through the rules
+    // again, but not through the rule that made it, so "duplicate the frame, then change
+    // the copy" is two rules.
+    Interception& copiesOnly() { onlyCopies = true; return *this; }
     Interception& drop() { action = "drop"; return *this; }
     // An explicit no-op. It earns its place now that the rules are ordered: it shadows a
     // later rule for the frames it names, so "never touch a SYN, drop the data" is two
@@ -97,6 +118,17 @@ class INET_API Interception
     Interception& pass() { action = "pass"; return *this; }
     Interception& delay(double t) { action = "delay"; delayTime = t; return *this; }
     Interception& mutate(std::function<void(Packet *)> fn) { action = "mutate"; mutator = std::move(fn); return *this; }
+    // The receiver gets the frame with a bit error, so its MAC discards it. A tap sets the
+    // flag on the object on the wire, as the bit error model of a channel does.
+    Interception& corrupt() { action = "corrupt"; return *this; }
+    // Forward the frame, then `copies` copies of it, each `spacing` after the one before.
+    // On a tap, a copy starts on the outgoing channel at its time, or later while the
+    // channel is busy.
+    Interception& duplicate(double spacing, int copies = 1) { action = "duplicate"; this->spacing = spacing; numCopies = copies; return *this; }
+    // The rule ends d after its start: a frame that comes d or more after the start goes to
+    // the later rules. A rule of intercept(...) starts with the run, a rule of meanwhile(...)
+    // at its step. The word is the window of a step and of a guard too.
+    Interception& within(double d) { hasWithin = true; withinTime = d; return *this; }
     Interception& describe(const char *phrase) { description = phrase; return *this; }
 };
 
@@ -109,6 +141,7 @@ struct Step {
     int count = 0;                     // ExactlyTimes
     int cardMin = 0, cardMax = 0;      // Count: required occurrences [min, max]; max < 0 = unbounded
     bool concurrent = false;           // meanwhile(...): runs beside the steps after it
+    int interceptionIndex = -1;        // Intercept: the rule in ProtocolTest::interceptions
 };
 
 // Free builders that make a step without a program to hold it. They exist so that a guard
@@ -217,6 +250,27 @@ class INET_API ProtocolTest
     ProtocolTest& meanwhile(Step step)
     {
         step.concurrent = true;
+        steps.push_back(std::move(step));
+        return *this;
+    }
+
+    // Start a rule of a tap at this step, and do not wait for it. The rule acts on the frames
+    // that its tap sees from now on, and it counts them from now on; the next step starts at
+    // the same time. A rule has no verdict, so the run does not wait for it.
+    //
+    //     .once(on("hostA.tcp").signal("packetSentToLower").capture("seq", "tcp.sequenceNo"))
+    //     .meanwhile(tap("tap").filterPacket("tcp.sequenceNo == {seq}").nth(1).corrupt())
+    //
+    // The rule is installed with the others at startup, in its place in the program text,
+    // and that place is its priority on its tap.
+    ProtocolTest& meanwhile(Interception interception)
+    {
+        interception.startsAtStep = true;
+        interceptions.push_back(std::move(interception));
+        Step step;
+        step.type = StepType::Intercept;
+        step.concurrent = true;
+        step.interceptionIndex = (int)interceptions.size() - 1;
         steps.push_back(std::move(step));
         return *this;
     }

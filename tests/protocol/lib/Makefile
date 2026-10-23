@@ -28,12 +28,14 @@ O = $(PROJECT_OUTPUT_DIR)/$(CONFIGNAME)/$(PROJECTRELATIVE_PATH)
 # Object files for local .cc, .msg and .sm files
 OBJS = \
     $O/EventPattern.o \
+    $O/InterceptionRules.o \
     $O/PacketField.o \
     $O/PacketTap.o \
     $O/ProtocolTest.o \
     $O/ProtocolTestAttach.o \
     $O/ProtocolTestDescriber.o \
-    $O/ProtocolTester.o
+    $O/ProtocolTester.o \
+    $O/TapRadioMedium.o
 
 # Message files
 MSGFILES =

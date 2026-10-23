@@ -6,7 +6,7 @@
 
 #include "ProtocolTester.h"
 #include "ProtocolTestDescriber.h"
-#include "PacketTap.h"
+#include "ITap.h"
 
 #include <iostream>
 #include <set>
@@ -157,16 +157,14 @@ void ProtocolTester::subscribeStateSignals()
 
 void ProtocolTester::installInterceptions()
 {
-    // Push each standing tap(...) rule onto its named PacketTap (a sibling module).
+    // Push each standing tap(...) rule onto its named tap (a sibling module).
     for (const auto& interception : program->interceptions) {
         cModule *module = getParentModule()->getSubmodule(interception.tapName.c_str());
-        auto tap = dynamic_cast<PacketTap *>(module);
+        auto tap = dynamic_cast<ITap *>(module);
         if (tap == nullptr)
-            throw cRuntimeError("ProtocolTest '%s': intercept target '%s' is not a PacketTap",
+            throw cRuntimeError("ProtocolTest '%s': intercept target '%s' is not a tap",
                                 program->name.c_str(), interception.tapName.c_str());
-        tap->configure(interception.matchExpression, interception.minimumBytes, interception.occurrence,
-                       interception.fromOccurrence,
-                       interception.action, interception.delayTime, interception.mutator);
+        interceptionHandles.push_back({tap, tap->addInterception(interception, &captureStore)});
     }
 }
 
@@ -270,6 +268,7 @@ void ProtocolTester::finish()
         const Step& step = program->steps[currentStep];
         bool satisfied = step.type == StepType::Never ||
                          step.type == StepType::AtMostOnce ||
+                         step.type == StepType::Intercept ||
                          (step.type == StepType::Count &&
                           cardCount >= step.cardMin &&
                           (step.cardMax < 0 || cardCount <= step.cardMax));
@@ -473,8 +472,12 @@ void ProtocolTester::enterStep()
     Step& step = program->steps[currentStep];
     if (step.concurrent) {
         // meanwhile(...): start it and do not wait. The cursor moves to the next step in
-        // the same instant, so the guard and everything after it run together.
-        startGuard(currentStep);
+        // the same instant, so the guard and everything after it run together. A rule of a
+        // tap has no verdict, so it is not a guard: nothing waits for it.
+        if (step.type == StepType::Intercept)
+            startInterception(step);
+        else
+            startGuard(currentStep);
         currentStep++;
         enterStep();
         return;
@@ -528,6 +531,9 @@ void ProtocolTester::enterStep()
             scheduleAt(fireTime, injectMsg);
             break;
         }
+        case StepType::Intercept:
+            break; // always concurrent, so the branch above starts it
+
     }
 }
 
@@ -718,6 +724,14 @@ void ProtocolTester::startGuard(size_t stepIndex)
     }
     guards.push_back(guard);
     EV_INFO << "PROTOCOLTEST guard started for step " << stepIndex << " [" << step.pattern.str() << "]" << endl;
+}
+
+void ProtocolTester::startInterception(const Step& step)
+{
+    const auto& handle = interceptionHandles.at(step.interceptionIndex);
+    handle.first->startInterception(handle.second);
+    EV_INFO << "PROTOCOLTEST rule started on tap '" << program->interceptions[step.interceptionIndex].tapName
+            << "'" << endl;
 }
 
 void ProtocolTester::offerToGuards(const PacketEvent& event)

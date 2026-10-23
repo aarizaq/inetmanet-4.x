@@ -6,6 +6,8 @@
 
 #include "PacketTap.h"
 
+#include "inet/common/ModuleAccess.h"
+
 namespace inet {
 namespace protocoltest {
 
@@ -21,89 +23,59 @@ void PacketTap::initialize()
 {
     pumpA = new cMessage("pumpA");
     pumpB = new cMessage("pumpB");
-    // A test program may have already driven us via configure(); if so, keep that and
-    // ignore the parameters (configure() always wins, whatever the init order).
+    // A test program may have already driven us via addInterception(); if so, keep that
+    // and ignore the parameters (the program always wins, whatever the init order).
     if (programmaticallyConfigured)
         return;
     // The parameters describe a single rule, which is what an ini file can express.
-    Rule rule;
+    Interception rule;
+    rule.tapName = getName();
     rule.matchExpression = par("matchExpression").stdstringValue();
-    rule.minPacketBytes = par("minPacketBytes").intValue();
+    rule.minimumBytes = par("minPacketBytes").intValue();
     rule.action = par("action").stdstringValue();
     rule.occurrence = par("occurrence").intValue();
     rule.delayTime = par("delayTime");
-    rules.push_back(std::move(rule));
-    compileRule(rules.back());
+    rules.add(rule, nullptr);
 }
 
-void PacketTap::compileRule(Rule& rule)
+int PacketTap::addInterception(const Interception& interception, const CaptureStore *captures)
 {
-    if (!rule.matchExpression.empty()) {
-        rule.filter = std::make_shared<PacketFilter>();
-        rule.filter->setExpression(rule.matchExpression.c_str());
-        rule.hasFilter = true;
-    }
-    else
-        rule.hasFilter = false;
-}
-
-void PacketTap::configure(const std::string& matchExpr, long minBytes, int occ, int fromOcc,
-                          const std::string& act, simtime_t delay, std::function<void(Packet *)> mut)
-{
+    // A node that is on neither side would make the rule select nothing, in silence.
+    for (const auto& node : { interception.fromNode, interception.toNode })
+        if (!node.empty() && node != getSideNode(false) && node != getSideNode(true))
+            throw cRuntimeError("tap '%s': '%s' is on neither side of the tap (side a: '%s', side b: '%s')",
+                                getFullName(), node.c_str(), getSideNode(false).c_str(), getSideNode(true).c_str());
     // Append. The first call from a test program also discards whatever the parameters put
     // there, so an ini rule and a program rule never mix.
     if (!programmaticallyConfigured) {
         rules.clear();
         programmaticallyConfigured = true;
     }
-    Rule rule;
-    rule.matchExpression = matchExpr;
-    rule.minPacketBytes = minBytes;
-    rule.occurrence = occ;
-    rule.fromOccurrence = fromOcc;
-    rule.action = act;
-    rule.delayTime = delay;
-    rule.mutator = std::move(mut);
-    rules.push_back(std::move(rule));
-    compileRule(rules.back());
+    return rules.add(interception, captures);
+}
+
+void PacketTap::startInterception(int handle)
+{
+    Enter_Method("startInterception");
+    rules.start(handle);
+}
+
+const std::string& PacketTap::getSideNode(bool sideB)
+{
+    // The node behind a side is the node that holds the far end of the path of that side.
+    auto& node = sideB ? nodeB : nodeA;
+    if (node.empty()) {
+        auto module = gate(sideB ? "b$o" : "a$o")->getPathEndGate()->getOwnerModule();
+        auto containingNode = findContainingNode(module);
+        node = (containingNode != nullptr ? containingNode : module)->getFullName();
+    }
+    return node;
 }
 
 cGate *PacketTap::forwardGate(const cGate *arrivalGate)
 {
     // Frames in on side "a" leave on side "b" and vice versa.
     return gate(std::string(arrivalGate->getBaseName()) == "a" ? "b$o" : "a$o");
-}
-
-PacketTap::Rule *PacketTap::selectRule(Packet *packet)
-{
-    // The rules are tried in order and the first that matches applies. A rule counts its
-    // own occurrences, so two rules on one tap can name the second and the third frame of
-    // the same kind without either counting the other's.
-    for (auto& rule : rules) {
-        if (rule.hasFilter) {
-            bool matched = false;
-            try {
-                matched = rule.filter->matches(packet);
-            }
-            catch (const std::exception&) {
-                // An expression that doesn't apply to this frame (e.g. a tcp.* test on an
-                // ARP frame) is simply a non-match, never an error.
-                matched = false;
-            }
-            if (!matched)
-                continue;
-        }
-        if (rule.minPacketBytes > 0 && packet->getByteLength() < rule.minPacketBytes)
-            continue;
-        rule.numSelected++;
-        bool wanted = rule.fromOccurrence > 0 ? rule.numSelected >= rule.fromOccurrence
-                                              : (rule.occurrence == 0 || rule.numSelected == rule.occurrence);
-        if (wanted) {
-            numSelected++;
-            return &rule;
-        }
-    }
-    return nullptr;
 }
 
 void PacketTap::enqueueForward(cPacket *packet, bool towardB)
@@ -128,7 +100,9 @@ void PacketTap::pump(const char *outGateName, cPacketQueue& queue, cMessage *tim
     if (finish <= simTime()) {
         // Channel is free: transmit the head, then schedule the next drain at the new
         // transmission-finish time if more frames are waiting.
-        send(queue.pop(), out);
+        auto packet = queue.pop();
+        scheduleCopies(packet, timer == pumpB);
+        send(packet, out);
         numForwarded++;
         if (!queue.isEmpty())
             scheduleAt(out->getTransmissionChannel()->getTransmissionFinishTime(), timer);
@@ -137,6 +111,25 @@ void PacketTap::pump(const char *outGateName, cPacketQueue& queue, cMessage *tim
         // Channel busy: try again the moment it frees up.
         scheduleAt(finish, timer);
     }
+}
+
+void PacketTap::scheduleCopies(cPacket *frame, bool towardB)
+{
+    // The copies count from the moment the original starts on the outgoing channel, so a
+    // busy channel delays the original and its copies alike.
+    auto it = pendingCopies.find(frame);
+    if (it == pendingCopies.end())
+        return;
+    const auto& rule = *it->second;
+    for (int k = 1; k <= rule.interception.numCopies; k++) {
+        auto holder = new cPacket("copy");
+        holder->setKind(towardB ? 1 : 0);
+        holder->setContextPointer(const_cast<InterceptionRules::Rule *>(&rule));
+        holder->encapsulate(frame->dup());
+        scheduleAt(simTime() + k * rule.interception.spacing, holder);
+        numCopied++;
+    }
+    pendingCopies.erase(it);
 }
 
 void PacketTap::handleMessage(cMessage *msg)
@@ -154,25 +147,42 @@ void PacketTap::handleMessage(cMessage *msg)
         return;
     }
 
+    if (msg->isSelfMessage() && std::string(msg->getName()) == "copy") {
+        // A copy becoming due enters the tap as a frame of its own, in the same direction.
+        auto holder = check_and_cast<cPacket *>(msg);
+        bool towardB = holder->getKind() == 1;
+        auto copyOf = static_cast<const InterceptionRules::Rule *>(holder->getContextPointer());
+        auto copy = check_and_cast<cPacket *>(holder->decapsulate());
+        delete holder;
+        processFrame(copy, towardB, copyOf);
+        return;
+    }
+
     cGate *out = forwardGate(msg->getArrivalGate());
     bool towardB = std::string(out->getName()) == "b$o";
+    processFrame(check_and_cast<cPacket *>(msg), towardB, nullptr);
+}
 
+void PacketTap::processFrame(cPacket *frame, bool towardB, const InterceptionRules::Rule *copyOf)
+{
     // On the Ethernet PHY gate the message is an EthernetSignal (a cPacket) that
     // encapsulates the frame Packet; on a plain message gate it is the Packet itself.
-    auto frame = check_and_cast<cPacket *>(msg);
     auto inner = dynamic_cast<Packet *>(frame);
     if (inner == nullptr)
         inner = dynamic_cast<Packet *>(frame->getEncapsulatedPacket());
 
-    Rule *rule = inner != nullptr ? selectRule(inner) : nullptr;
+    InterceptionRules::Rule *rule = nullptr;
+    if (inner != nullptr)
+        rule = rules.select({inner, getSideNode(!towardB), getSideNode(towardB), copyOf});
     if (rule != nullptr) {
-        const std::string& action = rule->action;
-        const simtime_t& delayTime = rule->delayTime;
-        const auto& mutator = rule->mutator;
+        const std::string& action = rule->interception.action;
+        const simtime_t& delayTime = rule->interception.delayTime;
+        const auto& mutator = rule->interception.mutator;
+        long numSelected = rules.getNumSelected();
         if (action == "drop") {
             EV_INFO << "PacketTap dropping " << inner->getName() << " (selected #" << numSelected << ")" << endl;
             numDropped++;
-            delete msg;
+            delete frame;
             return;
         }
         if (action == "delay") {
@@ -191,6 +201,17 @@ void PacketTap::handleMessage(cMessage *msg)
             numMutated++;
             // fall through to forward the (now mutated) frame
         }
+        else if (action == "corrupt") {
+            // Mark the object on the wire, as the bit error model of a channel does: the
+            // EthernetSignal, or the Packet itself on a plain message gate.
+            EV_INFO << "PacketTap corrupting " << inner->getName() << " (selected #" << numSelected << ")" << endl;
+            frame->setBitError(true);
+            numCorrupted++;
+        }
+        else if (action == "duplicate") {
+            EV_INFO << "PacketTap duplicating " << inner->getName() << " (selected #" << numSelected << ")" << endl;
+            pendingCopies[frame] = rule;
+        }
         // "pass": fall through to a plain forward.
     }
 
@@ -200,7 +221,8 @@ void PacketTap::handleMessage(cMessage *msg)
 void PacketTap::finish()
 {
     EV_INFO << "PacketTap: forwarded " << numForwarded << ", dropped " << numDropped
-            << ", mutated " << numMutated << " (" << numSelected << " selected)" << endl;
+            << ", mutated " << numMutated << ", corrupted " << numCorrupted << ", copied " << numCopied
+            << " (" << rules.getNumSelected() << " selected)" << endl;
 }
 
 } // namespace protocoltest
