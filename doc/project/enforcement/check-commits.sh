@@ -12,11 +12,11 @@
 #   PR-SERIES-ORDER      — a fixup, squash or "address review" subject
 #   PR-SERIES-LINEAR     — a merge commit inside the series
 #   PR-MSG-BODY          — an empty body above 50 changed lines, outside the exempt kinds
-#   PR-MSG-SUBJECT       — "area: what it does", no file path, no link; length fails above 80,
-#                          and is reported as a note between 73 and 80
+#   PR-MSG-SUBJECT       — "area: what it does", no file path, no link; length fails above 140,
+#                          and is reported as a note between 101 and 140
 #   PR-MSG-WRAP          — notes for adjacent prose lines and extra blank lines
 #   PR-MSG-FACTS         — no attribution trailer; note: words of revision history, a test log
-#   PR-SPLIT-ONE-CHANGE  — note: the fingerprint rows of one commit move in more than one way
+#   PR-SPLIT-ONE-CHANGE  — note: the fingerprint runs of one commit move in more than one way
 #   PR-SPLIT-SIZE        — note: more than 400 changed source lines in one commit
 #   PR-MSG-SUMMARY       — note: a first paragraph above 120 words, a body above 300 words, or a
 #                          body that opens with an action and names no problem
@@ -57,13 +57,13 @@ ok=1
 while read -r sha; do
   subj=$(git log -1 --format=%s "$sha")
   short=${sha:0:9}
-  # The rule aims for 72 and fails above 80.  Between the two is a note that does not fail the
-  # gate: at 73 characters the length says nothing about whether the commit holds one change,
-  # and a one-character overrun reported beside a real defect teaches the reader to skim both.
-  if [ ${#subj} -gt 80 ]; then
-    flag "$short subject is ${#subj} characters: $subj"; ok=0
-  elif [ ${#subj} -gt 72 ]; then
-    note "$short subject is ${#subj} characters, over the 72 aimed for: $subj"
+  # The rule gives a note above 100 and fails above 140.  Below 120 characters the length says
+  # almost nothing about whether the commit holds one change, and a gate that fails a good
+  # subject teaches the reader to skim its reports.
+  if [ ${#subj} -gt 140 ]; then
+    flag "$short subject is ${#subj} characters, above 140: $subj"; ok=0
+  elif [ ${#subj} -gt 100 ]; then
+    note "$short subject is ${#subj} characters, above 100: does it hold more than one change? $subj"
   fi
   echo "$subj" | grep -qE "^[A-Za-z0-9_./-]+(\([a-z0-9_/-]+\))?: " || { flag "$short subject is not 'area: what it does': $subj"; ok=0; }
   echo "$subj" | grep -qE "\.(cc|h|ned|msg|ini|py|sh|md)\b|https?://" && { flag "$short subject names a file or a link: $subj"; ok=0; }
@@ -215,18 +215,20 @@ done <<< "$COMMITS"
 
 echo
 echo "== PR-SPLIT-ONE-CHANGE: signs of a second change (notes only) =="
-# Fingerprint rows that move in different ways usually have different causes. 26 rows that move
-# only in the event order and 11 rows that move in every ingredient set are two explanations, and
+# Fingerprint runs that move in different ways usually have different causes. 26 runs that move
+# only in the event order and 11 runs that move in every ingredient set are two explanations, and
 # each explanation is a behavior change that can be a commit of its own.
 quiet=1
+store=tests/fingerprint/store.json
 while read -r sha; do
   [ -z "$sha" ] && continue
-  moves=$(git show -U0 --format= "$sha" -- 'tests/fingerprint/*.csv' \
-          | python3 "$(dirname "$0")/fingerprint_moves.py")
+  git diff --quiet "$sha^" "$sha" -- "$store" 2>/dev/null && continue
+  moves=$(python3 "$(dirname "$0")/fingerprint_moves.py" \
+          <(git show "$sha^:$store" 2>/dev/null) <(git show "$sha:$store" 2>/dev/null))
   ways=$(grep -c . <<< "$moves")
   if [ "$ways" -gt 1 ]; then
-    detail=$(awk -F'\t' '{printf "%s%s %s %s", (NR > 1 ? "; " : ""), $1, ($1 == 1 ? "row changes" : "rows change"), $2}' <<< "$moves")
-    note "${sha:0:9} moves fingerprint rows in $ways ways, one explanation each? $detail"; quiet=0
+    detail=$(awk -F'\t' '{printf "%s%s %s %s", (NR > 1 ? "; " : ""), $1, ($1 == 1 ? "run changes" : "runs change"), $2}' <<< "$moves")
+    note "${sha:0:9} moves fingerprint runs in $ways ways, one explanation each? $detail"; quiet=0
   fi
 done <<< "$COMMITS"
 [ "$quiet" -eq 1 ] && echo "  ok"

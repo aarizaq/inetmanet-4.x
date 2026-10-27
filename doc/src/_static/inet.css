@@ -1,0 +1,268 @@
+.lead {
+  font-size: 1.15em;
+  font-weight: 300;
+}
+
+.post-date {
+  color: var(--md-default-fg-color--light);
+  font-size: 0.85em;
+}
+
+.post-list {
+  list-style: none;
+}
+
+.post-entry {
+  margin-bottom: 1.5em;
+}
+
+.post-related {
+  margin-top: 2em;
+}
+
+/* The hero of the former Jekyll site; the slate scheme dims its light background image. */
+.inet-hero {
+  position: relative;
+  background-repeat: repeat;
+  color: #014872;
+}
+
+[data-md-color-scheme=slate] .inet-hero {
+  color: var(--md-default-fg-color);
+}
+
+[data-md-color-scheme=slate] .inet-hero::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-color: var(--md-default-bg-color);
+  opacity: 0.8;
+}
+
+.inet-hero__inner {
+  position: relative;
+  padding: 2rem 0.8rem 1.6rem;
+  font-size: 1rem;
+}
+
+.md-typeset .inet-hero__inner h1 {
+  margin: 0 0 0.6rem;
+  color: inherit;
+  font-size: 2.4rem;
+  font-weight: 400;
+}
+
+.inet-hero__inner p {
+  margin: 0 0 0.8rem;
+}
+
+.md-typeset .inet-hero__highlight,
+.md-typeset .inet-hero__highlight:focus,
+.md-typeset .inet-hero__highlight:hover {
+  background-color: #c71c22;
+  border-color: #c71c22;
+  color: #fff;
+}
+
+/* The hero shows the title of the home page. */
+.inet-hero ~ .md-main .md-content__inner > h1:first-child {
+  display: none;
+}
+
+/* The theme shows the title of the page in the header, instead of the name of the site, once the title is out of
+   view, which the hidden one always is. */
+body:has(.inet-hero) .md-header__title--active .md-header__topic {
+  opacity: 1;
+  pointer-events: auto;
+  transform: none;
+  z-index: 0;
+}
+
+body:has(.inet-hero) .md-header__title--active .md-header__topic + .md-header__topic {
+  opacity: 0;
+  pointer-events: none;
+  z-index: -1;
+}
+
+.home-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  gap: 0 2rem;
+}
+
+.home-grid ul {
+  margin-left: 0.5em;
+}
+
+.md-typeset .rubric.home-heading {
+  font-size: 1.3em;
+  font-weight: 400;
+  margin-top: 0.5em;
+}
+
+.md-typeset .rubric.home-subheading {
+  font-size: 1em;
+  font-weight: 700;
+  margin-bottom: 0;
+}
+
+.two-columns {
+  column-count: 2;
+}
+
+.md-typeset ul.plain-list {
+  list-style: none;
+  margin-left: 0;
+}
+
+.md-typeset ul.plain-list li {
+  margin-left: 0;
+  margin-bottom: 0;
+}
+
+.small {
+  font-size: 0.85em;
+}
+
+.md-typeset table.model-catalog {
+  display: table;
+  font-size: 0.75rem;
+  border-collapse: collapse;
+}
+
+.md-typeset table.model-catalog td,
+.md-typeset table.model-catalog th {
+  border: 1px solid var(--md-default-fg-color--lightest);
+  padding: 0.4em 0.6em;
+  vertical-align: top;
+}
+
+.md-typeset table.model-catalog td.section {
+  background-color: var(--md-accent-fg-color--transparent);
+  font-weight: 700;
+}
+
+video {
+  max-width: 100%;
+}
+
+.align-left {
+  text-align: left;
+}
+
+.align-center {
+  text-align: center;
+  display: block;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.align-right {
+  text-align: right;
+  display: block;
+  margin-left: auto;
+}
+
+@media screen and (max-width: 44.9375em) {
+  .two-columns {
+    column-count: 1;
+  }
+
+  .md-typeset .inet-hero__inner h1 {
+    font-size: 1.8rem;
+  }
+}
+
+/* The diagrams inlined into the NED reference pages (_ext/inetsite/ned.py) shrink to the width of the page. */
+.md-typeset .neddoc-diagram svg {
+  max-width: 100%;
+  height: auto;
+}
+
+/* opp_docgen draws for a light page. What is on the page itself (the name of a compound module above its box, the
+   diagram of a simple module, which has no boxes, and the arrows of the usage and inheritance diagrams) follows the
+   colour scheme; the labels on the boxes, which keep their colours, stay black. */
+.md-typeset .neddoc-diagram svg > text,
+.md-typeset .neddoc-diagram svg:not(:has(rect)) text {
+  fill: var(--md-typeset-color);
+}
+
+.md-typeset .neddoc-diagram svg:not(:has(rect)) text[fill="#666666"] {
+  fill: var(--md-default-fg-color--light);
+}
+
+.md-typeset .neddoc-diagram svg line[stroke="#404040"] {
+  stroke: var(--md-default-fg-color--light);
+}
+
+.md-typeset .neddoc-diagram svg polygon[fill="#404040"] {
+  fill: var(--md-default-fg-color--light);
+}
+
+.md-typeset .neddoc-diagram svg polygon[stroke="#404040"] {
+  stroke: var(--md-default-fg-color--light);
+  fill: var(--md-default-bg-color);
+}
+
+/* The colours of the former inet.omnetpp.org (Bootswatch Cerulean, with an orange strip under the navigation bar). It
+   had no dark scheme: that keeps the header, and lightens the links and the headings, and mutes the hover, which would
+   glare on the dark background. */
+[data-md-color-primary="custom"] {
+  --md-primary-fg-color: #2fa4e7;
+  --md-primary-fg-color--light: #54b4eb;
+  --md-primary-fg-color--dark: #178acc;
+  --md-primary-bg-color: #fff;
+  --md-primary-bg-color--light: #ffffffb3;
+  --inet-heading-color: #317eac;
+  --inet-strip-color: #ff8800;
+}
+
+[data-md-color-accent="custom"] {
+  --md-accent-fg-color: #157ab5;
+  --md-accent-fg-color--transparent: #157ab51a;
+  --md-accent-bg-color: #fff;
+  --md-accent-bg-color--light: #ffffffb3;
+}
+
+[data-md-color-scheme="slate"][data-md-color-primary="custom"] {
+  --md-typeset-a-color: #6cc0f0;
+  --inet-heading-color: #7ab8de;
+}
+
+[data-md-color-scheme="slate"][data-md-color-accent="custom"] {
+  --md-accent-fg-color: #7ea6d8;
+  --md-accent-fg-color--transparent: #7ea6d81a;
+}
+
+.md-typeset :is(h1, h2, h3, h4, h5, h6) {
+  color: var(--inet-heading-color);
+}
+
+/* The strip is the bottom border of the tab bar, which stays below the header also while the tab bar is away
+   (omnetpp_immaterial puts it away when the reader scrolls down, and casts the shadow of the header from it). Narrow
+   screens have no tab bar: there the strip is under the header, and casts its shadow. */
+:root {
+  --omnetpp-tabs-edge: 0.2rem;
+}
+
+.md-tabs {
+  border-bottom: var(--omnetpp-tabs-edge) solid var(--inet-strip-color);
+}
+
+@media screen and (max-width: 76.2344em) {
+  .md-header::after {
+    content: "";
+    position: absolute;
+    inset: 100% 0 auto;
+    height: 0.2rem;
+    background-color: var(--inet-strip-color);
+  }
+
+  .md-header--shadow {
+    box-shadow: none;
+  }
+
+  .md-header--shadow::after {
+    box-shadow: 0 0 0.2rem rgba(0, 0, 0, 0.1), 0 0.2rem 0.4rem rgba(0, 0, 0, 0.2);
+  }
+}

@@ -169,7 +169,7 @@ The division is also a design check. If you cannot describe the first commit wit
 
 **A regenerated baseline travels with the change that causes it**
 
-When one source change moves a recorded expectation — a fingerprint (`tests/fingerprint/*.csv`), a statistical baseline, an expected output — the regenerated values go in the same commit as that source change. The message of that commit says which behavior moved and why the new values are correct.
+When one source change moves a recorded expectation — a fingerprint (`tests/fingerprint/store.json`), a statistical baseline, an expected output — the regenerated values go in the same commit as that source change. The message of that commit says which behavior moved and why the new values are correct.
 
 A baseline update is a claim, not a side effect: *these values change on purpose, and the new values are correct*. The claim lives in the message. It does not live in the commit boundary. One commit also makes the attribution exact, which is what [AR-QUAL-TRACEABILITY](architecture.md) asks for: the change that justifies the new values is the change that carries them.
 
@@ -251,7 +251,9 @@ One line: the component or tree area, a colon, then what the commit does, in the
 
 For a behavior change, name the resulting behavior or correction in the subject. The body explains the problem that the correction addresses. A subject such as `UdpBasicApp: prevent send timeouts after shutdown` states the result; its body explains the old failure.
 
-**Aim for 72 characters. A gate fails above 80.** The 72 is where `git log --oneline` still fits an 80-column terminal, once the abbreviated hash and its space are counted. The 80 is where the subject stops fitting on its own. Between the two is a matter of taste and nothing is gained by arguing it: the length limit is a proxy for [PR-SPLIT-ONE-CHANGE](#pr-split-one-change) — a subject that will not fit usually describes two changes — and at 73 characters that proxy tells you nothing. A gate that reports a one-character overrun beside a real defect teaches the reader to skim both.
+**Put the important words first. A gate gives a note above 100 characters and fails above 140.** GitHub shortens a long commit title at about 72 characters, so a reader of the commit list may see only the start of the subject. Start with the area and the behavior, and put qualifiers at the end. Shorter is better, but no length up to 100 is a defect.
+
+**The limits are wide because length is a weak proxy.** The limit stands in for [PR-SPLIT-ONE-CHANGE](#pr-split-one-change): a subject that will not fit usually describes two changes. Of the last 3000 subjects on master before 2026-09-01, the share that reads like a list — an "and", a comma, a semicolon or a `+` — is 28% at 73–80 characters, 32% at 81–100 and 36% at 101–120. In that band the length says almost nothing. The share rises to 46% at 121–140 and to 72% above 140. The note at 100 asks the author to look again; it came up on 7% of those subjects, which is rare enough to be read. The fail at 140 stops a paragraph written as a subject, 0.7% of them. The `area: kind:` prefix alone takes 11 characters at the median and 17 at the 90th percentile, and a tighter limit takes that space from the topic. An earlier version aimed for 72 and failed above 80. It reported 36% of those subjects and failed 24%, among them good ones such as `ospfv3: fix: make the Database Exchange converge on broadcast and multi-area topologies`. A gate that fails good subjects teaches the reader to skim its reports.
 
 The area is the NED or C++ component (`ExternalProcess:`, `Ipv4:`, `visualizer:`) or the part of the tree (`tests:`, `doc:`, `build:`, `examples/mpls/net37:`). An optional kind word may follow the area (`ospfv3: fix:`, `python: refactor:`). Name the *behavior*, never the mechanics: write `ExternalProcess: don't kill the process group when a spawned command fails`, not "update ExternalProcess.cc" and not a list of file names or links.
 
@@ -517,7 +519,7 @@ The [compact plan](../guide/write-an-implementation-plan.md#compact-worked-examp
 | A feature needs a defect repaired first | fold the fix into the feature | the fix with its own baselines, then the feature (PR-SPLIT-PREPARE) |
 | A feature needs a new contract | the contract and its first user in one commit | the contract with its tests, then a small commit that turns the behavior on (PR-SPLIT-PREPARE) |
 | An 802.11 fix needs a queueing feature | one commit | generic queueing feature, then 802.11 fix (PR-SPLIT-UPSTREAM) |
-| Your fix changes fingerprints | a baseline commit after the fix | the source and the `.csv` in one commit, with the reason in the message (PR-SPLIT-BASELINE) |
+| Your fix changes fingerprints | a baseline commit after the fix | the source and the fingerprint store in one commit, with the reason in the message (PR-SPLIT-BASELINE) |
 | A compiler update moves fingerprints | fold them into the next fix | a baseline-only commit that names the cause (PR-SPLIT-BASELINE) |
 | You see an unrelated bug on the way | fold it in | separate commit, or separate pull request (PR-SPLIT-DRIVEBY) |
 | A reviewer finds a defect in commit 2 of 5 | add commit 6 | rebase the correction into commit 2 (PR-SERIES-ORDER) |
@@ -540,7 +542,7 @@ The tiers are the ones defined in [architectural-requirements.md](architecture.m
 | PR-SERIES-BUILDS | T2 | CI builds and tests every commit of the branch, not only the head |
 | PR-SERIES-ORDER | T3 | subject-line check for `fixup!`, `squash!`, "typo", "address review" |
 | PR-SERIES-LINEAR | T3 | branch check: no merge commit between the merge base and the head |
-| PR-MSG-SUBJECT | T3 | commit-message lint: `area: summary`, no file paths, no links; length fails above 80 and is a note above 72 |
+| PR-MSG-SUBJECT | T3 | commit-message lint: `area: summary`, no file paths, no links; length is a note above 100 and fails above 140 |
 | PR-MSG-WRAP | T3+T4 | notes for adjacent prose lines and extra blank lines (T3); review paragraph boundaries (T4) |
 | PR-MSG-FACTS | T3+T4 | commit-message lint: no attribution trailers; note for words of revision history and for a `Validation:` paragraph (T3) + agent review for other progress notes (T4) |
 | PR-SPLIT-ONE-CHANGE | T3+T4 | note: the fingerprint rows of one commit move in more than one way (T3) + agent review: can a part of the commit stand alone? The rule lists the signs (T4) |

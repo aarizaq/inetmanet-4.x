@@ -8,6 +8,7 @@
 
 #include "inet/common/IProtocolRegistrationListener.h"
 #include "inet/common/ProtocolTag_m.h"
+#include "inet/common/ProtocolUtils.h"
 #include "inet/common/DirectionTag_m.h"
 #include "inet/linklayer/common/EtherType_m.h"
 #include "inet/linklayer/common/InterfaceTag_m.h"
@@ -51,7 +52,6 @@ void MrpRelay::initialize(int stage)
 void MrpRelay::handleLowerPacket(Packet *incomingPacket)
 {
     numReceivedNetworkFrames++;
-    auto protocol = incomingPacket->getTag<PacketProtocolTag>()->getProtocol();
     auto macAddressInd = incomingPacket->getTag<MacAddressInd>();
     auto sourceAddress = macAddressInd->getSrcAddress();
     auto destinationAddress = macAddressInd->getDestAddress();
@@ -68,17 +68,7 @@ void MrpRelay::handleLowerPacket(Packet *incomingPacket)
     const auto* stpData = incomingInterface->findProtocolData<Ieee8021dInterfaceData>();
     const auto* mrpInterfaceData = incomingInterface->findProtocolData<MrpInterfaceData>();
 
-    auto outgoingPacket = incomingPacket->dup();
-    outgoingPacket->trim();
-    outgoingPacket->clearTags();
-    outgoingPacket->addTag<PacketProtocolTag>()->setProtocol(protocol);
-    if (auto vlanInd = incomingPacket->findTag<VlanInd>())
-        outgoingPacket->addTag<VlanReq>()->setVlanId(vlanInd->getVlanId());
-    if (auto userPriorityInd = incomingPacket->findTag<UserPriorityInd>())
-        outgoingPacket->addTag<UserPriorityReq>()->setUserPriority(userPriorityInd->getUserPriority());
-    auto &macAddressReq = outgoingPacket->addTag<MacAddressReq>();
-    macAddressReq->setSrcAddress(sourceAddress);
-    macAddressReq->setDestAddress(destinationAddress);
+    auto outgoingPacket = createForwardedPacket(incomingPacket);
 
     if (!mrpInterfaceData)
         throw cRuntimeError("MrpInterfaceData not found on interface '%s'; enable hasMrp in the network node configuration", incomingInterface->getInterfaceName());
@@ -133,7 +123,7 @@ void MrpRelay::handleLowerPacket(Packet *incomingPacket)
             broadcastPacket(outgoingPacket, destinationAddress, incomingInterface);
         //handling Multicast
         else if (destinationAddress.isMulticast()) {
-            auto outgoingInterfaceIds = mrpMacForwardingTable->getMulticastAddressForwardingInterfaces(destinationAddress);
+            auto outgoingInterfaceIds = mrpMacForwardingTable->getMulticastAddressForwardingInterfaces(destinationAddress, vlanId);
             if (outgoingInterfaceIds.size() == 0)
                 broadcastPacket(outgoingPacket, destinationAddress, incomingInterface);
             else {
@@ -168,7 +158,7 @@ void MrpRelay::handleLowerPacket(Packet *incomingPacket)
         }
         //handling Unicast
         else {
-            auto outgoingInterfaceId = mrpMacForwardingTable->getUnicastAddressForwardingInterface(destinationAddress);
+            auto outgoingInterfaceId = mrpMacForwardingTable->getUnicastAddressForwardingInterface(destinationAddress, vlanId);
             if (outgoingInterfaceId == -1)
                 broadcastPacket(outgoingPacket, destinationAddress, incomingInterface);
             else {
@@ -238,6 +228,9 @@ void MrpRelay::handleUpperPacket(Packet *packet)
     EV_INFO << "Processing upper packet" << EV_FIELD(packet) << EV_ENDL;
     auto macAddressReq = packet->getTag<MacAddressReq>();
     auto destinationAddress = macAddressReq->getDestAddress();
+    unsigned int vlanId = 0;
+    if (auto vlanReq = packet->findTag<VlanReq>())
+        vlanId = vlanReq->getVlanId();
     auto interfaceReq = packet->findTag<InterfaceReq>();
     auto protocol = packet->getTag<PacketProtocolTag>()->getProtocol();
     if (protocol == &Protocol::ieee8021qCFM || protocol == &Protocol::mrp)
@@ -248,7 +241,7 @@ void MrpRelay::handleUpperPacket(Packet *packet)
     } else if (destinationAddress.isBroadcast())
         broadcastPacket(packet, destinationAddress, nullptr);
     else if (destinationAddress.isMulticast()) {
-        auto outgoingInterfaceIds = mrpMacForwardingTable->getMulticastAddressForwardingInterfaces(destinationAddress);
+        auto outgoingInterfaceIds = mrpMacForwardingTable->getMulticastAddressForwardingInterfaces(destinationAddress, vlanId);
         if (outgoingInterfaceIds.size() == 0)
             broadcastPacket(packet, destinationAddress, nullptr);
         else {
@@ -260,7 +253,7 @@ void MrpRelay::handleUpperPacket(Packet *packet)
         }
     }
     else {
-        int interfaceId = mrpMacForwardingTable->getUnicastAddressForwardingInterface(destinationAddress);
+        int interfaceId = mrpMacForwardingTable->getUnicastAddressForwardingInterface(destinationAddress, vlanId);
         if (interfaceId == -1)
             broadcastPacket(packet, destinationAddress, nullptr);
         else {
@@ -297,11 +290,9 @@ void MrpRelay::sendPacket(Packet *packet, const MacAddress &destinationAddress, 
             << EV_ENDL;
     packet->addTagIfAbsent<DirectionTag>()->setDirection(DIRECTION_OUTBOUND);
     packet->addTagIfAbsent<InterfaceReq>()->setInterfaceId(outgoingInterface->getInterfaceId());
-    auto protocol = outgoingInterface->getProtocol();
-    if (protocol != nullptr)
-        packet->addTagIfAbsent<DispatchProtocolReq>()->setProtocol(protocol);
-    else
-        packet->removeTagIfPresent<DispatchProtocolReq>();
+    if (auto protocol = outgoingInterface->getProtocol())
+        ensureEncapsulationProtocolReq(packet, protocol, true, false);
+    setDispatchProtocol(packet);
     emit(packetSentToLowerSignal, packet);
     if (packet->findTag<MacAddressReq>() == nullptr) {
         auto &macAddressReq = packet->addTag<MacAddressReq>();

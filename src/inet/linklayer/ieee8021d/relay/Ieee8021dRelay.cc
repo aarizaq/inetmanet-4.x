@@ -52,7 +52,6 @@ void Ieee8021dRelay::registerAddresses(MacAddress startMac, MacAddress endMac)
 void Ieee8021dRelay::handleLowerPacket(Packet *incomingPacket)
 {
     numReceivedNetworkFrames++;
-    auto protocol = incomingPacket->getTag<PacketProtocolTag>()->getProtocol();
     auto macAddressInd = incomingPacket->getTag<MacAddressInd>();
     auto sourceAddress = macAddressInd->getSrcAddress();
     auto destinationAddress = macAddressInd->getDestAddress();
@@ -85,17 +84,7 @@ void Ieee8021dRelay::handleLowerPacket(Packet *incomingPacket)
         delete incomingPacket;
     }
     else {
-        auto outgoingPacket = incomingPacket->dup();
-        outgoingPacket->trim();
-        outgoingPacket->clearTags();
-        outgoingPacket->addTag<PacketProtocolTag>()->setProtocol(protocol);
-        if (auto vlanInd = incomingPacket->findTag<VlanInd>())
-            outgoingPacket->addTag<VlanReq>()->setVlanId(vlanInd->getVlanId());
-        if (auto userPriorityInd = incomingPacket->findTag<UserPriorityInd>())
-            outgoingPacket->addTag<UserPriorityReq>()->setUserPriority(userPriorityInd->getUserPriority());
-        auto& macAddressReq = outgoingPacket->addTag<MacAddressReq>();
-        macAddressReq->setSrcAddress(sourceAddress);
-        macAddressReq->setDestAddress(destinationAddress);
+        auto outgoingPacket = createForwardedPacket(incomingPacket);
 
         // TODO revise next "if"s: 2nd drops all packets for me if not forwarding port; 3rd sends up when dest==STP_MULTICAST_ADDRESS; etc.
         // reordering, merge 1st and 3rd, ...
@@ -103,7 +92,7 @@ void Ieee8021dRelay::handleLowerPacket(Packet *incomingPacket)
         if (destinationAddress.isBroadcast())
             broadcastPacket(outgoingPacket, destinationAddress, incomingInterface);
         else if (destinationAddress.isMulticast()) {
-            auto outgoingInterfaceIds = macForwardingTable->getMulticastAddressForwardingInterfaces(destinationAddress);
+            auto outgoingInterfaceIds = macForwardingTable->getMulticastAddressForwardingInterfaces(destinationAddress, vlanId);
             if (outgoingInterfaceIds.size() == 0)
                 broadcastPacket(outgoingPacket, destinationAddress, incomingInterface);
             else {
@@ -132,7 +121,7 @@ void Ieee8021dRelay::handleLowerPacket(Packet *incomingPacket)
             }
         }
         else {
-            auto outgoingInterfaceId = macForwardingTable->getUnicastAddressForwardingInterface(destinationAddress);
+            auto outgoingInterfaceId = macForwardingTable->getUnicastAddressForwardingInterface(destinationAddress, vlanId);
             if (outgoingInterfaceId == -1)
                 broadcastPacket(outgoingPacket, destinationAddress, incomingInterface);
             else {
@@ -167,6 +156,9 @@ void Ieee8021dRelay::handleUpperPacket(Packet *packet)
     EV_INFO << "Processing upper packet" << EV_FIELD(packet) << EV_ENDL;
     auto macAddressReq = packet->getTag<MacAddressReq>();
     auto destinationAddress = macAddressReq->getDestAddress();
+    unsigned int vlanId = 0;
+    if (auto vlanReq = packet->findTag<VlanReq>())
+        vlanId = vlanReq->getVlanId();
     auto interfaceReq = packet->findTag<InterfaceReq>();
     if (interfaceReq != nullptr) {
         auto networkInterface = interfaceTable->getInterfaceById(interfaceReq->getInterfaceId());
@@ -175,7 +167,7 @@ void Ieee8021dRelay::handleUpperPacket(Packet *packet)
     else if (destinationAddress.isBroadcast())
         broadcastPacket(packet, destinationAddress, nullptr);
     else if (destinationAddress.isMulticast()) {
-        auto outgoingInterfaceIds = macForwardingTable->getMulticastAddressForwardingInterfaces(destinationAddress);
+        auto outgoingInterfaceIds = macForwardingTable->getMulticastAddressForwardingInterfaces(destinationAddress, vlanId);
         if (outgoingInterfaceIds.size() == 0)
             broadcastPacket(packet, destinationAddress, nullptr);
         else {
@@ -187,7 +179,7 @@ void Ieee8021dRelay::handleUpperPacket(Packet *packet)
         }
     }
     else {
-        int interfaceId = macForwardingTable->getUnicastAddressForwardingInterface(destinationAddress);
+        int interfaceId = macForwardingTable->getUnicastAddressForwardingInterface(destinationAddress, vlanId);
         if (interfaceId == -1)
             broadcastPacket(packet, destinationAddress, nullptr);
         else {

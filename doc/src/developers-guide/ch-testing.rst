@@ -23,71 +23,73 @@ for regression testing of simulation models during development. For more details
 on fingerprint testing, please refer to the `OMNeT++ manual
 <https://omnetpp.org/doc/omnetpp/manual/#sec:testing:fingerprint-tests>`__.
 
-The INET fingerprint tests can be found under the :file:`tests/fingerprint` folder.
-Each test is basically a simulation scenario described by one line in a CSV file.
-INET contains several such CSV files for different groups of tests. One CSV line
-describes a simulation by specifying the working directory, command line arguments,
-simulation time limit, expected fingerprint and test result (e.g. pass or fail),
-and several user-defined tags to help filtering.
+The INET fingerprint baseline is the JSON file :file:`tests/fingerprint/store.json`.
+Each entry of the file describes one fingerprint of one simulation run: the working
+directory, the ini file, the config, the run number, the simulation time limit, the
+fingerprint ingredients, the expected fingerprint and the expected test result. The
+store holds a run-0 fingerprint of the ingredients ``tplx``, ``~tNl`` and ``~tND``
+for each concrete config that can run without user input, and some more runs.
 
-Fingerprint tests can be run using the :command:`fingerprinttest` script found
-in the above folder. To run all fingerprint tests, simply run the script without
-any arguments:
-
-.. code-block:: shell
-
-   $ ./fingerprinttest
-
-The script also has various command line arguments, which can be understood by
-asking for help with:
+The fingerprint tests run with the :command:`opp_run_fingerprint_tests` command of
+`opp_repl <https://github.com/omnetpp/opp_repl>`__. Set up the OMNeT++ and INET
+environment first. Then run all fingerprint tests from the INET root:
 
 .. code-block:: shell
 
-   $ ./fingerprinttest -h
+   $ cd $INET_ROOT
+   $ opp_run_fingerprint_tests
+
+The opp_repl commands find INET's project description, the file :file:`inet.opp` in
+the INET root, without an option: they look for ``*.opp`` files in the current folder
+and then in its parent folders. So the commands of this chapter work in each folder
+of the INET tree. In a subfolder, a command without a filter tests only that
+subfolder. Outside the INET tree, add ``--load $INET_ROOT -p inet``. The description
+sets the store, the
+ingredients that CI checks (``tplx``, ``~tNl`` and ``~tND``) and a CPU time limit of
+600s for each simulation. The command shows its options with ``-h``.
 
 Running all INET fingerprint tests takes several minutes even on a modern
-computer. By default, the script utilizes all available CPUs, the tests are
-run in parallel (non-deterministic order).
+computer. The command runs the simulations in parallel on all CPUs.
 
 The simplest way to make the tests run faster is to run only a subset of all
-fingerprint tests. The script provides a filter parameter (-m) which takes a
-regular expression that is matched against all information of the test.
+fingerprint tests. The ``-f`` option takes a regular expression that must match the
+working directory, the ini file or the config. The ``-w``, ``-i`` and ``-c`` options
+filter on one of them only.
 
 Another less commonly used technique is running the fingerprint tests in release
 mode. One disadvantage of release mode is that certain assertions, which are
-conditionally compiled, are not checked.
+conditionally compiled, are not checked. The default mode is debug.
 
 For example, the following command runs all wireless tests in release mode:
 
 .. code-block:: shell
 
-   $ ./fingerprinttest --release -m wireless
+   $ opp_run_fingerprint_tests -m release -f wireless
 
-While the tests are running, the script prints some information about each test
-followed by the test result. The test result is either PASS, FAIL, or ERROR (plus
-some optional details):
-
-.. code-block:: shell
-
-   /examples/bgpv4/BgpAndOspfSimple/ -f omnetpp.ini -c config1 -r 0 ... : PASS
-   /examples/bgpv4/BgpCompleteTest/ -f omnetpp.ini -c config1 -r 0 ... : FAIL
-   
-When testing is finished, the script also prints a short summary of the results
-with the total number of tests, failures, and errors:
+While the tests are running, the command prints a line for each simulation. The
+test result of each fingerprint is PASS, FAIL or ERROR, and a FAIL line shows the
+calculated and the correct value:
 
 .. code-block:: shell
 
-   Failures:
-     /examples/bgpv4/BgpCompleteTest/ -f omnetpp.ini -c config1 -r 0
-   ----------------------------------------------------------------------
-   Ran 2 tests in 3.615s
+   examples/bgpv4/BgpAndOspfSimple -c config1 for 100s PASS
+   examples/bgpv4/BgpCompleteTest -c config1 for 100s FAIL (unexpected) (Fingerprint mismatch) calculated 1234-abcd/tplx (correct 5678-ef01/tplx)
 
-   FAILED (failures=1)
+When testing is finished, the command prints a summary of the results. Its exit code
+is 0 only if each result is the expected one.
 
-Apart from the information printed on the console, fingerprint testing also
-produces three CSV files. One for the updated fingerprints, one for the failed
-tests, and one for the test which couldn't finish without an error. The updated
-file can be used to overwrite the original CSV file to accept the new fingerprints.
+To accept new fingerprints, run the update command with the same filter:
+
+.. code-block:: shell
+
+   $ opp_update_fingerprint_test_results -f wireless
+
+The update runs each stored run at its stored limit, and writes the new values into
+the store. It reports KEEP, UPDATE or INSERT for each simulation, and
+:command:`git diff tests/fingerprint/store.json` shows the changed values. A new
+config gets its run-0 fingerprints with ``--no-stored-only``, for example
+``opp_update_fingerprint_test_results --no-stored-only -c '^MyConfig$' -r 0``.
+The new entries take the ``sim-time-limit`` of the ini file.
 
 Usually, when a simulation model is being developed, the fingerprint tests should
 be run every now and then to make sure there are no regressions (i.e. all tests
@@ -114,19 +116,22 @@ tests. When this happens, there are two ways to validate the changes:
    fingerprint ingredients, use filtering, or change the fingerprint calculation
    algorithm in C++. These options are covered in the OMNeT++ manual.
    
-   With this method, the fingerprint tests must be re-run before the changes are
-   applied using the modified fingerprint calculation. The updated fingerprint
-   CSV files must be used to run the fingerprint tests after applying the changes.
-   This method is often time-consuming but may be worth the effort for complex
-   changes because it allows having far greater confidence in correctness.
+   With this method, record the fingerprints with the modified calculation before you
+   apply the changes, and check them after you apply the changes. These values are
+   temporary: restore the store with :command:`git checkout tests/fingerprint/store.json`
+   before you record the real values. This method is often time-consuming but may be
+   worth the effort for complex changes because it allows having far greater confidence
+   in correctness.
 
 For a simple example, a timing change that neither changes the order of events
-nor where the events happen can be easily validated by changing the fingerprint
-and removing time from the ingredients (default is tplx) as follows:
+nor where the events happen can be easily validated by removing time from the
+ingredients (default is tplx). Before the change, record ``plx`` fingerprints for
+the affected runs. After the change, check them:
 
 .. code-block:: shell
 
-   ./fingerprinttest -a --fingerprint=0 --fingerprint-ingredients=plx
+   $ opp_update_fingerprint_test_results --no-stored-only -f <filter> -r 0 --ingredients plx
+   $ opp_run_fingerprint_tests -f <filter> --ingredients plx
 
 Another common example is when a submodule is renamed. Since the default fingerprint
 ingredients contain the full module path of all events, this change will break
@@ -139,12 +144,15 @@ refactored to a large extent, then it's really difficult to validate the changes
 If despite the changes, the model is expected to keep its external behavior, then
 running the fingerprint tests can be used to prove this to some extent. The easy
 way to do this is to actually ignore all events executed by the old and the new
-IEEE 802.11 MAC models:
- 
+IEEE 802.11 MAC models. Give the module filter to both the update before the change
+and the test after the change. ``--append-args`` passes the rest of the line to
+``opp_run``, so it must be the last option:
+
 .. code-block:: shell
 
    # please note the quoting uses both ' and " in the right order
-   ./fingerprinttest -a --fingerprint-modules='"not(fullPath(**.wlan[*].mac.**))"'
+   $ opp_update_fingerprint_test_results -f <filter> --append-args --fingerprint-modules='"not(fullPath(**.wlan[*].mac.**))"'
+   $ opp_run_fingerprint_tests -f <filter> --append-args --fingerprint-modules='"not(fullPath(**.wlan[*].mac.**))"'
 
 INET uses continuous integration on Github. Fingerprint and other tests are run
 automatically for changes on the master and integration branches. Moreover, all
@@ -152,8 +160,8 @@ submitted pull requests are automatically tested the same way. The result of the
 test suite is clearly marked on the pull request with a check mark or a red cross.
 
 In general, contributors are expected to take care of not breaking the fingerprint
-tests. In the case of a necessary fingerprint change, the CSV files should be updated
-in separate patches.
+tests. In the case of a necessary fingerprint change, update the store in the commit
+that makes the change, and say in the commit message which behavior changes.
 
 INET Fingerprint Ingredients
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -165,8 +173,8 @@ over what aspects of network simulation are considered significant for reproduci
 testing.
 
 These ingredients are handled by the ``inet::FingerprintCalculator`` class. The
-fingerprint test script automatically adds the corresponding ``--fingerprint-calculator-class``
-option to the simulation command lines.
+fingerprint test commands automatically add the corresponding ``--fingerprintcalculator-class``
+option to the simulation command lines of each ingredient string with ``~``.
 
 **Filter Ingredients (Exclusion Filters)**
 
@@ -226,3 +234,50 @@ These ingredients add path information to the fingerprint hash for packet arriva
 - Filter ingredients (``~`` and ``U``) work as exclusion filters and are processed
   before other ingredients
 - Path and content ingredients (``N``, ``I``, ``D``) only apply to packet arrival events
+
+Code Coverage
+-------------
+
+A coverage report shows which lines, functions and branches of :file:`src/inet` the
+tests execute. The report leaves out the message files that :command:`opp_msgc`
+generates and the third-party code (the lwIP stack and :file:`src/3rdparty`).
+
+The GitHub workflow *Test: coverage* runs on each push to master. It builds OMNeT++
+and INET in coverage mode, runs the fingerprint tests and the unit, module, packet,
+queueing and protocol tests, and makes one report of all of them. The report of the
+latest master commit is at `inet-framework.github.io/coverage
+<https://inet-framework.github.io/coverage/>`__. The `coverage repository
+<https://github.com/inet-framework/coverage>`__ keeps one summary line for each
+reported commit, so the history shows how the coverage changes.
+
+To see the coverage of a branch, start the workflow by hand on that branch: on the
+*Actions* page of the repository, select *Test: coverage*, then *Run workflow*. When
+the run ends, download its ``coverage-report`` artifact. Its :file:`html` folder
+holds the report, and its :file:`summary.md` the totals.
+
+A local report needs Clang, the ``llvm-profdata`` and ``llvm-cov`` tools of the same
+LLVM version as the compiler (for example the ``llvm-18`` package for Clang 18), and
+``genhtml`` from the ``lcov`` package for the HTML. Build OMNeT++ and INET in
+coverage mode, run some tests in coverage mode, export their coverage, and make the
+report:
+
+.. code-block:: shell
+
+   $ cd ~/workspace/omnetpp && make MODE=coverage base
+   $ cd ~/workspace/inet && make MODE=coverage
+   $ opp_run_module_tests -m coverage -f Ipv4
+   $ opp_export_coverage -t module -o module.lcov
+   $ opp_coverage_report module.lcov -o coverage-report --html
+
+Each test process of a coverage build adds its profile to the folder
+:file:`coverage/profiles` in the INET root. :command:`opp_export_coverage` merges the
+profiles of that folder, so delete the folder before you start a new set of tests,
+and after a rebuild. :command:`opp_coverage_report` can merge several exports, for
+example one for each test kind, and then gives the coverage of each kind too. The
+`coverage guide of opp_repl <https://github.com/omnetpp/opp_repl/blob/main/doc/coverage.md>`__
+describes all options.
+
+Coverage shows that a test executes some code. It does not show that the test checks
+the result of that code. Some code has no coverage in CI, because CI cannot execute
+it: for example, emulation needs real network interfaces, and most visualizers need
+Qtenv.
