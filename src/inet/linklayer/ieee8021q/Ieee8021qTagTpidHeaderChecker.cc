@@ -22,13 +22,8 @@ void Ieee8021qTagTpidHeaderChecker::initialize(int stage)
 {
     PacketFilterBase::initialize(stage);
     if (stage == INITSTAGE_LOCAL) {
-        const char *vlanTagType = par("vlanTagType");
-        if (!strcmp("s", vlanTagType))
-            tpid = 0x88A8;
-        else if (!strcmp("c", vlanTagType))
-            tpid = 0x8100;
-        else
-            throw cRuntimeError("Unknown tag type");
+        vlanTagType = parseVlanTagType(par("vlanTagType"));
+        tpid = vlanTagType == VLAN_TAG_TYPE_S ? 0x88A8 : 0x8100;
         vlanIdFilter = check_and_cast<cValueArray *>(par("vlanIdFilter").objectValue());
         WATCH(tpid);
     }
@@ -37,10 +32,13 @@ void Ieee8021qTagTpidHeaderChecker::initialize(int stage)
 void Ieee8021qTagTpidHeaderChecker::processPacket(Packet *packet)
 {
     const auto& header = packet->popAtFront<Ieee8021qTagTpidHeader>();
+    // IEEE 802.1Q-2018 6.9.1 h): the priority of a tagged frame is decoded from the
+    // tag header, and replaces the one that the layer below indicated, so in a stack
+    // the innermost tag, which is checked last, determines the user priority
     packet->addTagIfAbsent<UserPriorityInd>()->setUserPriority(header->getPcp());
-    packet->addTagIfAbsent<PcpInd>()->setPcp(header->getPcp());
-    packet->addTagIfAbsent<VlanInd>()->setVlanId(header->getVid());
-    packet->addTagIfAbsent<DropEligibleInd>()->setDropEligible(header->getDei());
+    addPcpIndIfAbsent(packet, vlanTagType)->setPcp(header->getPcp());
+    addVlanIndIfAbsent(packet, vlanTagType)->setVlanId(header->getVid());
+    addDropEligibleIndIfAbsent(packet, vlanTagType)->setDropEligible(header->getDei());
     auto packetProtocolTag = packet->addTagIfAbsent<PacketProtocolTag>();
     packetProtocolTag->setFrontOffset(packetProtocolTag->getFrontOffset() - header->getChunkLength());
 }

@@ -17,57 +17,6 @@ namespace inet {
 
 #define PCAP_MAGIC    0x1a2b3c4d
 
-struct pcapng_option_header
-{
-    uint16_t code;
-    uint16_t length;
-};
-
-struct pcapng_section_block_header
-{
-    uint32_t blockType = 0x0A0D0D0A;
-    uint32_t blockTotalLength;
-    uint32_t byteOrderMagic;
-    uint16_t majorVersion;
-    uint16_t minorVersion;
-    uint64_t sectionLength;
-};
-
-struct pcapng_section_block_trailer
-{
-    uint32_t blockTotalLength;
-};
-
-struct pcapng_interface_block_header
-{
-    uint32_t blockType = 0x00000001;
-    uint32_t blockTotalLength;
-    uint16_t linkType;
-    uint16_t reserved;
-    uint32_t snaplen;
-};
-
-struct pcapng_interface_block_trailer
-{
-    uint32_t blockTotalLength;
-};
-
-struct pcapng_packet_block_header
-{
-    uint32_t blockType = 0x00000006;
-    uint32_t blockTotalLength;
-    uint32_t interfaceId;
-    uint32_t timestampHigh;
-    uint32_t timestampLow;
-    uint32_t capturedPacketLength;
-    uint32_t originalPacketLength;
-};
-
-struct pcapng_packet_block_trailer
-{
-    uint32_t blockTotalLength;
-};
-
 static int pad(int value, int multiplier = 4)
 {
     return (multiplier - value % multiplier) % multiplier;
@@ -78,12 +27,110 @@ static int roundUp(int value, int multiplier = 4)
     return value + pad(value, multiplier);
 }
 
+template<typename T>
+static void appendValue(std::vector<uint8_t>& bytes, T value)
+{
+    auto valueBytes = reinterpret_cast<const uint8_t *>(&value);
+    bytes.insert(bytes.end(), valueBytes, valueBytes + sizeof(value));
+}
+
+uint32_t PcapngPacketFlags::getValue() const
+{
+    uint32_t value = 0;
+    switch (direction) {
+        case DIRECTION_UNDEFINED:
+            break;
+        case DIRECTION_INBOUND:
+            value |= 0b01;
+            break;
+        case DIRECTION_OUTBOUND:
+            value |= 0b10;
+            break;
+        default:
+            throw cRuntimeError("Unknown direction value");
+    }
+    if (receptionType > PCAPNG_RECEPTION_PROMISCUOUS)
+        throw cRuntimeError("Unknown PCAPng reception type: %d", receptionType);
+    value |= receptionType << 2;
+    if (fcsLength < B(0) || fcsLength > B(15))
+        throw cRuntimeError("The PCAPng FCS length of a packet must be between 0 and 15 bytes: %s", fcsLength.str().c_str());
+    value |= fcsLength.get<B>() << 5;
+    if ((linkLayerErrors & 0x0000FFFF) != 0)
+        throw cRuntimeError("The PCAPng link-layer errors use bits 16-31 only: 0x%08x", linkLayerErrors);
+    value |= linkLayerErrors;
+    return value;
+}
+
+void PcapngOptions::addOption(uint16_t code, const std::vector<uint8_t>& value)
+{
+    if (value.size() > UINT16_MAX)
+        throw cRuntimeError("The value of PCAPng option %d is longer than %d bytes", code, UINT16_MAX);
+    options.push_back({code, value});
+}
+
+void PcapngOptions::addString(uint16_t code, const std::string& value)
+{
+    addOption(code, std::vector<uint8_t>(value.begin(), value.end()));
+}
+
+void PcapngOptions::addUint8(uint16_t code, uint8_t value)
+{
+    addOption(code, {value});
+}
+
+void PcapngOptions::addUint32(uint16_t code, uint32_t value)
+{
+    std::vector<uint8_t> bytes;
+    appendValue(bytes, value);
+    addOption(code, bytes);
+}
+
+void PcapngOptions::addUint64(uint16_t code, uint64_t value)
+{
+    std::vector<uint8_t> bytes;
+    appendValue(bytes, value);
+    addOption(code, bytes);
+}
+
+void PcapngInterfaceOptions::addIpv4Address(const Ipv4Address& address, const Ipv4Address& netmask)
+{
+    std::vector<uint8_t> bytes;
+    for (int i = 0; i < 4; i++) bytes.push_back(address.getDByte(i));
+    for (int i = 0; i < 4; i++) bytes.push_back(netmask.getDByte(i));
+    addOption(PCAPNG_IF_IPV4ADDR, bytes);
+}
+
+void PcapngInterfaceOptions::addMacAddress(const MacAddress& address)
+{
+    uint8_t bytes[6];
+    address.getAddressBytes(bytes);
+    addOption(PCAPNG_IF_MACADDR, std::vector<uint8_t>(bytes, bytes + 6));
+}
+
+void PcapngInterfaceOptions::addFcsLength(b fcsLength)
+{
+    if (fcsLength < b(0) || fcsLength > b(UINT8_MAX))
+        throw cRuntimeError("The PCAPng FCS length of an interface must be between 0 and %d bits: %s", UINT8_MAX, fcsLength.str().c_str());
+    addUint8(PCAPNG_IF_FCSLEN, fcsLength.get<b>());
+}
+
 PcapngWriter::~PcapngWriter()
 {
     PcapngWriter::close(); // NOTE: admitting that this will not call overridden methods from the destructor
 }
 
 void PcapngWriter::open(const char *filename, unsigned int snaplen, int timePrecision)
+{
+    open(filename);
+    this->snaplen = snaplen;
+
+    // TODO check validity of timePrecision
+    this->timePrecision = timePrecision;
+
+    writeSectionHeaderBlock();
+}
+
+void PcapngWriter::open(const char *filename)
 {
     if (opp_isempty(filename))
         throw cRuntimeError("Cannot open pcap file: file name is empty");
@@ -96,104 +143,126 @@ void PcapngWriter::open(const char *filename, unsigned int snaplen, int timePrec
         throw cRuntimeError("Cannot open pcap file [%s] for writing: %s", filename, strerror(errno));
 
     flush = false;
-
-    // TODO check validity of timePrecision
-    this->timePrecision = timePrecision;
-
-    // header
-    int blockTotalLength = 28;
-    ASSERT(blockTotalLength % 4 == 0);
-    struct pcapng_section_block_header sbh;
-    sbh.blockTotalLength = blockTotalLength;
-    sbh.byteOrderMagic = PCAP_MAGIC;
-    sbh.majorVersion = 1;
-    sbh.minorVersion = 0;
-    sbh.sectionLength = -1L;
-    fwrite(&sbh, sizeof(sbh), 1, dumpfile);
-
-    // trailer
-    struct pcapng_section_block_trailer sbt;
-    sbt.blockTotalLength = blockTotalLength;
-    fwrite(&sbt, sizeof(sbt), 1, dumpfile);
+    hasSection = false;
+    interfaces.clear();
+    interfaceModuleIdAndLinkTypeToPcapngInterfaceId.clear();
+    linkTypeToPcapngInterfaceIdWithoutNetworkInterface.clear();
 }
 
-void PcapngWriter::writeInterface(NetworkInterface *networkInterface, PcapLinkType linkType)
+void PcapngWriter::writeBlock(uint32_t blockType, const std::vector<uint8_t>& fields, const uint8_t *data, size_t dataLength, const PcapngOptions& options)
+{
+    if (!dumpfile)
+        throw cRuntimeError("Cannot write block: pcap output file is not open");
+
+    // options
+    std::vector<uint8_t> optionBytes;
+    if (!options.isEmpty()) {
+        for (const auto& option : options.getOptions()) {
+            appendValue<uint16_t>(optionBytes, option.code);
+            appendValue<uint16_t>(optionBytes, option.value.size());
+            optionBytes.insert(optionBytes.end(), option.value.begin(), option.value.end());
+            optionBytes.resize(roundUp(optionBytes.size()));
+        }
+        // end of options
+        optionBytes.resize(optionBytes.size() + 4);
+    }
+
+    ASSERT(fields.size() % 4 == 0);
+    uint32_t blockTotalLength = 4 + 4 + fields.size() + roundUp(dataLength) + optionBytes.size() + 4;
+
+    // header
+    fwrite(&blockType, sizeof(blockType), 1, dumpfile);
+    fwrite(&blockTotalLength, sizeof(blockTotalLength), 1, dumpfile);
+    fwrite(fields.data(), fields.size(), 1, dumpfile);
+
+    if (dataLength != 0) {
+        // data
+        fwrite(data, dataLength, 1, dumpfile);
+
+        // data padding
+        char padding[] = { 0, 0, 0, 0 };
+        fwrite(padding, pad(dataLength), 1, dumpfile);
+    }
+
+    fwrite(optionBytes.data(), optionBytes.size(), 1, dumpfile);
+
+    // trailer
+    fwrite(&blockTotalLength, sizeof(blockTotalLength), 1, dumpfile);
+}
+
+void PcapngWriter::writeSectionHeaderBlock(const PcapngSectionOptions& options)
+{
+    std::vector<uint8_t> fields;
+    appendValue<uint32_t>(fields, PCAP_MAGIC);
+    appendValue<uint16_t>(fields, 1); // major version
+    appendValue<uint16_t>(fields, 0); // minor version
+    appendValue<uint64_t>(fields, -1L); // section length is not specified
+    writeBlock(PCAPNG_SECTION_HEADER_BLOCK, fields, nullptr, 0, options);
+
+    // interface IDs are unique only in their section
+    hasSection = true;
+    interfaces.clear();
+    interfaceModuleIdAndLinkTypeToPcapngInterfaceId.clear();
+    linkTypeToPcapngInterfaceIdWithoutNetworkInterface.clear();
+}
+
+int PcapngWriter::writeInterfaceDescriptionBlock(PcapLinkType linkType, unsigned int snaplen, int timePrecision, const PcapngInterfaceOptions& options)
+{
+    if (!hasSection)
+        throw cRuntimeError("Cannot write interface: the PCAPng file has no section header block");
+    for (const auto& option : options.getOptions())
+        if (option.code == PCAPNG_IF_TSRESOL)
+            throw cRuntimeError("Cannot write interface: the time precision gives the if_tsresol option");
+    std::vector<uint8_t> fields;
+    appendValue<uint16_t>(fields, linkType);
+    appendValue<uint16_t>(fields, 0); // reserved
+    appendValue<uint32_t>(fields, snaplen);
+    PcapngInterfaceOptions interfaceOptions = options;
+    interfaceOptions.addUint8(PCAPNG_IF_TSRESOL, timePrecision);
+    writeBlock(PCAPNG_INTERFACE_DESCRIPTION_BLOCK, fields, nullptr, 0, interfaceOptions);
+    interfaces.push_back({snaplen, timePrecision});
+    return interfaces.size() - 1;
+}
+
+void PcapngWriter::writeEnhancedPacketBlock(int interfaceId, simtime_t time, const uint8_t *data, size_t dataLength, size_t originalLength, const PcapngPacketOptions& options)
+{
+    if (!hasSection)
+        throw cRuntimeError("Cannot write packet: the PCAPng file has no section header block");
+    if (interfaceId < 0 || interfaceId >= (int)interfaces.size())
+        throw cRuntimeError("Cannot write packet: the PCAPng section has no interface %d", interfaceId);
+    if (originalLength < dataLength)
+        throw cRuntimeError("Cannot write packet: the original length %zu is less than the data length %zu", originalLength, dataLength);
+    const auto& interface = interfaces[interfaceId];
+    size_t capturedLength = interface.snaplen == 0 ? dataLength : std::min<size_t>(dataLength, interface.snaplen);
+    ASSERT(time >= SIMTIME_ZERO);
+    uint64_t timestamp = time.inUnit(static_cast<SimTimeUnit>(-interface.timePrecision));
+    std::vector<uint8_t> fields;
+    appendValue<uint32_t>(fields, interfaceId);
+    appendValue<uint32_t>(fields, timestamp >> 32);
+    appendValue<uint32_t>(fields, timestamp & 0xFFFFFFFFLLU);
+    appendValue<uint32_t>(fields, capturedLength);
+    appendValue<uint32_t>(fields, originalLength);
+    writeBlock(PCAPNG_ENHANCED_PACKET_BLOCK, fields, data, capturedLength, options);
+
+    if (flush)
+        fflush(dumpfile);
+}
+
+int PcapngWriter::writeInterface(NetworkInterface *networkInterface, PcapLinkType linkType)
 {
     EV_INFO << "Writing interface to file" << EV_FIELD(fileName) << EV_FIELD(networkInterface) << EV_ENDL;
     if (!dumpfile)
         throw cRuntimeError("Cannot write interface: pcap output file is not open");
 
-    std::string name = networkInterface->getInterfaceName();
-    std::string fullPath = networkInterface->getInterfaceFullPath();
-    fullPath = fullPath.substr(fullPath.find('.') + 1);
-    uint32_t optionsLength = (4 + roundUp(name.length())) + (4 + roundUp(fullPath.length())) + (4 + 8) + (4 + 4 + 4) + (4 + 4) + 4;
-    uint32_t blockTotalLength = 20 + optionsLength;
-    ASSERT(blockTotalLength % 4 == 0);
-
-    // header
-    pcapng_interface_block_header ibh;
-    ibh.blockTotalLength = blockTotalLength;
-    ibh.linkType = linkType;
-    ibh.reserved = 0;
-    ibh.snaplen = 0;
-    fwrite(&ibh, sizeof(ibh), 1, dumpfile);
-
-    // interface name option
-    pcapng_option_header doh;
-    doh.code = 0x0002;
-    doh.length = name.length();
-    fwrite(&doh, sizeof(doh), 1, dumpfile);
-    fwrite(name.c_str(), name.length(), 1, dumpfile);
-    char padding[] = { 0, 0, 0, 0 };
-    int paddingLength = pad(name.length());
-    fwrite(padding, paddingLength, 1, dumpfile);
-
-    // interface description option
-    doh.code = 0x0003;
-    doh.length = fullPath.length();
-    fwrite(&doh, sizeof(doh), 1, dumpfile);
-    fwrite(fullPath.c_str(), fullPath.length(), 1, dumpfile);
-    paddingLength = pad(fullPath.length());
-    fwrite(padding, paddingLength, 1, dumpfile);
-
-    // MAC address option
-    doh.code = 0x0006;
-    doh.length = 6;
-    fwrite(&doh, sizeof(doh), 1, dumpfile);
-    uint8_t macAddressBytes[6];
-    networkInterface->getMacAddress().getAddressBytes(macAddressBytes);
-    fwrite(macAddressBytes, 6, 1, dumpfile);
-    fwrite(padding, 2, 1, dumpfile);
-
-    // IP address/netmask option
-    doh.code = 0x0004;
-    doh.length = 4 + 4;
-    fwrite(&doh, sizeof(doh), 1, dumpfile);
-    uint8_t ipAddressBytes[4];
-    auto ipv4Address = networkInterface->getIpv4Address();
-    for (int i = 0; i < 4; i++) ipAddressBytes[i] = ipv4Address.getDByte(i);
-    fwrite(ipAddressBytes, 4, 1, dumpfile);
-    auto ipv4Netmask = networkInterface->getIpv4Netmask();
-    for (int i = 0; i < 4; i++) ipAddressBytes[i] = ipv4Netmask.getDByte(i);
-    fwrite(ipAddressBytes, 4, 1, dumpfile);
-
-    // tsresol option
-    doh.code = 0x0009;
-    doh.length = 1;
-    fwrite(&doh, sizeof(doh), 1, dumpfile);
-    uint8_t d = timePrecision;
-    fwrite(&d, 1, 1, dumpfile);
-    paddingLength = pad(1);
-    fwrite(padding, paddingLength, 1, dumpfile);
-
-    // end of options
-    uint32_t endOfOptions = 0;
-    fwrite(&endOfOptions, sizeof(endOfOptions), 1, dumpfile);
-
-    // trailer
-    pcapng_interface_block_trailer ibt;
-    ibt.blockTotalLength = blockTotalLength;
-    fwrite(&ibt, sizeof(ibt), 1, dumpfile);
+    PcapngInterfaceOptions options;
+    if (networkInterface != nullptr) {
+        options.addName(networkInterface->getInterfaceName());
+        std::string fullPath = networkInterface->getInterfaceFullPath();
+        options.addDescription(fullPath.substr(fullPath.find('.') + 1));
+        options.addMacAddress(networkInterface->getMacAddress());
+        options.addIpv4Address(networkInterface->getIpv4Address(), networkInterface->getIpv4Netmask());
+    }
+    return writeInterfaceDescriptionBlock(linkType, snaplen, timePrecision, options);
 }
 
 void PcapngWriter::writePacket(simtime_t stime, const Packet *packet, b frontOffset, b backOffset, Direction direction, NetworkInterface *networkInterface, PcapLinkType linkType)
@@ -202,77 +271,47 @@ void PcapngWriter::writePacket(simtime_t stime, const Packet *packet, b frontOff
     if (!dumpfile)
         throw cRuntimeError("Cannot write frame: pcap output file is not open");
 
-    auto it = interfaceModuleIdToPcapngInterfaceId.find(networkInterface->getId());
+    // an interface description has one link type, so each link type of an interface needs its own
     int pcapngInterfaceId;
-    if (it != interfaceModuleIdToPcapngInterfaceId.end())
-        pcapngInterfaceId = it->second;
+    if (networkInterface == nullptr) {
+        auto it = linkTypeToPcapngInterfaceIdWithoutNetworkInterface.find(linkType);
+        if (it != linkTypeToPcapngInterfaceIdWithoutNetworkInterface.end())
+            pcapngInterfaceId = it->second;
+        else {
+            pcapngInterfaceId = writeInterface(nullptr, linkType);
+            linkTypeToPcapngInterfaceIdWithoutNetworkInterface[linkType] = pcapngInterfaceId;
+        }
+    }
     else {
-        writeInterface(networkInterface, linkType);
-        pcapngInterfaceId = nextPcapngInterfaceId++;
-        interfaceModuleIdToPcapngInterfaceId[networkInterface->getId()] = pcapngInterfaceId;
+        auto interfaceKey = std::make_pair(networkInterface->getId(), linkType);
+        auto it = interfaceModuleIdAndLinkTypeToPcapngInterfaceId.find(interfaceKey);
+        if (it != interfaceModuleIdAndLinkTypeToPcapngInterfaceId.end())
+            pcapngInterfaceId = it->second;
+        else {
+            pcapngInterfaceId = writeInterface(networkInterface, linkType);
+            interfaceModuleIdAndLinkTypeToPcapngInterfaceId[interfaceKey] = pcapngInterfaceId;
+        }
     }
 
-    if (networkInterface == nullptr)
-        throw cRuntimeError("The interface entry not found for packet");
+    PcapngPacketOptions options;
+    // the receiver of a frame with bit errors finds a wrong frame check sequence
+    uint32_t linkLayerErrors = packet->hasBitError() ? PCAPNG_ERROR_CRC : 0;
+    if (direction != DIRECTION_UNDEFINED || linkLayerErrors != 0) {
+        PcapngPacketFlags flags;
+        flags.direction = direction;
+        flags.linkLayerErrors = linkLayerErrors;
+        options.addFlags(flags);
+    }
 
-    b capturedLength = packet->getDataLength() - frontOffset - backOffset;
-    uint32_t optionsLength = (4 + 4) + 4;
-    uint32_t blockTotalLength = 32 + roundUp(capturedLength.get<B>()) + optionsLength;
-    ASSERT(blockTotalLength % 4 == 0);
-
-    // header
-    struct pcapng_packet_block_header pbh;
-    pbh.blockTotalLength = blockTotalLength;
-    pbh.interfaceId = pcapngInterfaceId;
-    ASSERT(stime >= SIMTIME_ZERO);
-    uint64_t timestamp = stime.inUnit(static_cast<SimTimeUnit>(-timePrecision));
-    pbh.timestampHigh = static_cast<uint32_t>((timestamp >> 32) & 0xFFFFFFFFLLU);
-    pbh.timestampLow = static_cast<uint32_t>(timestamp & 0xFFFFFFFFLLU);
-    pbh.capturedPacketLength = capturedLength.get<B>();
-    pbh.originalPacketLength = capturedLength.get<B>();
-    fwrite(&pbh, sizeof(pbh), 1, dumpfile);
-
+    b originalLength = packet->getDataLength() - frontOffset - backOffset;
+    b capturedLength = snaplen == 0 ? originalLength : std::min(originalLength, b(B(snaplen)));
     if (capturedLength != b(0)) {
-        // packet data
         auto data = packet->peekDataAt<BytesChunk>(frontOffset, capturedLength);
-        auto bytes = data->getBytes();
-        fwrite(bytes.data(), bytes.size(), 1, dumpfile);
-
-        // packet padding
-        char padding[] = { 0, 0, 0, 0 };
-        int paddingLength = pad(capturedLength.get<B>());
-        fwrite(padding, paddingLength, 1, dumpfile);
+        const auto& bytes = data->getBytes();
+        writeEnhancedPacketBlock(pcapngInterfaceId, stime, bytes.data(), bytes.size(), originalLength.get<B>(), options);
     }
-
-    // direction option
-    pcapng_option_header doh;
-    doh.code = 0x0002;
-    doh.length = 4;
-    uint32_t flagsOptionValue = 0;
-    switch (direction) {
-        case DIRECTION_INBOUND:
-            flagsOptionValue = 0b01;
-            break;
-        case DIRECTION_OUTBOUND:
-            flagsOptionValue = 0b10;
-            break;
-        default:
-            throw cRuntimeError("Unknown direction value");
-    }
-    fwrite(&doh, sizeof(doh), 1, dumpfile);
-    fwrite(&flagsOptionValue, sizeof(flagsOptionValue), 1, dumpfile);
-
-    // end of options
-    uint32_t endOfOptions = 0;
-    fwrite(&endOfOptions, sizeof(endOfOptions), 1, dumpfile);
-
-    // trailer
-    struct pcapng_packet_block_trailer pbt;
-    pbt.blockTotalLength = blockTotalLength;
-    fwrite(&pbt, sizeof(pbt), 1, dumpfile);
-
-    if (flush)
-        fflush(dumpfile);
+    else
+        writeEnhancedPacketBlock(pcapngInterfaceId, stime, nullptr, 0, originalLength.get<B>(), options);
 }
 
 void PcapngWriter::close()

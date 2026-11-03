@@ -21,7 +21,7 @@ namespace inet {
  * NOTE that interfaceIds (interfaceId parameters) are actually the corresponding ID of the port interface.
  * i.e. this is an interfaceId and NOT an index of the some kind in a gate vector.
  */
-class INET_API MacForwardingTable : public OperationalBase, public IMacForwardingTable
+class INET_API MacForwardingTable : public OperationalBase, public IMacForwardingTable, protected cListener
 {
   protected:
     struct AddressEntry {
@@ -64,19 +64,20 @@ class INET_API MacForwardingTable : public OperationalBase, public IMacForwardin
     virtual void handleMessage(cMessage *msg) override;
     virtual void handleMessageWhenUp(cMessage *msg) override;
     virtual std::string resolveDirective(char directive) const override;
+    virtual void receiveSignal(cComponent *source, simsignal_t signalID, cObject *obj, cObject *details) override;
 
     virtual void parseForwardingTableParameter();
 
   public:
     // IMacForwardingTable
-    virtual int getUnicastAddressForwardingInterface(const MacAddress& address, unsigned int vid = 0) const override;
-    virtual void setUnicastAddressForwardingInterface(int interfaceId, const MacAddress& address, unsigned int vid = 0) override;
-    virtual void removeUnicastAddressForwardingInterface(int interfaceId, const MacAddress& address, unsigned int vid = 0) override;
-    virtual void learnUnicastAddressForwardingInterface(int interfaceId, const MacAddress& address, unsigned int vid = 0) override;
+    virtual int getUnicastAddressForwardingInterface(const MacAddress& address, unsigned int vid) const override;
+    virtual void setUnicastAddressForwardingInterface(int interfaceId, const MacAddress& address, unsigned int vid) override;
+    virtual void removeUnicastAddressForwardingInterface(int interfaceId, const MacAddress& address, unsigned int vid) override;
+    virtual void learnUnicastAddressForwardingInterface(int interfaceId, const MacAddress& address, unsigned int vid) override;
 
-    virtual std::vector<int> getMulticastAddressForwardingInterfaces(const MacAddress& address, unsigned int vid = 0) const override;
-    virtual void addMulticastAddressForwardingInterface(int interfaceId, const MacAddress& address, unsigned int vid = 0) override;
-    virtual void removeMulticastAddressForwardingInterface(int interfaceId, const MacAddress& address, unsigned int vid = 0) override;
+    virtual std::vector<int> getMulticastAddressForwardingInterfaces(const MacAddress& address, unsigned int vid) const override;
+    virtual void addMulticastAddressForwardingInterface(int interfaceId, const MacAddress& address, unsigned int vid) override;
+    virtual void removeMulticastAddressForwardingInterface(int interfaceId, const MacAddress& address, unsigned int vid) override;
 
     virtual void removeForwardingInterface(int interfaceId) override;
     virtual void replaceForwardingInterface(int oldInterfaceId, int newInterfaceId) override;

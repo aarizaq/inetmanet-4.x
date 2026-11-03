@@ -1,0 +1,490 @@
+%description:
+Check local SIFS evidence through complete physical receptions and production Rx.
+Each run supplies two frames without a Block Ack agreement.
+The receiver accepts FCS independently of the interval result.
+
+%extraargs: -r 0..50
+
+%file: LocalInputs.cc
+#include "../../LocalInterframeTestSupport.h"
+#include <iostream>
+#include "inet/common/Simsignals.h"
+#include "inet/common/packet/chunk/ByteCountChunk.h"
+#include "inet/common/ProtocolTag_m.h"
+#include "inet/linklayer/ieee80211/mac/Rx.h"
+#include "inet/linklayer/ieee80211/mac/Tx.h"
+#include "inet/linklayer/ieee80211/mac/Ieee80211Mac.h"
+#include "inet/linklayer/ieee80211/mib/Ieee80211Mib.h"
+#include "inet/linklayer/ieee80211/mac/Ieee80211InterframeInd_m.h"
+#include "inet/physicallayer/wireless/common/contract/packetlevel/SignalTag_m.h"
+#include "inet/physicallayer/wireless/ieee80211/packetlevel/Ieee80211Radio.h"
+#include "inet/physicallayer/wireless/ieee80211/packetlevel/Ieee80211Tag_m.h"
+#include "inet/physicallayer/wireless/ieee80211/packetlevel/Ieee80211Receiver.h"
+
+namespace inet::ieee80211 {
+using namespace physicallayer;
+class LocalInputMac : public Ieee80211Mac {
+  public:
+    void reselectModeSet() {
+        Enter_Method("reselectModeSet");
+        modeSet = Ieee80211ModeSet::getModeSet("a");
+        emit(modesetChangedSignal, const_cast<Ieee80211ModeSet *>(modeSet));
+    }
+};
+Define_Module(LocalInputMac);
+class LocalInputTransmitter : public LocalInterframeTransmitterBase {
+  protected:
+    bool omitsSignalExtension(const Packet *packet) const override {
+        return packet->isName("rifs-first") && par("scenario").intValue() != 37;
+    }
+};
+Define_Module(LocalInputTransmitter);
+class LocalInterframeConcurrentReceiver : public Ieee80211Receiver {
+  protected:
+    bool computeIsReceptionAttempted(const IListening *listening, const IReception *reception,
+            IRadioSignal::SignalPart part, const IInterference *) const override {
+        return computeIsReceptionPossible(listening, reception, part);
+    }
+};
+Define_Module(LocalInterframeConcurrentReceiver);
+class LocalInputRadio : public Ieee80211Radio {
+    int delivered = 0;
+  protected:
+    void decapsulate(Packet *packet) const override {
+        Ieee80211Radio::decapsulate(packet);
+        if (packet->isName("rifs-first") && par("unknownExtension").boolValue())
+            packet->getTagForUpdate<Ieee80211ModeInd>()->setSignalExtensionDuration(-1);
+    }
+    void sendUp(Packet *packet) override {
+        delivered++;
+        if (delivered == 1) {
+            if (par("missingTime").boolValue())
+                packet->removeTag<SignalTimeInd>();
+            if (par("corruptFirst").boolValue())
+                packet->setBitError(true);
+            if (par("staleDuplicate").boolValue()) {
+                auto time = packet->getTag<SignalTimeInd>();
+                auto duplicate = packet->dup();
+                duplicate->setName("stale");
+                if (par("corruptStaleDuplicate").boolValue())
+                    duplicate->setBitError(true);
+                sendDelayed(duplicate, time->getEndTime() - time->getStartTime() + SimTime(33, SIMTIME_US), "upperLayerOut");
+            }
+        }
+        if (par("deferDeliveryPriority").boolValue())
+            packet->setSchedulingPriority(1);
+        Ieee80211Radio::sendUp(packet);
+    }
+};
+Define_Module(LocalInputRadio);
+class LocalInputRx : public Rx {
+  public:
+    int accepted = 0;
+    bool related = false;
+    simtime_t firstEnd;
+    simtime_t lastStart;
+    int overlappingStarts = 0;
+    simtime_t latestEnd = -1;
+    std::vector<bool> relations;
+    std::vector<bool> eligible;
+    void receiveSignal(cComponent *source, simsignal_t signal, cObject *object, cObject *details) override {
+        if (signal == receptionStartedSignal) {
+            auto reception = check_and_cast<const IReception *>(object);
+            if (reception->getStartTime() < latestEnd)
+                overlappingStarts++;
+            latestEnd = std::max(latestEnd, reception->getEndTime());
+        }
+        Rx::receiveSignal(source, signal, object, details);
+    }
+    bool lowerFrameReceived(Packet *packet) override {
+        auto time = packet->findTag<SignalTimeInd>();
+        auto start = time ? time->getStartTime() : SimTime(-1);
+        auto end = time ? time->getEndTime() : SimTime(-1);
+        bool ok = Rx::lowerFrameReceived(packet);
+        if (ok) {
+            accepted++;
+            related = packet->getTag<Ieee80211InterframeInd>()->getRelated();
+            relations.push_back(related);
+            eligible.push_back(precedingFrame.has_value());
+            lastStart = start;
+            if (accepted == 1) {
+                firstEnd = end;
+            }
+        }
+        return ok;
+    }
+};
+Define_Module(LocalInputRx);
+
+class LocalInputDriver : public cSimpleModule, public cListener, public ITx::ICallback {
+    Ieee80211Radio *radio = nullptr;
+    Ieee80211Radio *receiverRadio = nullptr;
+    LocalInputRx *rx = nullptr;
+    int sent = 0;
+    int ended = 0;
+    int scenario = -1;
+    simtime_t gap;
+    bool completed = false;
+    int ackCompletions = 0;
+    simtime_t ackEnd;
+    void transmissionComplete(Packet *, const Ptr<const Ieee80211MacHeader>&) override {
+        ackCompletions++;
+        ackEnd = simTime();
+    }
+    const IIeee80211Mode *dataMode() const {
+        bool fiveGhz = (scenario >= 23 && scenario <= 26) || scenario == 28 || scenario == 36;
+        auto catalog = Ieee80211ModeSet::getModeSet(scenario < 19 || scenario >= 49 ? "a" : fiveGhz ? "ac" : "n(mixed-2.4Ghz)");
+        if (scenario < 19 || scenario >= 49 || (scenario == 39 && sent == 0) || (scenario == 40 && sent == 1))
+            return catalog->getMode(bps(6000000));
+        for (int i = 0; i < catalog->getNumModes(); i++) {
+            auto mode = catalog->getMode(i);
+            if (mode->getHtMcsIndex() == 0 && !mode->isHtShortGuardInterval() &&
+                    mode->getDataMode()->getBandwidth() == MHz(20))
+                return mode;
+        }
+        throw cRuntimeError("Missing HT mode");
+    }
+    void sendLocalAck() {
+        auto tx = check_and_cast<Tx *>(getSimulation()->getModuleByPath("receiver.wlan[0].mac.tx"));
+        auto header = makeShared<Ieee80211AckFrame>();
+        header->setReceiverAddress(MacAddress("02:00:00:00:00:02"));
+        header->setDurationField(SIMTIME_ZERO);
+        auto packet = new Packet("own-ack", header);
+        packet->insertAtBack(makeShared<Ieee80211MacTrailer>());
+        packet->addTag<PacketProtocolTag>()->setProtocol(&Protocol::ieee80211Mac);
+        packet->addTag<Ieee80211ModeReq>()->setMode(Ieee80211ModeSet::getModeSet("n(mixed-2.4Ghz)")->getMode(bps(1000000)));
+        tx->transmitFrame(packet, header, false, this);
+        delete packet;
+    }
+    void initialize() override {
+        scheduleAt(SimTime(1, SIMTIME_MS), new cMessage("start"));
+    }
+    void sendFrame(bool busy = false) {
+        auto header = makeShared<Ieee80211DataHeader>();
+        header->setReceiverAddress(MacAddress("02:00:00:00:00:09"));
+        header->setTransmitterAddress(MacAddress("02:00:00:00:00:02"));
+        header->setDurationField(SIMTIME_ZERO);
+        header->setSequenceNumber(SequenceNumberCyclic(100 + sent));
+        if (scenario >= 31 && scenario <= 48) {
+            header->setType(ST_DATA_WITH_QOS);
+            header->addChunkLength(QOSCONTROL_PART_LENGTH);
+            header->setTid(5);
+            header->setAckPolicy(scenario == 34 && sent == 0 ? NORMAL_ACK : NO_ACK);
+            if (scenario == 32 && sent == 1)
+                header->setTransmitterAddress(MacAddress("02:00:00:00:00:03"));
+            if (scenario == 33 && sent == 1)
+                header->setReceiverAddress(MacAddress("02:00:00:00:00:08"));
+        }
+        auto packet = new Packet(busy ? "busy" : scenario >= 31 && scenario <= 48 && sent == 0 ? "rifs-first" : "local-input", header);
+        if (busy) {
+            packet->insertAtBack(makeShared<ByteCountChunk>(B(100)));
+            packet->addTag<SignalPowerReq>()->setPower(W(1e-7));
+        }
+        auto fcs = makeShared<Ieee80211MacTrailer>();
+        fcs->setFcsMode(FCS_DECLARED_CORRECT);
+        packet->insertAtBack(fcs);
+        packet->addTag<PacketProtocolTag>()->setProtocol(&Protocol::ieee80211Mac);
+        packet->addTag<Ieee80211ModeReq>()->setMode(dataMode());
+        if (!busy)
+            sent++;
+        send(packet, "out");
+    }
+    void receiveSignal(cComponent *source, simsignal_t signal, cObject *object, cObject *) override {
+        Enter_Method_Silent();
+        if (source == receiverRadio) {
+            if (signal == receptionStartedSignal && scenario == 48 && sent == 2)
+                scheduleAfter(SimTime(1, SIMTIME_US), new cMessage("permissionOff"));
+            if (signal == receptionStartedSignal && scenario == 17 && sent == 1)
+                scheduleAfter(SimTime(1, SIMTIME_US), new cMessage("abortReception"));
+            if (signal == receptionEndedSignal && scenario == 13 && sent == 2) {
+                auto event = new cMessage("successor");
+                event->setSchedulingPriority(-1);
+                scheduleAt(simTime(), event);
+            }
+            return;
+        }
+        auto transmission = check_and_cast<const ITransmission *>(object);
+        if (transmission->getPacket()->isName("busy")) {
+            scheduleAfter(gap, new cMessage("successor"));
+            return;
+        }
+        ended++;
+        if (scenario == 29 || scenario == 30)
+            scheduleAfter(SimTime(10, SIMTIME_US), new cMessage("check"));
+        else if (scenario == 12 || scenario == 13 || scenario == 16 || scenario == 18 || scenario == 49) {
+            if (sent == 1)
+                scheduleAfter(gap, new cMessage("second"));
+            else if (sent == 2 && (scenario == 16 || scenario == 18 || scenario == 49))
+                scheduleAfter(SimTime(16, SIMTIME_US), new cMessage("successor"));
+            else if (sent == 3 && scenario != 16 && scenario != 18 && scenario != 49)
+                scheduleAfter(gap, new cMessage("successor"));
+            else if (sent == 4 || (sent == 3 && (scenario == 16 || scenario == 18 || scenario == 49)))
+                scheduleAfter(SimTime(10, SIMTIME_US), new cMessage("check"));
+        }
+        else if (scenario == 10 || scenario == 11) {
+            if (ended == 2)
+                scheduleAfter(SimTime(100, SIMTIME_US), new cMessage("recovery"));
+            else if (ended == 3)
+                scheduleAfter(SimTime(16, SIMTIME_US), new cMessage("successor"));
+            else if (ended == 4)
+                scheduleAfter(SimTime(10, SIMTIME_US), new cMessage("check"));
+        }
+        else if (sent == 1)
+            scheduleAfter(gap, new cMessage("second"));
+        else
+            scheduleAfter(SimTime(10, SIMTIME_US), new cMessage("check"));
+    }
+    void handleMessage(cMessage *message) override {
+        if (auto packet = dynamic_cast<Packet *>(message)) {
+            ASSERT(scenario == 29 || scenario == 30);
+            ASSERT(packet->peekAtFront<Ieee80211MacHeader>()->getType() == ST_ACK);
+            delete packet;
+            scheduleAfter(SimTime(10, SIMTIME_US) + (scenario == 30 ? SimTime::fromRaw(1) : SIMTIME_ZERO), new cMessage("ownAckResponse"));
+            return;
+        }
+        std::string name = message->getName();
+        delete message;
+        if (name == "start") {
+            radio = check_and_cast<Ieee80211Radio *>(getParentModule()->getSubmodule("radio"));
+            rx = check_and_cast<LocalInputRx *>(getSimulation()->getModuleByPath("receiver.wlan[0].mac.rx"));
+            receiverRadio = check_and_cast<Ieee80211Radio *>(getSimulation()->getModuleByPath("receiver.wlan[0].radio"));
+            receiverRadio->subscribe(receptionEndedSignal, this);
+            receiverRadio->subscribe(receptionStartedSignal, this);
+            radio->subscribe(transmissionEndedSignal, this);
+            radio->setRadioMode(IRadio::RADIO_MODE_TRANSCEIVER);
+            scenario = par("scenario");
+            auto tolerance = SimTime(900, SIMTIME_NS);
+            gap = SimTime(16, SIMTIME_US);
+            if (scenario == 0 || scenario == 2)
+                gap -= tolerance;
+            if (scenario == 1 || scenario == 3)
+                gap += tolerance;
+            if (scenario == 2)
+                gap -= SimTime::fromRaw(1);
+            if (scenario == 3)
+                gap += SimTime::fromRaw(1);
+            if (scenario == 18)
+                gap = SIMTIME_ZERO;
+            if (scenario >= 19) {
+                bool fiveGhz = (scenario >= 23 && scenario <= 26) || scenario == 28 || scenario == 36;
+                gap = SimTime(fiveGhz ? 16 : 10, SIMTIME_US);
+                if (scenario <= 26) {
+                    int boundary = (scenario - 19) % 4;
+                    auto tolerance = fiveGhz ? SimTime(900, SIMTIME_NS) : SimTime(2, SIMTIME_US);
+                    gap += boundary % 2 == 0 ? -tolerance : tolerance;
+                    if (boundary >= 2)
+                        gap += boundary == 2 ? -SimTime::fromRaw(1) : SimTime::fromRaw(1);
+                }
+            }
+            if (scenario >= 31 && scenario <= 48) {
+                if (scenario == 35 || scenario == 45 || scenario == 48)
+                    check_and_cast<Ieee80211Mib *>(getSimulation()->getModuleByPath("receiver.wlan[0].mib"))->setPrimaryChannel(1);
+                gap = SimTime(2, SIMTIME_US);
+                if (scenario == 41 || scenario == 43)
+                    gap += SimTime(200, SIMTIME_NS);
+                if (scenario == 42 || scenario == 44)
+                    gap -= SimTime(200, SIMTIME_NS);
+                if (scenario == 43)
+                    gap += SimTime::fromRaw(1);
+                if (scenario == 44)
+                    gap -= SimTime::fromRaw(1);
+                if (scenario == 45 || scenario == 46)
+                    gap = SimTime(10, SIMTIME_US);
+                if (scenario == 35 || scenario == 45)
+                    check_and_cast<Ieee80211Mib *>(getSimulation()->getModuleByPath("receiver.wlan[0].mib"))->mode = Ieee80211Mib::INFRASTRUCTURE;
+            }
+            if (scenario >= 49)
+                gap = SimTime(16, SIMTIME_US);
+            if (scenario == 29 || scenario == 30)
+                sendLocalAck();
+            else
+                sendFrame();
+            if (scenario == 10)
+                scheduleAfter(SimTime(1, SIMTIME_US), new cMessage("overlap"));
+            if (scenario == 11)
+                sendFrame();
+        }
+        else if (name == "overlap" || name == "recovery" || name == "successor" || name == "ownAckResponse")
+            sendFrame();
+        else if (name == "busy")
+            sendFrame(true);
+        else if (name == "permissionOff")
+            check_and_cast<Ieee80211Mib *>(getSimulation()->getModuleByPath("receiver.wlan[0].mib"))->mode = Ieee80211Mib::INFRASTRUCTURE;
+        else if (name == "abortReception") {
+            receiverRadio->setRadioMode(IRadio::RADIO_MODE_SLEEP);
+            receiverRadio->setRadioMode(IRadio::RADIO_MODE_RECEIVER);
+        }
+        else if (name == "second")
+        {
+            if (scenario == 50)
+                check_and_cast<LocalInputMac *>(getSimulation()->getModuleByPath("receiver.wlan[0].mac"))->reselectModeSet();
+            auto receiverRadio = check_and_cast<Ieee80211Radio *>(getSimulation()->getModuleByPath("receiver.wlan[0].radio"));
+            if (scenario == 5)
+                receiverRadio->setChannelNumber(receiverRadio->par("channelNumber"));
+            if (scenario == 6 || scenario == 7) {
+                receiverRadio->setRadioMode(scenario == 6 ? IRadio::RADIO_MODE_SLEEP : IRadio::RADIO_MODE_OFF);
+                receiverRadio->setRadioMode(IRadio::RADIO_MODE_RECEIVER);
+            }
+            if (scenario == 8)
+                receiverRadio->setModeSet(Ieee80211ModeSet::getModeSet("a"));
+            if (scenario == 9)
+                receiverRadio->setMode(Ieee80211ModeSet::getModeSet("a")->getMode(bps(6000000)));
+            sendFrame();
+            if (scenario == 12)
+                scheduleAfter(SimTime(1, SIMTIME_US), new cMessage("busy"));
+        }
+        else {
+            if (scenario == 49) {
+                ASSERT(rx->relations == (std::vector<bool>{false, true, true}));
+            }
+            else if (scenario == 29 || scenario == 30) {
+                ASSERT(ackCompletions == 1);
+                ASSERT(rx->accepted == 1);
+                ASSERT(rx->lastStart - ackEnd == SimTime(12, SIMTIME_US) + (scenario == 30 ? SimTime::fromRaw(1) : SIMTIME_ZERO));
+                ASSERT(rx->related == (scenario == 29));
+            }
+            else if (scenario == 18) {
+                ASSERT(rx->relations == (std::vector<bool>{false, false, true}));
+                ASSERT(rx->overlappingStarts == 0);
+            }
+            else if (scenario == 12 || scenario == 13 || scenario == 16) {
+                ASSERT(rx->relations == (std::vector<bool>{false, true, false, true}));
+                if (scenario != 16)
+                    ASSERT(!rx->eligible[1]);
+            }
+            else if (scenario == 10 || scenario == 11) {
+                ASSERT(rx->overlappingStarts >= 1);
+                ASSERT(rx->relations.size() >= 2);
+                ASSERT(!rx->relations[rx->relations.size() - 2]);
+                ASSERT(rx->relations.back());
+            }
+            else if (scenario == 15 || scenario == 17) {
+                ASSERT(rx->accepted == 1);
+                ASSERT(!rx->related);
+            }
+            else {
+                ASSERT(rx->accepted == 2);
+                ASSERT(!rx->relations.front());
+                if (scenario != 14)
+                    ASSERT(rx->lastStart - rx->firstEnd == gap);
+                bool expected = scenario == 0 || scenario == 1 || scenario == 4 || scenario == 27 || scenario == 28 ||
+                    (scenario >= 19 && scenario <= 26 && (scenario - 19) % 4 < 2) ||
+                    scenario == 31 || scenario == 41 || scenario == 42 || (scenario >= 45 && scenario <= 48);
+                ASSERT(rx->related == expected);
+            }
+            completed = true;
+            std::cout << "Local SIFS input scenario=" << scenario << ": PASS\n";
+            endSimulation();
+        }
+    }
+    void finish() override { ASSERT(completed); }
+};
+Define_Module(LocalInputDriver);
+}
+
+%file: test.ned
+import inet.linklayer.ieee80211.mac.Rx;
+import inet.linklayer.ieee80211.mac.Ieee80211Mac;
+import inet.mobility.static.StationaryMobility;
+import inet.node.inet.WirelessHost;
+import inet.physicallayer.wireless.ieee80211.packetlevel.Ieee80211ScalarRadio;
+import inet.physicallayer.wireless.ieee80211.packetlevel.Ieee80211ScalarRadioMedium;
+import inet.physicallayer.wireless.ieee80211.packetlevel.Ieee80211Receiver;
+import inet.physicallayer.wireless.ieee80211.packetlevel.Ieee80211Transmitter;
+module LocalInputTransmitter extends Ieee80211Transmitter {
+    parameters: int scenario; @class(::inet::ieee80211::LocalInputTransmitter);
+}
+module LocalInputMac extends Ieee80211Mac {
+    parameters: @class(::inet::ieee80211::LocalInputMac);
+}
+module LocalInputRadio extends Ieee80211ScalarRadio {
+    parameters:
+        bool concurrentReceiver;
+        receiver.typename = default(this.concurrentReceiver ? "LocalInterframeConcurrentReceiver" : "Ieee80211Receiver");
+        bool deferDeliveryPriority;
+        bool missingTime;
+        bool corruptFirst;
+        bool staleDuplicate;
+        bool unknownExtension;
+        bool corruptStaleDuplicate;
+        @class(::inet::ieee80211::LocalInputRadio);
+}
+module LocalInterframeConcurrentReceiver extends Ieee80211Receiver {
+    parameters: @class(::inet::ieee80211::LocalInterframeConcurrentReceiver);
+}
+simple LocalInputRx extends Rx { parameters: @class(::inet::ieee80211::LocalInputRx); }
+simple LocalInputDriver {
+    parameters: int scenario; @class(::inet::ieee80211::LocalInputDriver);
+    gates: input in; output out;
+}
+module LocalInputPeer {
+    parameters: @networkNode;
+    submodules:
+        mobility: StationaryMobility;
+        radio: Ieee80211ScalarRadio;
+        driver: LocalInputDriver;
+    connections allowunconnected:
+        driver.out --> radio.upperLayerIn;
+        radio.upperLayerOut --> driver.in;
+}
+network LocalInputNetwork {
+    submodules:
+        radioMedium: Ieee80211ScalarRadioMedium;
+        receiver: WirelessHost;
+        peer: LocalInputPeer;
+}
+
+%inifile: omnetpp.ini
+[General]
+network = LocalInputNetwork
+ned-path = .;../../../../../src
+sim-time-limit = 10ms
+seed-set = 0
+record-vector-results = false
+record-scalar-results = false
+*.peer.driver.scenario = ${scenario=0..50}
+*.peer.radio.transmitter.typename = "LocalInputTransmitter"
+*.peer.radio.transmitter.scenario = ${scenario}
+*.peer.radio.allowConcurrentTransmissions = true
+*.receiver.wlan[0].radio.typename = "LocalInputRadio"
+*.receiver.wlan[0].radio.deferDeliveryPriority = ${scenario} == 13
+*.receiver.wlan[0].radio.missingTime = ${scenario} == 14
+*.receiver.wlan[0].radio.corruptFirst = ${scenario} == 15
+*.receiver.wlan[0].radio.staleDuplicate = ${scenario} == 16 || ${scenario} == 49
+*.receiver.wlan[0].radio.corruptStaleDuplicate = ${scenario} == 49
+*.receiver.wlan[0].radio.unknownExtension = ${scenario} == 38 || ${scenario} == 46
+*.receiver.wlan[0].radio.receiver.sensitivity = -70dBm
+*.receiver.wlan[0].radio.receiver.energyDetection = -90dBm
+*.receiver.wlan[0].radio.allowConcurrentReceptions = ${scenario} == 10 || ${scenario} == 11
+*.receiver.wlan[0].radio.concurrentReceiver = ${scenario} == 10 || ${scenario} == 11
+*.radioMedium.propagation.typename = "ConstantTimePropagation"
+*.radioMedium.sameTransmissionStartTimeCheck = "ignore"
+*.radioMedium.propagation.propagationTime = ${scenario} == 29 || ${scenario} == 30 ? 1us : (${scenario} == 27 || ${scenario} == 28 || ${scenario} == 47 ? 5us : 0s)
+**.wlan[*].agent.typename = ""
+**.wlan[*].mgmt.typename = "Ieee80211MgmtAdhoc"
+**.wlan[*].opMode = ${scenario} < 19 || ${scenario} >= 49 ? "a" : ((${scenario} >= 23 && ${scenario} <= 26) || ${scenario} == 28 || ${scenario} == 36 ? "ac" : "n(mixed-2.4Ghz)")
+**.wlan[*].mac.typename = "LocalInputMac"
+**.wlan[*].mac.qosStation = ${scenario} >= 31 && ${scenario} <= 49
+**.wlan[*].mac.hcf.isBlockAckSupported = false
+**.wlan[*].mib.htProtectionMode = ${scenario} == 35 || ${scenario} == 45 || ${scenario} == 48 ? 1 : 0
+**.wlan[*].mac.rx.typename = "LocalInputRx"
+*.peer.radio.opMode = ${scenario} < 19 || ${scenario} >= 49 ? "a" : ((${scenario} >= 23 && ${scenario} <= 26) || ${scenario} == 28 || ${scenario} == 36 ? "ac" : "n(mixed-2.4Ghz)")
+**.bandName = (${scenario} >= 23 && ${scenario} <= 26) || ${scenario} == 28 || ${scenario} == 36 ? "5 GHz (mapped 20 MHz)" : "2.4 GHz"
+*.peer.radio.transmitter.bitrate = 6Mbps
+*.peer.radio.antenna.mobilityModule = "^.^.mobility"
+**.mobility.initFromDisplayString = false
+**.mobility.constraintAreaMinX = 0m
+**.mobility.constraintAreaMinY = 0m
+**.mobility.constraintAreaMinZ = 0m
+**.mobility.constraintAreaMaxX = 10m
+**.mobility.constraintAreaMaxY = 10m
+**.mobility.constraintAreaMaxZ = 0m
+**.mobility.initialY = 0m
+**.mobility.initialZ = 0m
+*.receiver.mobility.initialX = 0m
+*.peer.mobility.initialX = 1m
+
+%contains: stdout
+: PASS
+%not-contains: stdout
+: FAIL

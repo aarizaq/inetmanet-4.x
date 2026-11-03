@@ -9,8 +9,10 @@
 
 #include <map>
 #include <optional>
+#include <set>
 
 #include "inet/common/SimpleModule.h"
+#include "inet/common/lifecycle/LifecycleController.h"
 #include "ITap.h"
 #include "PacketEvent.h"
 #include "ProtocolTest.h"
@@ -28,7 +30,7 @@ namespace protocoltest {
 //    event stream as a sequential, timing-guarded matcher and emits a PASS/FAIL
 //    verdict (Phase 1; expect-only).
 //
-class INET_API ProtocolTester : public SimpleModule, protected cListener
+class INET_API ProtocolTester : public SimpleModule, public LifecycleController, protected cListener
 {
   protected:
     std::map<simsignal_t, EventKind> signalKinds; // signal -> normalised kind
@@ -43,6 +45,7 @@ class INET_API ProtocolTester : public SimpleModule, protected cListener
     std::optional<ProtocolTest> program;
     size_t currentStep = 0;
     CaptureStore captureStore;                     // values bound by capture(...) as steps match
+    std::set<std::string> startedAggregates;       // aggregate captures that an event changed already
     std::vector<char> groupMatched;                // per-pattern matched flags for an Unordered step
     int groupRemaining = 0;                        // unmatched patterns left in the Unordered group
     int repeatRemaining = 0;                       // occurrences left for an ExactlyTimes step
@@ -100,6 +103,7 @@ class INET_API ProtocolTester : public SimpleModule, protected cListener
     void processMatch(const PacketEvent& event);
     void advance(simtime_t at);    // cancel deadline, set anchor, move to the next step
     void performInjection(const Injection& injection);
+    void performAction(const Action& action);
     bool patternMatches(const EventPattern& pattern, const PacketEvent& event, simtime_t anchor = -1); // selector + earliest gate
     void runCaptures(const EventPattern& pattern, const PacketEvent& event);
     void startGuard(size_t stepIndex);             // begin a meanwhile(...) step

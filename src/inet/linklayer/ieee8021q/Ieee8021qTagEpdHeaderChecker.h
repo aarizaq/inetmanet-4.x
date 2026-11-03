@@ -10,6 +10,7 @@
 
 #include "inet/common/Protocol.h"
 #include "inet/common/packet/Packet.h"
+#include "inet/linklayer/common/VlanTagType.h"
 #include "inet/queueing/base/PacketFilterBase.h"
 
 namespace inet {
@@ -19,8 +20,10 @@ using namespace inet::queueing;
 class INET_API Ieee8021qTagEpdHeaderChecker : public PacketFilterBase
 {
   protected:
+    VlanTagType vlanTagType = VLAN_TAG_TYPE_C;
     const Protocol *qtagProtocol = nullptr;
     cValueArray *vlanIdFilter = nullptr;
+    bool acceptUnknownEtherTypes = false;
 
   protected:
     virtual void initialize(int stage) override;

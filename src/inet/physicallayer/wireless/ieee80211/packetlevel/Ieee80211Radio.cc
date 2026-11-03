@@ -10,6 +10,7 @@
 
 #include "inet/common/packet/chunk/BitCountChunk.h"
 #include "inet/common/ProtocolTag_m.h"
+#include "inet/physicallayer/wireless/common/contract/packetlevel/SignalTag_m.h"
 #include "inet/physicallayer/wireless/ieee80211/mode/Ieee80211DsssMode.h"
 #include "inet/physicallayer/wireless/ieee80211/mode/Ieee80211DsssOfdmMode.h"
 #include "inet/physicallayer/wireless/ieee80211/mode/Ieee80211ErpOfdmMode.h"
@@ -252,6 +253,13 @@ void Ieee80211Radio::encapsulate(Packet *packet) const
 {
     auto ieee80211Transmitter = check_and_cast<const Ieee80211Transmitter *>(transmitter);
     auto mode = ieee80211Transmitter->computeTransmissionMode(packet);
+    // keep the values that the transmitter uses on the packet: recorders read them;
+    // compute all values before a new empty tag can hide the default of the transmitter
+    auto transmissionChannel = ieee80211Transmitter->computeTransmissionChannel(packet);
+    auto transmissionPower = ieee80211Transmitter->computeTransmissionPower(packet);
+    packet->addTagIfAbsent<Ieee80211ModeReq>()->setMode(mode);
+    packet->addTagIfAbsent<Ieee80211ChannelReq>()->setChannel(transmissionChannel);
+    packet->addTagIfAbsent<SignalPowerReq>()->setPower(transmissionPower);
     // ERP reuses OFDM's SIGNAL mode objects, whose factory creates a base
     // OFDM header. Preserve the selected PHY family when constructing the PPDU.
     auto phyHeader = dynamic_cast<const Ieee80211ErpOfdmMode *>(mode) != nullptr ?
@@ -300,6 +308,18 @@ void Ieee80211Radio::decapsulate(Packet *packet) const
     const auto& phyHeader = popIeee80211PhyHeaderAtFront(packet, b(-1), Chunk::PF_ALLOW_INCORRECT | Chunk::PF_ALLOW_INCOMPLETE | Chunk::PF_ALLOW_IMPROPERLY_REPRESENTED);
     if (phyHeader->isIncorrect() || phyHeader->isIncomplete() || phyHeader->isImproperlyRepresented() || !verifyFcs(phyHeader))
         packet->setBitError(true);
+    auto indication = packet->getTagForUpdate<Ieee80211ModeInd>();
+    indication->setSignalExtensionDuration(-1);
+    auto time = packet->findTag<SignalTimeInd>();
+    if (time && time->getEndTime() > time->getStartTime() && phyHeader->isCorrect() &&
+            !phyHeader->isIncomplete() && !phyHeader->isImproperlyRepresented() && verifyFcs(phyHeader)) {
+        auto nominalExtension = mode->getSignalExtensionTime();
+        auto receivedDuration = time->getEndTime() - time->getStartTime();
+        auto actualExtension = receivedDuration - mode->getDuration(B(phyHeader->getLengthField())) + nominalExtension;
+        // The packet-level representation supports zero or the nominal signal extension.
+        if (actualExtension == SIMTIME_ZERO || actualExtension == nominalExtension)
+            indication->setSignalExtensionDuration(actualExtension);
+    }
     if (auto ofdmHeader = dynamicPtrCast<const Ieee80211OfdmPhyHeader>(phyHeader)) {
         auto signal = unpackIeee80211OfdmSignalField(packIeee80211OfdmSignalField(ofdmHeader->getRate(),
                 ofdmHeader->getReserved(), ofdmHeader->getLengthField().get<B>(), ofdmHeader->getParity(), ofdmHeader->getTail()));

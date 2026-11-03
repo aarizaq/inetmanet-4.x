@@ -70,6 +70,12 @@ class INET_API IIeee80211Mode : public cObject, public IPrintableObject
     // Returns whether this mode uses the optional 400 ns HT guard interval.
     // Non-HT modes deliberately report false.
     virtual bool isHtShortGuardInterval() const = 0;
+    // Returns the VHT MCS index represented by this mode, or -1 for modes from
+    // other PHY generations.
+    virtual int getVhtMcsIndex() const = 0;
+    // Returns whether this mode uses the optional 400 ns VHT guard interval.
+    // Non-VHT modes report false.
+    virtual bool isVhtShortGuardInterval() const = 0;
     virtual int getLegacyCwMin() const = 0;
     virtual int getLegacyCwMax() const = 0;
     virtual const char *getName() const = 0;
@@ -83,6 +89,8 @@ class INET_API IIeee80211Mode : public cObject, public IPrintableObject
     virtual const simtime_t getSlotTime() const = 0;
     virtual const simtime_t getSifsTime() const = 0;
     virtual const simtime_t getRifsTime() const = 0;
+    // Default extension after the PPDU, in seconds. A received waveform can omit it for RIFS.
+    virtual const simtime_t getSignalExtensionTime() const = 0;
     virtual const simtime_t getCcaTime() const = 0;
     virtual const simtime_t getPhyRxStartDelay() const = 0;
     virtual const simtime_t getRxTxTurnaroundTime() const = 0;

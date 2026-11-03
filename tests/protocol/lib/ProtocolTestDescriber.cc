@@ -155,6 +155,21 @@ static std::string contentNoun(const EventPattern& p)
 // New-vocabulary rendering: subject (the attributed counterpart module, named via its
 // protocol; else the honest source) + verb (from the signal, flipped under attributeTo) + the
 // translated message phrase.
+// The aggregate captures of a step, as a phrase that follows its event.
+static std::string renderAggregates(const EventPattern& p)
+{
+    std::ostringstream os;
+    for (const auto& a : p.aggregates) {
+        switch (a.kind) {
+            case EventPattern::Aggregate::Sum:   os << ", adding up \"" << a.expression << "\" as " << a.name; break;
+            case EventPattern::Aggregate::Count: os << ", counting the events as " << a.name; break;
+            case EventPattern::Aggregate::Max:   os << ", keeping the largest \"" << a.expression << "\" as " << a.name; break;
+            case EventPattern::Aggregate::Min:   os << ", keeping the smallest \"" << a.expression << "\" as " << a.name; break;
+        }
+    }
+    return os.str();
+}
+
 static std::string renderNewPattern(const EventPattern& p, const char *modal)
 {
     std::ostringstream os;
@@ -218,6 +233,7 @@ static std::string renderNewPattern(const EventPattern& p, const char *modal)
         for (size_t i = 0; i < p.captures.size(); i++)
             os << (i ? ", " : "") << p.captures[i].first;
     }
+    os << renderAggregates(p);
     if (p.fltHasNotBefore)
         os << " (but not before " << formatTime(p.fltNotBefore) << " after the previous step)";
     return capitalize(os.str()) + ".";
@@ -247,6 +263,7 @@ static std::string renderPattern(const EventPattern& p, const char *modal)
         for (size_t i = 0; i < p.captures.size(); i++)
             os << (i ? ", " : "") << p.captures[i].first;
     }
+    os << renderAggregates(p);
     if (p.fltHasNotBefore)
         os << " (but not before " << formatTime(p.fltNotBefore) << " after the previous step)";
 
@@ -330,11 +347,42 @@ static std::string renderInject(const Injection& inj)
     return capitalize(os.str()) + ".";
 }
 
+static std::string renderAct(const Action& action)
+{
+    std::ostringstream os;
+    if (action.hasAtTime)
+        os << "at " << formatTime(action.atTime) << ", ";
+    else if (action.hasAfter)
+        os << formatTime(action.afterDelay) << " after the previous step, ";
+    else
+        os << "then, ";
+    if (!action.description.empty())
+        os << action.description;
+    else {
+        if (!action.calls.empty())
+            os << "run code in ";
+        for (size_t k = 0; k < action.calls.size(); k++)
+            os << (k == 0 ? "" : " and ") << action.calls[k].first;
+        for (size_t k = 0; k < action.nodeStops.size(); k++)
+            os << (action.calls.empty() && k == 0 ? "" : ", and ") << "stop the node " << action.nodeStops[k];
+    }
+    for (const auto& assertion : action.moduleAssertions)
+        os << (action.description.empty() && action.calls.empty() && action.nodeStops.empty() ? "" : ", and ")
+           << "the module " << assertion.first << " must satisfy \"" << assertion.second << "\"";
+    return capitalize(os.str()) + ".";
+}
+
 static std::string renderInterception(const Interception& i)
 {
     std::ostringstream os;
     os << "on tap '" << i.tapName << "', ";
     if (i.action == "delay")          os << "delay (by " << formatTime(i.delayTime) << ") ";
+    else if (i.action == "mutate" && !i.assignments.empty()) {
+        os << "set ";
+        for (size_t k = 0; k < i.assignments.size(); k++)
+            os << (k == 0 ? "" : " and ") << i.assignments[k].first << " to " << i.assignments[k].second;
+        os << (i.mutator ? ", and mutate, in " : " in ");
+    }
     else if (i.action == "mutate")    os << "mutate ";
     else if (i.action == "corrupt")   os << "corrupt ";
     else if (i.action == "duplicate") os << "duplicate (" << i.numCopies << (i.numCopies == 1 ? " copy, " : " copies, ")
@@ -382,6 +430,7 @@ std::string describe(const ProtocolTest& test)
             case StepType::Count:        clause = renderCount(step.pattern, step.cardMin, step.cardMax); break;
             case StepType::Delivery:  clause = renderDelivery(step.pattern, step.pattern2); break;
             case StepType::Inject:    clause = renderInject(step.injection); break;
+            case StepType::Act:       clause = renderAct(step.action); break;
             case StepType::Intercept: {
                 std::string rule = renderInterception(test.interceptions[step.interceptionIndex]);
                 rule[0] = std::tolower(rule[0]);

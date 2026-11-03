@@ -12,6 +12,7 @@
 #include "inet/common/ProtocolTag_m.h"
 #include "inet/common/SequenceNumberTag_m.h"
 #include "inet/linklayer/common/DropEligibleTag_m.h"
+#include "inet/linklayer/common/EtherTypeTag_m.h"
 #include "inet/linklayer/common/InterfaceTag_m.h"
 #include "inet/linklayer/common/MacAddressTag_m.h"
 #include "inet/linklayer/common/PcpTag_m.h"
@@ -48,12 +49,16 @@ void PacketDirectionReverser::processPacket(Packet *packet)
     auto cutthroughTag = packet->findTag<CutthroughTag>();
     auto eligibilityTimeTag = packet->findTag<EligibilityTimeTag>();
     auto macAddressInd = packet->findTag<MacAddressInd>();
-    auto dropEligibleInd = packet->findTag<DropEligibleInd>();
-    auto vlanInd = packet->findTag<VlanInd>();
-    auto pcpInd = packet->findTag<PcpInd>();
+    auto cDropEligibleInd = packet->findTag<CDropEligibleInd>();
+    auto sDropEligibleInd = packet->findTag<SDropEligibleInd>();
+    auto cVlanInd = packet->findTag<CVlanInd>();
+    auto sVlanInd = packet->findTag<SVlanInd>();
+    auto cPcpInd = packet->findTag<CPcpInd>();
+    auto sPcpInd = packet->findTag<SPcpInd>();
     auto userPriorityInd = packet->findTag<UserPriorityInd>();
     auto streamInd = packet->findTag<StreamInd>();
     auto sequenceNumberInd = packet->findTag<SequenceNumberInd>();
+    auto etherTypeInd = packet->findTag<EtherTypeInd>();
     auto interfaceInd = packet->findTag<InterfaceInd>();
     auto encapsulationProtocolInd = packet->findTag<EncapsulationProtocolInd>();
     packet->trim();
@@ -79,18 +84,26 @@ void PacketDirectionReverser::processPacket(Packet *packet)
         macAddressReq->setSrcAddress(macAddressInd->getSrcAddress());
         macAddressReq->setDestAddress(macAddressInd->getDestAddress());
     }
-    if (dropEligibleInd != nullptr)
-        packet->addTag<DropEligibleReq>()->setDropEligible(dropEligibleInd->getDropEligible());
-    if (vlanInd != nullptr && forwardVlan)
-        packet->addTag<VlanReq>()->setVlanId(vlanInd->getVlanId());
-    if (pcpInd != nullptr && forwardPcp)
-        packet->addTag<PcpReq>()->setPcp(pcpInd->getPcp());
+    if (cDropEligibleInd != nullptr)
+        packet->addTag<CDropEligibleReq>()->setDropEligible(cDropEligibleInd->getDropEligible());
+    if (sDropEligibleInd != nullptr)
+        packet->addTag<SDropEligibleReq>()->setDropEligible(sDropEligibleInd->getDropEligible());
+    if (cVlanInd != nullptr && forwardVlan)
+        packet->addTag<CVlanReq>()->setVlanId(cVlanInd->getVlanId());
+    if (sVlanInd != nullptr && forwardVlan)
+        packet->addTag<SVlanReq>()->setVlanId(sVlanInd->getVlanId());
+    if (cPcpInd != nullptr && forwardPcp)
+        packet->addTag<CPcpReq>()->setPcp(cPcpInd->getPcp());
+    if (sPcpInd != nullptr && forwardPcp)
+        packet->addTag<SPcpReq>()->setPcp(sPcpInd->getPcp());
     if (userPriorityInd != nullptr)
         packet->addTag<UserPriorityReq>()->setUserPriority(userPriorityInd->getUserPriority());
     if (streamInd != nullptr)
         packet->addTag<StreamReq>()->setStreamName(streamInd->getStreamName());
     if (sequenceNumberInd != nullptr)
         packet->addTag<SequenceNumberReq>()->setSequenceNumber(sequenceNumberInd->getSequenceNumber());
+    if (etherTypeInd != nullptr)
+        packet->addTag<EtherTypeReq>()->setEtherType(etherTypeInd->getEtherType());
     if (encapsulationProtocolInd != nullptr) {
         int n = encapsulationProtocolInd->getProtocolArraySize();
         auto encapsulationProtocolReq = packet->addTag<EncapsulationProtocolReq>();

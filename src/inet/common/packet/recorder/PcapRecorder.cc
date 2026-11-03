@@ -192,8 +192,11 @@ void PcapRecorder::receiveSignal(cComponent *source, simsignal_t signalID, cObje
 #ifdef INET_WITH_PHYSICALLAYERWIRELESSCOMMON
         else if (auto transmission = dynamic_cast<const physicallayer::ITransmission *>(obj))
             recordPacket(transmission->getPacket(), direction, source);
-        else if (auto reception = dynamic_cast<const physicallayer::IReception *>(obj))
-            recordPacket(reception->getTransmission()->getPacket(), direction, source);
+        else if (auto reception = dynamic_cast<const physicallayer::IReception *>(obj)) {
+            // a radio gives the packet that it received as the details
+            auto receivedPacket = dynamic_cast<const Packet *>(details);
+            recordPacket(receivedPacket != nullptr ? receivedPacket : reception->getTransmission()->getPacket(), direction, source);
+        }
 #endif
     }
 }
@@ -205,7 +208,7 @@ void PcapRecorder::writePacket(const Protocol *protocol, const Packet *packet, b
         throw cRuntimeError("Cannot determine the PCAP link type from protocol '%s'", protocol->getName());
     bool convertPacket = !matchesLinkType(pcapLinkType, protocol);
     if (convertPacket) {
-        packet = tryConvertToLinkType(packet, frontOffset, backOffset, pcapLinkType, protocol);
+        packet = tryConvertToLinkType(packet, frontOffset, backOffset, pcapLinkType, protocol, direction);
         if (packet == nullptr)
             throw cRuntimeError("The protocol '%s' doesn't match PCAP link type %d", protocol->getName(), pcapLinkType);
         frontOffset = b(0);
@@ -280,9 +283,13 @@ bool PcapRecorder::matchesLinkType(PcapLinkType pcapLinkType, const Protocol *pr
 {
     if (protocol == nullptr)
         return false;
-    else if (*protocol == Protocol::ethernetPhy)
+    for (auto helper : helpers) {
+        if (helper->matchesLinkType(pcapLinkType, protocol))
+            return true;
+    }
+    if (*protocol == Protocol::ethernetPhy)
         return pcapLinkType == LINKTYPE_ETHERNET_MPACKET;
-    else if (*protocol == Protocol::ethernetMac)
+    else if (*protocol == Protocol::ethernetMac || *protocol == Protocol::ethernetMacNoFcs)
         return pcapLinkType == LINKTYPE_ETHERNET;
     else if (*protocol == Protocol::ppp)
         return pcapLinkType == LINKTYPE_PPP_WITH_DIR;
@@ -294,20 +301,19 @@ bool PcapRecorder::matchesLinkType(PcapLinkType pcapLinkType, const Protocol *pr
         return pcapLinkType == LINKTYPE_RAW || pcapLinkType == LINKTYPE_IPV6;
     else if (*protocol == Protocol::ieee802154)
         return pcapLinkType == LINKTYPE_IEEE802_15_4 || pcapLinkType == LINKTYPE_IEEE802_15_4_NOFCS;
-    else {
-        for (auto helper : helpers) {
-            if (helper->matchesLinkType(pcapLinkType, protocol))
-                return true;
-        }
-    }
     return false;
 }
 
 PcapLinkType PcapRecorder::protocolToLinkType(const Protocol *protocol) const
 {
+    for (auto helper : helpers) {
+        auto lt = helper->protocolToLinkType(protocol);
+        if (lt != LINKTYPE_INVALID)
+            return lt;
+    }
     if (*protocol == Protocol::ethernetPhy)
         return LINKTYPE_ETHERNET_MPACKET;
-    else if (*protocol == Protocol::ethernetMac)
+    else if (*protocol == Protocol::ethernetMac || *protocol == Protocol::ethernetMacNoFcs)
         return LINKTYPE_ETHERNET;
     else if (*protocol == Protocol::ppp)
         return LINKTYPE_PPP_WITH_DIR;
@@ -317,21 +323,14 @@ PcapLinkType PcapRecorder::protocolToLinkType(const Protocol *protocol) const
         return LINKTYPE_RAW;
     else if (*protocol == Protocol::ieee802154)
         return LINKTYPE_IEEE802_15_4;
-    else {
-        for (auto helper : helpers) {
-            auto lt = helper->protocolToLinkType(protocol);
-            if (lt != LINKTYPE_INVALID)
-                return lt;
-        }
-    }
     return LINKTYPE_INVALID;
 }
 
-Packet *PcapRecorder::tryConvertToLinkType(const Packet *packet, b frontOffset, b backOffset, PcapLinkType pcapLinkType, const Protocol *protocol) const
+Packet *PcapRecorder::tryConvertToLinkType(const Packet *packet, b frontOffset, b backOffset, PcapLinkType pcapLinkType, const Protocol *protocol, Direction direction) const
 {
     if (enableConvertingPackets) {
         for (IHelper *helper : helpers) {
-            if (auto newPacket = helper->tryConvertToLinkType(packet, frontOffset, backOffset, pcapLinkType, protocol))
+            if (auto newPacket = helper->tryConvertToLinkType(packet, frontOffset, backOffset, pcapLinkType, protocol, direction))
                 return newPacket;
         }
     }

@@ -12,6 +12,7 @@
 #include "inet/common/ProtocolTag_m.h"
 #include "inet/common/ProtocolUtils.h"
 #include "inet/linklayer/common/DropEligibleTag_m.h"
+#include "inet/linklayer/common/EtherTypeTag_m.h"
 #include "inet/linklayer/common/EtherType_m.h"
 #include "inet/linklayer/common/PcpTag_m.h"
 #include "inet/linklayer/common/UserPriorityTag_m.h"
@@ -26,14 +27,10 @@ void Ieee8021qTagEpdHeaderChecker::initialize(int stage)
 {
     PacketFilterBase::initialize(stage);
     if (stage == INITSTAGE_LOCAL) {
-        const char *vlanTagType = par("vlanTagType");
-        if (!strcmp("s", vlanTagType))
-            qtagProtocol = &Protocol::ieee8021qSTag;
-        else if (!strcmp("c", vlanTagType))
-            qtagProtocol = &Protocol::ieee8021qCTag;
-        else
-            throw cRuntimeError("Unknown tag type");
+        vlanTagType = parseVlanTagType(par("vlanTagType"));
+        qtagProtocol = getVlanTagProtocol(vlanTagType);
         vlanIdFilter = check_and_cast<cValueArray *>(par("vlanIdFilter").objectValue());
+        acceptUnknownEtherTypes = par("acceptUnknownEtherTypes");
     }
     else if (stage == INITSTAGE_LINK_LAYER)
         registerProtocol(*qtagProtocol, nullptr, inputGate);
@@ -49,16 +46,25 @@ void Ieee8021qTagEpdHeaderChecker::processPacket(Packet *packet)
 {
     const auto& header = packet->popAtFront<Ieee8021qTagEpdHeader>();
     appendEncapsulationProtocolInd(packet, qtagProtocol);
+    // IEEE 802.1Q-2018 6.9.1 h): the priority of a tagged frame is decoded from the
+    // tag header, and replaces the one that the layer below indicated, so in a stack
+    // the innermost tag, which is checked last, determines the user priority
     packet->addTagIfAbsent<UserPriorityInd>()->setUserPriority(header->getPcp());
-    packet->addTagIfAbsent<PcpInd>()->setPcp(header->getPcp());
-    packet->addTagIfAbsent<VlanInd>()->setVlanId(header->getVid());
-    packet->addTagIfAbsent<DropEligibleInd>()->setDropEligible(header->getDei());
+    addPcpIndIfAbsent(packet, vlanTagType)->setPcp(header->getPcp());
+    addVlanIndIfAbsent(packet, vlanTagType)->setVlanId(header->getVid());
+    addDropEligibleIndIfAbsent(packet, vlanTagType)->setDropEligible(header->getDei());
     auto typeOrLength = header->getTypeOrLength();
     const Protocol *protocol;
     if (isIeee8023Length(typeOrLength))
         protocol = &Protocol::ieee8022llc;
-    else
-        protocol = ProtocolGroup::getEthertypeProtocolGroup()->getProtocol(typeOrLength);
+    else {
+        protocol = ProtocolGroup::getEthertypeProtocolGroup()->findProtocol(typeOrLength);
+        if (protocol == nullptr) {
+            ASSERT(acceptUnknownEtherTypes);
+            protocol = &Protocol::unknown;
+            packet->addTag<EtherTypeInd>()->setEtherType(typeOrLength);
+        }
+    }
     auto packetProtocolTag = packet->addTagIfAbsent<PacketProtocolTag>();
     packetProtocolTag->setFrontOffset(b(0));
     packetProtocolTag->setBackOffset(b(0));
@@ -77,7 +83,7 @@ bool Ieee8021qTagEpdHeaderChecker::matchesPacket(const Packet *packet) const
 {
     const auto& header = packet->peekAtFront<Ieee8021qTagEpdHeader>();
     auto typeOrLength = header->getTypeOrLength();
-    if (!isIeee8023Length(typeOrLength) && ProtocolGroup::getEthertypeProtocolGroup()->findProtocol(typeOrLength) == nullptr)
+    if (!isIeee8023Length(typeOrLength) && !acceptUnknownEtherTypes && ProtocolGroup::getEthertypeProtocolGroup()->findProtocol(typeOrLength) == nullptr)
         return false;
     else {
         auto vlanId = header->getVid();

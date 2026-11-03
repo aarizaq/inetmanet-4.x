@@ -40,11 +40,11 @@ protected:
     void handleSignal(WirelessSignal *radioFrame) override;
 
     bool iAmTransmiting;
-    virtual bool isTransmissionTimer(const cMessage *message) const;
+    virtual bool isTransmissionTimer(const cMessage *message) const override;
     virtual void handleTransmissionTimer(cMessage *message) override;
     virtual void startTransmission(Packet *macFrame, IRadioSignal::SignalPart part) override;
-    virtual void continueTransmission(cMessage *timer);
-    virtual void endTransmission(cMessage *timer);
+    virtual void continueTransmission(cMessage *timer) override;
+    virtual void endTransmission(cMessage *timer) override;
 
     virtual bool isReceptionTimer(const cMessage *message) const override;
     virtual void startReception(cMessage *timer, IRadioSignal::SignalPart part) override;

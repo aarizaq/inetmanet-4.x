@@ -195,6 +195,16 @@ void NetworkInterface::arrived(cMessage *message, cGate *gate, const SendOptions
     cModule::arrived(message, gate, options, time);
 }
 
+void NetworkInterface::preDelete(cComponent *root)
+{
+    PacketProcessorBase::preDelete(root);
+    auto rootModule = check_and_cast<cModule *>(root);
+    if (!rootModule->containsModule(gate("upperLayerOut")->getPathEndGate()->getOwnerModule()))
+        inet::unregisterInterface(*this, gate("upperLayerIn"), gate("upperLayerOut"));
+    if (interfaceTable != nullptr && !rootModule->containsModule(check_and_cast<cModule *>(interfaceTable.get())))
+        interfaceTable->removeInterface(this);
+}
+
 bool NetworkInterface::canPushSomePacket(const cGate *gate) const
 {
     auto pathEndGate = gate->getPathEndGate();
@@ -716,6 +726,26 @@ NetworkInterface *getContainingNicModule(const cModule *from)
     if (!networkInterface)
         throw cRuntimeError("getContainingNicModule(): nic module not found (it should be an NetworkInterface class) for module '%s'", from ? from->getFullPath().c_str() : "<nullptr>");
     return networkInterface;
+}
+
+// Returns the interface that the object of an interface signal is about: the
+// NetworkInterface of interfaceCreatedSignal and interfaceDeletedSignal, or the
+// interface of the NetworkInterfaceChangeDetails of the interface change signals.
+// Returns nullptr for other objects.
+static const NetworkInterface *findSignalNetworkInterface(const cObject *obj)
+{
+    if (auto networkInterface = dynamic_cast<const NetworkInterface *>(obj))
+        return networkInterface;
+    else if (auto details = dynamic_cast<const NetworkInterfaceChangeDetails *>(obj))
+        return details->getNetworkInterface();
+    else
+        return nullptr;
+}
+
+bool isSignalForInterfaceTable(const cObject *obj, const IInterfaceTable *interfaceTable)
+{
+    auto networkInterface = findSignalNetworkInterface(obj);
+    return networkInterface == nullptr || networkInterface->getInterfaceTable() == interfaceTable;
 }
 
 } // namespace inet

@@ -340,23 +340,33 @@ void InterfaceTable::discoverConnectingGates(NetworkInterface *entry)
             throw cRuntimeError("addInterface(): interface module '%s' is connected only to an 'ifOut' or an 'ifIn' gate, must connect to either both or neither", ifmod->getFullPath().c_str());
         if (nwlayerInGate->getOwnerModule() != nwlayerOutGate->getOwnerModule())
             throw cRuntimeError("addInterface(): interface module '%s' is connected to 'ifOut' and 'ifIn' gates in different modules", ifmod->getFullPath().c_str());
-        if (nwlayerInGate->getIndex() != nwlayerOutGate->getIndex()) // if both are scalar, that's OK too (index==0)
+        // a scalar gate is taken as index -1: two scalar gates match, a scalar gate and a vector element never do
+        int nwlayerInGateIndex = nwlayerInGate->isVector() ? nwlayerInGate->getIndex() : -1;
+        int nwlayerOutGateIndex = nwlayerOutGate->isVector() ? nwlayerOutGate->getIndex() : -1;
+        if (nwlayerInGateIndex != nwlayerOutGateIndex)
             throw cRuntimeError("addInterface(): gate index mismatch: interface module '%s' is connected to different indices in 'ifOut[']/'ifIn[]' gates of the network layer module", ifmod->getFullPath().c_str());
 //        entry->setNetworkLayerGateIndex(nwlayerInGate->getIndex());
     }
 }
 
-void InterfaceTable::deleteInterface(NetworkInterface *entry)
+void InterfaceTable::removeInterface(NetworkInterface *entry)
 {
+    Enter_Method("removeInterface");
     int id = entry->getInterfaceId();
-    if (entry != getInterfaceById(id))
-        throw cRuntimeError("deleteInterface(): interface '%s' not found in interface table", entry->getInterfaceName());
+    if (entry != findInterfaceById(id))
+        throw cRuntimeError("removeInterface(): interface '%s' not found in interface table", entry->getInterfaceName());
 
     emit(interfaceDeletedSignal, entry); // actually, only going to be deleted
 
     idToInterface[id - INTERFACEIDS_START] = nullptr;
-    entry->deleteModule();
     invalidateTmpInterfaceList();
+}
+
+void InterfaceTable::deleteInterface(NetworkInterface *entry)
+{
+    if (entry != findInterfaceById(entry->getInterfaceId()))
+        throw cRuntimeError("deleteInterface(): interface '%s' not found in interface table", entry->getInterfaceName());
+    entry->deleteModule(); // the interface removes itself from the table, see NetworkInterface::preDelete()
 }
 
 void InterfaceTable::invalidateTmpInterfaceList()

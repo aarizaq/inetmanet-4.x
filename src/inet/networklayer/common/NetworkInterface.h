@@ -185,6 +185,13 @@ class INET_API NetworkInterface : public queueing::PacketProcessorBase, public q
 
     virtual void arrived(cMessage *message, cGate *gate, const SendOptions& options, simtime_t time) override;
 
+    /**
+     * Unregisters the interface from the dispatchers that know it, and removes
+     * it from its interface table, unless they are deleted together with it
+     * (e.g. with the node, or at the end of the run).
+     */
+    virtual void preDelete(cComponent *root) override;
+
   public:
     NetworkInterface();
     virtual ~NetworkInterface();
@@ -407,6 +414,16 @@ INET_API NetworkInterface *findContainingNicModule(const cModule *from);
  * throws error if no containing nic module.
  */
 INET_API NetworkInterface *getContainingNicModule(const cModule *from);
+
+/**
+ * Returns true if the signal object obj is for the given interface table: it is
+ * about an interface of that table, or it is not about an interface at all.
+ * Returns false for the interface signals of other interface tables, e.g. those
+ * of an interface table nested inside the node. Listeners subscribed on a node
+ * use it to ignore the interfaces of other interface tables in the node.
+ * Interface ids are per table, so the tables are compared as objects.
+ */
+INET_API bool isSignalForInterfaceTable(const cObject *obj, const IInterfaceTable *interfaceTable);
 
 } // namespace inet
 

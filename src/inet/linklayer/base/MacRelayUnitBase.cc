@@ -15,6 +15,7 @@
 #include "inet/common/SequenceNumberTag_m.h"
 #include "inet/common/StringFormat.h"
 #include "inet/linklayer/common/DropEligibleTag_m.h"
+#include "inet/linklayer/common/EtherTypeTag_m.h"
 #include "inet/linklayer/common/InterfaceTag_m.h"
 #include "inet/linklayer/common/MacAddressTag_m.h"
 #include "inet/linklayer/common/UserPriorityTag_m.h"
@@ -29,6 +30,7 @@ void MacRelayUnitBase::initialize(int stage)
 {
     LayeredProtocolBase::initialize(stage);
     if (stage == INITSTAGE_LOCAL) {
+        vlanTagType = parseVlanTagType(par("vlanTagType"));
         macForwardingTable.reference(this, "macTableModule", true);
         interfaceTable.reference(this, "interfaceTableModule", true);
         numProcessedFrames = numDroppedFrames = 0;
@@ -61,14 +63,20 @@ Packet *MacRelayUnitBase::createForwardedPacket(const Packet *incomingPacket) co
     outgoingPacket->trim();
     outgoingPacket->clearTags();
     outgoingPacket->addTag<PacketProtocolTag>()->setProtocol(protocol);
-    if (auto vlanInd = incomingPacket->findTag<VlanInd>())
-        outgoingPacket->addTag<VlanReq>()->setVlanId(vlanInd->getVlanId());
+    if (auto vlanInd = incomingPacket->findTag<CVlanInd>())
+        outgoingPacket->addTag<CVlanReq>()->setVlanId(vlanInd->getVlanId());
+    if (auto vlanInd = incomingPacket->findTag<SVlanInd>())
+        outgoingPacket->addTag<SVlanReq>()->setVlanId(vlanInd->getVlanId());
     if (auto userPriorityInd = incomingPacket->findTag<UserPriorityInd>())
         outgoingPacket->addTag<UserPriorityReq>()->setUserPriority(userPriorityInd->getUserPriority());
-    if (auto dropEligibleInd = incomingPacket->findTag<DropEligibleInd>())
-        outgoingPacket->addTag<DropEligibleReq>()->setDropEligible(dropEligibleInd->getDropEligible());
+    if (auto dropEligibleInd = incomingPacket->findTag<CDropEligibleInd>())
+        outgoingPacket->addTag<CDropEligibleReq>()->setDropEligible(dropEligibleInd->getDropEligible());
+    if (auto dropEligibleInd = incomingPacket->findTag<SDropEligibleInd>())
+        outgoingPacket->addTag<SDropEligibleReq>()->setDropEligible(dropEligibleInd->getDropEligible());
     if (auto sequenceNumberInd = incomingPacket->findTag<SequenceNumberInd>())
         outgoingPacket->addTag<SequenceNumberReq>()->setSequenceNumber(sequenceNumberInd->getSequenceNumber());
+    if (auto etherTypeInd = incomingPacket->findTag<EtherTypeInd>())
+        outgoingPacket->addTag<EtherTypeReq>()->setEtherType(etherTypeInd->getEtherType());
     auto& macAddressReq = outgoingPacket->addTag<MacAddressReq>();
     macAddressReq->setSrcAddress(macAddressInd->getSrcAddress());
     macAddressReq->setDestAddress(macAddressInd->getDestAddress());

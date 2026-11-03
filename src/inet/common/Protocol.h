@@ -80,6 +80,7 @@ class INET_API Protocol
     static const Protocol ieee80211Mac;
     static const Protocol ieee80211Mgmt;
     static const Protocol ieee80211OfdmPhy;
+    static const Protocol ieee80211Radiotap;
     static const Protocol ieee80211VhtPhy;
     static const Protocol ieee802154;
     static const Protocol ieee8021ae;
@@ -133,6 +134,7 @@ class INET_API Protocol
     static const Protocol apskPhy;
     static const Protocol csmaCaMac;
     static const Protocol echo;
+    static const Protocol ethernetMacNoFcs; // an Ethernet MAC frame without its FCS, e.g. in the GTP-U tunnel of a 5G Ethernet PDU session, see Protocol.cc
     static const Protocol flooding;
     static const Protocol linkStateRouting;
     static const Protocol nextHopForwarding;

@@ -180,6 +180,41 @@ the capture keeps its quantity form and the expression engine compares it, so
 `tcp.headerLength == {synHeaderLength} - 4B` is a valid step. A capture is converted only
 where an expression names it, so a capture taken for one step cannot break another.
 
+A failed assertion quotes its expression, and then the same expression with the values of
+its captures, so the reason shows what was compared:
+`'{sent} == 2000B' ('1999B == 2000B')`.
+
+### Aggregate captures: add up a stream without C++
+
+A capture keeps one value. A check that speaks about many events — the data in flight before
+the first acknowledgment, the largest segment, the number of probes — needs a value that each
+event changes. Four words do that, and each event that the step matches changes the capture:
+
+| Word | The capture |
+| --- | --- |
+| `.captureSum(name, expression)` | the sum of the expression over the events; 0 before the first |
+| `.captureCount(name)` | the number of events; 0 before the first |
+| `.captureMax(name, expression)` | the largest value of the expression; not set before the first |
+| `.captureMin(name, expression)` | the smallest value; not set before the first |
+
+The expression has the syntax of a filter expression, and it can name `length`, the length of
+the packet in bytes, and `value`, the value of a scalar signal. Put the words on a guard that
+cannot fail, `anyNumberOfTimes(...)`, and read the result in a later assertion
+([`CaptureAggregate`](../self/CaptureAggregate.test)):
+
+```cpp
+.meanwhile(anyNumberOfTimes(on("host1.tcp").signal("packetSentToLower")
+                                .filterPacket("tcp.synBit == false && tcp.finBit == false")
+                                .captureSum("sent", "length - tcp.headerLength")
+                                .captureMax("largest", "length - tcp.headerLength").within(1.5)))
+.meanwhile(anyNumberOfTimes(on("host1.tcp").signal("cwnd").captureMin("smallestWindow", "value").within(1.5)))
+.once(on("host1.tcp").signal("packetSentToLower").filterPacket("tcp.finBit == true").first()
+          .assertPacket("{sent} == 2000B && {largest} == 536B"))
+```
+
+A sum keeps the unit of its expression. A guard runs the captures of each event that it
+matches, so a plain `capture` in a guard holds the value of the last such event.
+
 ---
 
 ## 5. Combinators
@@ -207,8 +242,9 @@ running step rather than only the first:
           .filterPacket("ipv4.identification == {id}").within(0.2))
 ```
 
-`never`, `atMostTimes` and `atLeastTimes` exist as free builders for this, and they return a
-step rather than adding one. A guard carries its own window and its own anchor, so a
+`never`, `atMostTimes`, `atLeastTimes`, `exactlyTimes` and `anyNumberOfTimes` exist as free
+builders for this, and they return a step rather than adding one. `anyNumberOfTimes` cannot
+fail: it is the guard for aggregate captures. A guard carries its own window and its own anchor, so a
 `notBefore` inside it is measured from when the guard started.
 
 ---
@@ -229,6 +265,61 @@ Inject a packet built in C++ into a module's gate, scheduled or reactively:
   observed one (stimulus/response). The builder owns construction — any chunk/tag is possible.
 
 Inject steps are ordered like any other step.
+
+### An action at a time
+
+`act(action()...)` is a step that the tester takes itself, at a time (`.at(t)`) or after the
+previous step (`.after(d)`). The step after it starts when the action is done. An action can
+hold these words, in any number:
+
+| Word | What the tester does |
+| --- | --- |
+| `.setParameter(module, name, value)` | changes a parameter; the value is NED expression text, so a string keeps its quotes: `"\"accecn\""` |
+| `.run(module, fn)` | calls `void(cModule*)` as a method call of the module, so the code can send from it, as a socket call does |
+| `.run<T>(module, fn)` | the same, with the module cast to `T&` |
+| `.assertModule(module, expression)` | checks the fields of a module, as the assertion of a step does; the test fails if they do not satisfy it |
+| `.stopNode(node)` | stops the node with the lifecycle operation of INET (`ModuleStopOperation`), as the shutdown of a scenario script does; the stages that a module delays end later, and the next step does not wait for them |
+
+The module paths are as in `assertModule`: relative to the network, with a `*` in the last
+name for the newest matching module ([`ActionStep`](../self/ActionStep.test)):
+
+```cpp
+.act(action().after(0.01).assertModule("host1.tcp.conn-*", "state.ts_enabled"))
+.act(action().at(1.0).setParameter("host1.tcp", "timestampSupport", "false"))   // a @mutable parameter
+.once(on("host1.tcp").signal("packetSentToLower").filterPacket("tcp.synBit == true").first()
+          .assertPacket("tcp.headerLength < {firstSyn}"))
+```
+
+A parameter that is not `@mutable` refuses the change. Use `setParameter` for the run-time
+change of a mutable parameter, and `run` for a call that no parameter can express, such as a
+socket call.
+
+### TCP socket calls: `TcpTestApp`
+
+A socket call needs an application module, because TCP sends its indications to the module
+that owns the socket. `TcpTestApp` (`like IApp`) is that module: it owns one socket for an
+active open or a listener, and the sockets that the listener forks, and it calls nothing by
+itself. An action calls its sockets with the whole API of `TcpSocket`; `addressOf(node)` and
+`sendData(socket, bytes, eor)` save a few lines ([`TcpTestAppSockets`](../self/TcpTestAppSockets.test)):
+
+```cpp
+.act(action().at(0.0).run<TcpTestApp>("host2.app[0]", [](TcpTestApp& app) {
+    app.socket().bind(1000);
+    app.socket().listen();
+}))
+.act(action().at(0.1).run<TcpTestApp>("host1.app[0]", [](TcpTestApp& app) {
+    app.socket().connect(app.addressOf("host2"), 1000, true);    // with Fast Open
+}))
+.once(on("host1.app[0]").signal("socketEstablished").within(0.1))
+```
+
+The application emits the data that it receives and sends as `packetReceivedFromLower` and
+`packetSentToLower`, so the steps observe them as packets. The other indications are scalar
+signals with the id of the socket: `socketEstablished`, `socketPeerClosed`, `socketClosed`,
+`socketSendReady` (the notification of `TCP_NOTSENT_LOWAT`), and `socketFailure`, which
+carries the code of the failure. Include `TcpTestApp.h` in `%includes`, and do not name a test
+file `TcpTestApp.test`: opp_test makes a namespace of the file name, which then collides
+with the class.
 
 ---
 
@@ -281,6 +372,7 @@ selectors must hold, and a rule has exactly one action.
 | `.drop()` | discard the frame | the frame does not exist for the receiver: no signal, no energy |
 | `.delay(t)` | forward after `t` | refused: a radio signal cannot arrive late |
 | `.mutate(fn)` | run `void(Packet*)` on the inner frame, then forward | run `fn` on the copy that the receiver gets |
+| `.set(field, expression)` | write a field of the inner frame, then forward | write the field in the copy that the receiver gets |
 | `.corrupt()` | set the bit error flag on the object on the wire, as the bit error model of a channel does | the receiver receives the frame, and its data part fails to decode |
 | `.duplicate(spacing, copies = 1)` | forward the frame, then the copies, each `spacing` after the one before; a copy waits while the channel is busy | new transmissions from the same transmitter; each receiver in range gets them, and `.to(node)` limits them; the spacing must be above 0 |
 
@@ -295,6 +387,30 @@ frame, then change the copy" is two rules:
 A rule counts frames, not receptions: on the radio medium, a rule that selects the third frame
 acts at each receiver of that frame. A tap refuses a rule that names a node it does not know,
 because such a rule would select nothing.
+
+### Change a field without C++
+
+`.set(field, expression)` writes one field of the frame. The field is a path as in `capture`:
+`tcp.window`, `ipv4.timeToLive`, `Ipv4Header.timeToLive`. The expression has the syntax of a
+filter expression, and it is evaluated over the frame before the change, so it can name the
+field itself and the captures:
+
+```cpp
+.intercept(tap("tap").from("host2").filterPacket("tcp.ackBit == true && tcp.synBit == false").nth(1)
+             .set("tcp.window", "tcp.window - 1000"))              // [InterceptSet]
+.intercept(tap("tap").filterPacket("tcp.destPort == 1000").nth(2)
+             .set("tcp.sequenceNo", "{seq} + 100000"))               // a segment beyond the window
+.intercept(tap("tap").from("host1").filterPacket("tcp.synBit == true").nth(1)
+             .set("ipv4.timeToLive", "1"))                           // a router answers with Time Exceeded
+```
+
+A rule can set more than one field. All the expressions of a rule read the frame before the
+first change, and a `.mutate(fn)` of the same rule runs after them. The rule writes the chunk
+that `capture` reads for the same path. After the change, the tap repairs the checksums that
+the change makes wrong: the IPv4 header checksum, and a computed TCP checksum, over the data
+of the datagram only. A declared checksum stays declared. The checksum of another protocol,
+such as UDP, is not repaired; a test that changes a UDP datagram with a computed checksum
+still needs a `.mutate(fn)`.
 
 `.mutate([](Packet *f) { f->setBitError(true); })` on a `PacketTap` sets the flag on the inner
 frame, not on the object on the wire. The Ethernet receivers discard such a frame too, since
@@ -398,6 +514,29 @@ The value is the raw index; map it with the module's public enum or its `@statis
 declaration, and write assertions against the enum (`EthernetPlca::CS_*` / `DS_*`), not the bare
 number.
 
+### White box: the fields of a module
+
+Some state has no signal: the options that a TCP connection negotiated, the MSS it learned, a
+cache. `assertModule(path, expression)` reads it when the filter picks the event. The names of
+the expression are the fields that the class descriptor of the module shows, and the fields
+of the objects that they point to; the expression can name the captures too
+([`AssertModule`](../self/AssertModule.test)):
+
+```cpp
+.once(on("host1.tcp").signal("packetSentToLower")
+          .filterPacket("tcp.ackBit == true && tcp.synBit == false").first()
+          .assertModule("host1.tcp.conn-*", "state.ws_enabled && !state.ts_enabled && state.snd_mss == 1460"))
+```
+
+The path is relative to the network. Its last name can have a `*`, and then the newest module
+that matches is the one: `host2.tcp.conn-*` is the connection that a listener forked, not the
+listener. A module whose C++ class has no descriptor field for the state cannot be read this
+way; a lambda of `assertEvent` can still read it.
+
+Use this word last. A test that reads the internal state establishes a fact about the
+implementation, and the wire, the application and the signals establish the behavior. A
+parameter test says in its description why it needs the white box.
+
 ---
 
 ## 9. Self-description
@@ -424,6 +563,7 @@ library, one folder per subject:
 | --- | --- |
 | [`../self/`](../self) | the framework itself: the matching engine, the combinators, injection, interception |
 | [`../tcp/`](../tcp) | TCP |
+| [`../tcp/parameter/`](../tcp/parameter/README.md) | TCP: one test for each class of values of each NED parameter ([the procedure](../../../doc/project/guide/derive-tests-from-parameters.md)) |
 | [`../arp/`](../arp), [`../ipv4/`](../ipv4), [`../ipv6/`](../ipv6), [`../ethernet/`](../ethernet) | one folder per protocol |
 | [`../wifi/`](../wifi) | the IEEE 802.11 conformance suite (its own runner) |
 
@@ -433,10 +573,10 @@ The runner builds the applicable test support library and generated executables 
 Run from the repository root, selecting the suite and test files for focused development:
 
 ```sh
-inet_run_protocol_tests -p inet -m debug -w '<suite-regex>' -f '<test-path-regex>'
-inet_run_protocol_tests -p inet -m debug -w self  # one suite (the folder name)
-inet_run_protocol_tests -p inet -m debug -w ipv   # every suite whose folder matches
-inet_run_protocol_tests -p inet -m debug          # every suite
+opp_run_protocol_tests -m debug -w '<suite-regex>' -f '<test-path-regex>'
+opp_run_protocol_tests -m debug -w self  # one suite (the folder name)
+opp_run_protocol_tests -m debug -w ipv   # every suite whose folder matches
+opp_run_protocol_tests -m debug          # every suite
 ```
 
 The runner finds the suites itself: every direct subfolder of `tests/protocol` that holds
@@ -468,6 +608,25 @@ an explicit `@namespace`, which keeps them immune to a consumer `.test`'s root `
 > present, so each example carries a one-line `%activity` that never runs (the network is the
 > one in `%inifile`). And avoid writing a literal `%word` in a `%description` — opp_test reads
 > it as a section directive.
+
+### Shared networks
+
+A test that needs one of the common shapes names a network of the library and has no `%file`
+of its own. The library folder is on the NED path of every suite.
+
+| Network | Shape | For |
+| --- | --- | --- |
+| `inet.protocoltest.TapPairNetwork` | host1 — tap — host2 | two peers on one link |
+| `inet.protocoltest.TapRouterNetwork` | host1 — tap — router — host2 | real ICMP errors from the router (a TTL of 1 gives Time Exceeded); a second link with its own rate, MTU (`*.router.eth[1].mtu`) and queue |
+| `inet.protocoltest.TapSwitchNetwork` | host1 — tap — switch — peer[numPeers] | one host with many peers |
+
+The node types and the configurator are parameters: `*.host*.typename = "StandardHost6"`,
+`*.router.typename = "Router6"` and `*.configurator.typename = "Ipv6FlatNetworkConfigurator"`
+make a network IPv6. `linkDatarate` and `linkDelay` set the links of host1 (and of the peers),
+and `bottleneckDatarate` and `bottleneckDelay` the second link of the router; a rate must be
+one that Ethernet knows. The ARP is `GlobalArp`, so the wire carries no ARP frames
+([`TapRouterNetwork`](../self/TapRouterNetwork.test),
+[`TapSwitchNetwork`](../self/TapSwitchNetwork.test)).
 
 ### Declaring an expected result (`%# expected-result`)
 

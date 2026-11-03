@@ -8,6 +8,7 @@
 #include "inet/linklayer/vlan/VlanReqMapper.h"
 
 #include "inet/common/ProtocolUtils.h"
+#include "inet/common/Simsignals.h"
 #include "inet/linklayer/common/InterfaceTag_m.h"
 #include "inet/linklayer/common/PcpTag_m.h"
 #include "inet/linklayer/common/VlanTag_m.h"
@@ -21,11 +22,12 @@ void VlanReqMapper::initialize(int stage)
 {
     PacketFlowBase::initialize(stage);
     if (stage == INITSTAGE_LOCAL) {
-        protocol = Protocol::getProtocol(par("protocol").stringValue());
+        vlanTagType = parseVlanTagType(par("vlanTagType"));
+        protocol = getVlanTagProtocol(vlanTagType);
         interfaceTable.reference(this, "interfaceTableModule", true);
-        cObject *object = par("mappedVlanIds");
-        mappedVlanIds = check_and_cast<cValueMap *>(object);
+        mappedVlanIds = parseMappedVlanIds(this, check_and_cast<cValueMap *>(par("mappedVlanIds").objectValue()), 0);
         WATCH(mappedVlanIds);
+        check_and_cast<cModule *>(interfaceTable.get())->subscribe(interfaceDeletedSignal, this);
     }
 }
 
@@ -43,23 +45,49 @@ void VlanReqMapper::processPacket(Packet *packet)
 {
     auto interfaceReq = packet->findTag<InterfaceReq>();
     auto networkInterface = interfaceReq != nullptr ? interfaceTable->getInterfaceById(interfaceReq->getInterfaceId()) : nullptr;
-    auto interfaceName = networkInterface != nullptr ? networkInterface->getInterfaceName() : "";
-    auto key = mappedVlanIds->containsKey(interfaceName) ? interfaceName : "*";
-    if (mappedVlanIds->containsKey(key)) {
-        auto interfaceMappedVlanIds = check_and_cast<cValueMap *>(mappedVlanIds->get(key).objectValue());
-        auto vlanReq = packet->findTag<VlanReq>();
-        auto oldVlanId = vlanReq != nullptr ? vlanReq->getVlanId() : -1;
-        auto key = std::to_string(oldVlanId);
-        if (interfaceMappedVlanIds->containsKey(key.c_str())) {
-            auto newVlanId = interfaceMappedVlanIds->get(key.c_str()).intValue();
-            if (newVlanId == -1)
-                packet->removeTagIfPresent<VlanReq>();
+    std::string interfaceName = networkInterface != nullptr ? networkInterface->getInterfaceName() : "";
+    if (auto interfaceMappedVlanIds = findInterfaceEntry(mappedVlanIds, interfaceName)) {
+        auto vlanReq = findVlanReq(packet, vlanTagType);
+        auto requestedVlanId = vlanReq != nullptr ? vlanReq->getVlanId() : -1;
+        auto it = interfaceMappedVlanIds->find(requestedVlanId);
+        if (it != interfaceMappedVlanIds->end()) {
+            auto mappedVlanId = it->second;
+            if (mappedVlanId == -1)
+                removeVlanReqIfPresent(packet, vlanTagType);
             else
-                packet->addTagIfAbsent<VlanReq>()->setVlanId(newVlanId);
+                addVlanReqIfAbsent(packet, vlanTagType)->setVlanId(mappedVlanId);
         }
     }
-    ensureEncapsulationProtocolReq(packet, protocol, packet->hasTag<VlanReq>() || packet->hasTag<PcpReq>());
+    ensureEncapsulationProtocolReq(packet, protocol, findVlanReq(packet, vlanTagType) != nullptr || findPcpReq(packet, vlanTagType) != nullptr);
     setDispatchProtocol(packet);
+}
+
+void VlanReqMapper::setInterfaceVlanIdMap(const NetworkInterface *networkInterface, const std::map<int, int>& vlanIdMap)
+{
+    Enter_Method("setInterfaceVlanIdMap");
+    auto interfaceName = networkInterface->getInterfaceName();
+    if (interfaceTable->getInterfaceById(networkInterface->getInterfaceId()) != networkInterface)
+        throw cRuntimeError("Interface '%s' is not in the interface table of this module", interfaceName);
+    checkMappedVlanIds(this, interfaceName, vlanIdMap, 0);
+    EV_INFO << "Setting VLAN id map" << EV_FIELD(interfaceName) << EV_ENDL;
+    mappedVlanIds[interfaceName] = vlanIdMap;
+}
+
+void VlanReqMapper::removeInterfaceVlanIdMap(const NetworkInterface *networkInterface)
+{
+    Enter_Method("removeInterfaceVlanIdMap");
+    auto interfaceName = networkInterface->getInterfaceName();
+    EV_INFO << "Removing VLAN id map" << EV_FIELD(interfaceName) << EV_ENDL;
+    mappedVlanIds.erase(interfaceName);
+}
+
+void VlanReqMapper::receiveSignal(cComponent *source, simsignal_t signal, cObject *object, cObject *details)
+{
+    Enter_Method("%s", cComponent::getSignalName(signal));
+    if (signal == interfaceDeletedSignal)
+        mappedVlanIds.erase(check_and_cast<NetworkInterface *>(object)->getInterfaceName());
+    else
+        throw cRuntimeError("Unknown signal");
 }
 
 } // namespace inet

@@ -13,23 +13,31 @@
 namespace inet {
 namespace protocoltest {
 
-static std::string formatCaptureValue(const cValue& value)
+cModule *findModuleByPattern(const std::string& path)
 {
-    // A value that carries a unit keeps it. intValue() and doubleValue() throw on such a
-    // value -- "Attempt to use the value '24B' as a dimensionless number" -- and the
-    // expression engine reads the quantity form, so 24B substitutes and compares correctly.
-    const char *unit = value.getUnit();
-    bool hasUnit = unit != nullptr && *unit != '\0';
-    switch (value.getType()) {
-        case cValue::INT: return hasUnit ? value.str() : std::to_string(value.intValue());
-        case cValue::BOOL: return value.boolValue() ? "true" : "false";
-        case cValue::DOUBLE: {
-            if (hasUnit)
-                return value.str();
-            std::ostringstream os; os << value.doubleValue(); return os.str();
-        }
-        default: return value.str();
+    cModule *network = getSimulation()->getSystemModule();
+    auto star = path.find('*');
+    if (star == std::string::npos) {
+        cModule *module = network->findModuleByPath(("." + path).c_str());
+        if (module == nullptr)
+            throw cRuntimeError("ProtocolTest: no module '%s'", path.c_str());
+        return module;
     }
+    auto dot = path.rfind('.', star);
+    std::string pattern = dot == std::string::npos ? path : path.substr(dot + 1);
+    if (pattern.find('.') != std::string::npos)
+        throw cRuntimeError("ProtocolTest: only the last name of the module path '%s' can have a *", path.c_str());
+    cModule *parent = dot == std::string::npos ? network : network->findModuleByPath(("." + path.substr(0, dot)).c_str());
+    if (parent == nullptr)
+        throw cRuntimeError("ProtocolTest: no module '%s'", path.substr(0, dot).c_str());
+    cPatternMatcher matcher(pattern.c_str(), false, true, true);
+    cModule *newest = nullptr;
+    for (cModule::SubmoduleIterator it(parent); !it.end(); ++it)
+        if (matcher.matches((*it)->getFullName()) && (newest == nullptr || (*it)->getId() > newest->getId()))
+            newest = *it;
+    if (newest == nullptr)
+        throw cRuntimeError("ProtocolTest: no module matches '%s'", path.c_str());
+    return newest;
 }
 
 EventPattern on(const char *path)
@@ -78,18 +86,7 @@ bool matchesWithCaptures(const std::string& text, const CaptureStore& captures, 
     if (packet == nullptr)
         return false;
     std::string expression = text;
-    for (auto& capture : captures) {
-        std::string placeholder = "{" + capture.first + "}";
-        // Only convert a capture this expression names. Converting every stored capture
-        // made one step fail on a capture that belonged to another step.
-        if (expression.find(placeholder) == std::string::npos)
-            continue;
-        std::string value = formatCaptureValue(capture.second);
-        size_t pos;
-        while ((pos = expression.find(placeholder)) != std::string::npos)
-            expression.replace(pos, placeholder.size(), value);
-    }
-    if (expression.find('{') != std::string::npos)
+    if (!substituteCaptures(expression, captures))
         return false; // an unresolved {capture} -- not satisfiable yet
     try {
         PacketFilter filter;
@@ -116,6 +113,15 @@ static std::string describeValue(double v)
     return os.str();
 }
 
+// The expression of an assertion as the reason of a failure quotes it: with the values of the
+// captures that it names, so that the reader sees what was compared.
+static std::string quoteExpression(const std::string& expression, const CaptureStore& captures)
+{
+    std::string substituted = expression;
+    substituteCaptures(substituted, captures);
+    return "'" + expression + "'" + (substituted != expression ? " ('" + substituted + "')" : "");
+}
+
 bool EventPattern::assertionsHold(const MatchContext& context, std::string& reason) const
 {
     const PacketEvent& event = context.event;
@@ -123,16 +129,33 @@ bool EventPattern::assertionsHold(const MatchContext& context, std::string& reas
         switch (assertion.kind) {
             case Assertion::Packet:
                 if (!evaluateAssertionExpression(assertion.expr, context)) {
-                    reason = "the packet does not satisfy '" + assertion.expr + "'";
+                    reason = "the packet does not satisfy " + quoteExpression(assertion.expr, context.captures);
                     return false;
                 }
                 break;
             case Assertion::NotPacket:
                 if (evaluateAssertionExpression(assertion.expr, context)) {
-                    reason = "the packet satisfies '" + assertion.expr + "', which is forbidden";
+                    reason = "the packet satisfies " + quoteExpression(assertion.expr, context.captures) + ", which is forbidden";
                     return false;
                 }
                 break;
+            case Assertion::Module: {
+                bool holds = false;
+                std::string error;
+                try {
+                    cModule *module = findModuleByPattern(assertion.modulePath);
+                    holds = evalObjectExpression(assertion.expr, context.captures, module).boolValue();
+                }
+                catch (const std::exception& e) {
+                    error = std::string(": ") + e.what();
+                }
+                if (!holds) {
+                    reason = "the module " + assertion.modulePath + " does not satisfy "
+                             + quoteExpression(assertion.expr, context.captures) + error;
+                    return false;
+                }
+                break;
+            }
             case Assertion::Event:
                 try {
                     if (assertion.predicate && !assertion.predicate(context)) {
@@ -270,6 +293,7 @@ std::string EventPattern::str() const
                 case Assertion::NotValue: os << "value != " << assertion.value; break;
                 case Assertion::ValueAtLeast: os << "value >= " << assertion.value; break;
                 case Assertion::ValueAtMost: os << "value <= " << assertion.value; break;
+                case Assertion::Module: os << "module " << assertion.modulePath << " '" << assertion.expr << "'"; break;
             }
         }
     }

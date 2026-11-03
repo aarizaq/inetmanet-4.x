@@ -25,6 +25,8 @@ The categories identify typical test infrastructure and uses. Assess each claim 
 
 For example, [udpapp_lifecycle_6.test](../../../tests/module/udpapp_lifecycle_6.test) connects two `StandardHost` nodes. It changes their lifecycle state and checks received traffic. Its module-test location does not prevent integration evidence; its configured operations and assertions bound that evidence.
 
+A category names the fixture of a test, not the source of its claims. Two procedures derive many tests from one source, and their tests keep the category of their fixture: [derive-tests-from-a-standard.md](../guide/derive-tests-from-a-standard.md) starts from the clauses of a standard, and [derive-tests-from-parameters.md](../guide/derive-tests-from-parameters.md) starts from the NED parameters of a module, with one test for each class of values of each parameter. The parameter tests of TCP in [tests/protocol/tcp/parameter/](../../../tests/protocol/tcp/parameter/README.md) use the protocol test library, so they are `protocol` tests; the parameter tests of a module that is not a protocol are `module` tests.
+
 ## The production path
 
 **A test that calls a helper directly establishes only the helper's contract.** It does not establish that a production module invokes the helper, supplies the intended inputs, or lets the result affect observable behavior. A fixture that reproduces the production selection or dispatch logic has the same limitation: it tests the reproduced path, not the integrated one.
@@ -48,7 +50,7 @@ The fourth is the one most often left out, and it is the one that decides whethe
 
 ## The recorded expectations
 
-The Python `inet_run_statistical_tests` runner compares recorded scalar results, including results converted from vectors, with the separate `statistics` baseline checkout. Its default selection is run 0. Equality is regression evidence for those recorded results, not a hypothesis test or evidence from independent repetitions. The legacy R-based `.test` checks under `tests/statistical/` are a different harness; their assertions determine what they establish. For a distributional claim, define the experiment and uncertainty under [analyze-simulation-results.md](../guide/analyze-simulation-results.md).
+The `opp_run_statistical_tests` command of opp_repl compares recorded scalar results, including results converted from vectors, with the separate `statistics` baseline checkout. Its default selection is run 0. Equality is regression evidence for those recorded results, not a hypothesis test or evidence from independent repetitions. The legacy R-based `.test` checks under `tests/statistical/` are a different harness; their assertions determine what they establish. For a distributional claim, define the experiment and uncertainty under [analyze-simulation-results.md](../guide/analyze-simulation-results.md).
 
 Three categories compare against a recorded value rather than an assertion: `fingerprint`, `statistical` and any `.test` with an expected output. All three are claims that *these values are correct*, and all three change only under [TR-BASELINE-DELIBERATE](../rule/testing.md#tr-baseline-deliberate), [TR-BASELINE-PROVENANCE](../rule/testing.md#tr-baseline-provenance) and [TR-BASELINE-COMMIT](../rule/testing.md#tr-baseline-commit) — deliberately, with a stated reason, in the commit that moves them.
 

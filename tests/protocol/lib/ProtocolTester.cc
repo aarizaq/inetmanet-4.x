@@ -8,6 +8,7 @@
 #include "ProtocolTestDescriber.h"
 #include "ITap.h"
 
+#include <cmath>
 #include <iostream>
 #include <set>
 #include <sstream>
@@ -16,6 +17,7 @@
 #include "inet/common/Simsignals.h"
 #include "inet/common/DirectionTag_m.h"
 #include "inet/common/ProtocolTag_m.h"
+#include "inet/common/lifecycle/ModuleOperations.h"
 #include "inet/linklayer/common/InterfaceTag_m.h"
 #include "inet/networklayer/common/NetworkInterface.h"
 #include "inet/networklayer/common/L3AddressResolver.h"
@@ -107,6 +109,13 @@ void ProtocolTester::initialize()
     if (matchingMode) {
         if (par("printDescription").boolValue())
             std::cout << describe(*program);
+        // A sum and a count exist from the start, so an expression can name one that no
+        // event changed.
+        for (const auto& step : program->steps)
+            for (const auto *pattern : {&step.pattern, &step.pattern2})
+                for (const auto& aggregate : pattern->aggregates)
+                    if (aggregate.kind == EventPattern::Aggregate::Sum || aggregate.kind == EventPattern::Aggregate::Count)
+                        captureStore[aggregate.name] = cValue((intval_t)0);
         installInterceptions();
         currentStep = 0;
         anchorTime = simTime();
@@ -188,8 +197,14 @@ void ProtocolTester::handleMessage(cMessage *msg)
         return;
     }
     if (msg == injectMsg) {
-        performInjection(program->steps[currentStep].injection);
-        advance(simTime());
+        // The timer of an injection is the timer of an action too.
+        const Step& step = program->steps[currentStep];
+        if (step.type == StepType::Act)
+            performAction(step.action);
+        else
+            performInjection(step.injection);
+        if (!decided)
+            advance(simTime());
         return;
     }
     for (auto& guard : guards) {
@@ -285,6 +300,7 @@ void ProtocolTester::finish()
         std::string what = step.type == StepType::Unordered
                              ? "[unordered: " + std::to_string(groupRemaining) + " pattern(s) unmatched]"
                          : step.type == StepType::Inject ? "[inject pending]"
+                         : step.type == StepType::Act ? "[action pending]"
                          : "[" + step.pattern.str() + "]";
         decide(false, "simulation ended with step " + std::to_string(currentStep) + " pending " + what);
     }
@@ -521,10 +537,14 @@ void ProtocolTester::enterStep()
             deliveryStage = 0;
             deliveryTreeId = -1;
             break;
-        case StepType::Inject: {
-            const Injection& injection = step.injection;
-            simtime_t fireTime = injection.hasAtTime ? injection.atTime
-                               : injection.hasAfter ? anchorTime + injection.afterDelay
+        case StepType::Inject:
+        case StepType::Act: {
+            bool hasAtTime = step.type == StepType::Act ? step.action.hasAtTime : step.injection.hasAtTime;
+            bool hasAfter = step.type == StepType::Act ? step.action.hasAfter : step.injection.hasAfter;
+            simtime_t atTime = step.type == StepType::Act ? step.action.atTime : step.injection.atTime;
+            simtime_t afterDelay = step.type == StepType::Act ? step.action.afterDelay : step.injection.afterDelay;
+            simtime_t fireTime = hasAtTime ? atTime
+                               : hasAfter ? anchorTime + afterDelay
                                : simTime();
             if (injectMsg == nullptr)
                 injectMsg = new cMessage("inject");
@@ -570,6 +590,37 @@ void ProtocolTester::runCaptures(const EventPattern& pattern, const PacketEvent&
 {
     for (auto& capture : pattern.captures)
         captureStore[capture.first] = capture.second(event);
+    // An integral scalar value goes into the expression as an integer, so a large window or
+    // threshold keeps its digits when a capture puts it into a later expression.
+    cValue value;
+    if (event.hasValue)
+        value = std::floor(event.value) == event.value && std::fabs(event.value) < 9e15 ? cValue((intval_t)event.value) : cValue(event.value);
+    for (auto& aggregate : pattern.aggregates) {
+        bool started = startedAggregates.count(aggregate.name) != 0;
+        std::string current = "{" + aggregate.name + "}";
+        cValue result;
+        switch (aggregate.kind) {
+            case EventPattern::Aggregate::Count:
+                result = cValue((intval_t)(started ? captureStore[aggregate.name].intValue() + 1 : 1));
+                break;
+            case EventPattern::Aggregate::Sum:
+                // The first value replaces the 0 of the start, which has no unit.
+                result = evalPacketExpression(started ? current + " + (" + aggregate.expression + ")" : aggregate.expression,
+                                              captureStore, event.packet, value);
+                break;
+            case EventPattern::Aggregate::Max:
+            case EventPattern::Aggregate::Min: {
+                result = evalPacketExpression(aggregate.expression, captureStore, event.packet, value);
+                const char *relation = aggregate.kind == EventPattern::Aggregate::Max ? " > " : " < ";
+                if (started && !evalPacketExpression("(" + aggregate.expression + ")" + relation + current,
+                                                     captureStore, event.packet, value).boolValue())
+                    result = captureStore[aggregate.name];
+                break;
+            }
+        }
+        captureStore[aggregate.name] = result;
+        startedAggregates.insert(aggregate.name);
+    }
 }
 
 void ProtocolTester::advance(simtime_t at)
@@ -711,6 +762,37 @@ void ProtocolTester::performInjection(const Injection& injection)
     sink->pushPacket(packet, gate);
 }
 
+void ProtocolTester::performAction(const Action& action)
+{
+    EV_INFO << "ProtocolTest " << program->name << ": action at t=" << simTime()
+            << (action.description.empty() ? "" : ": " + action.description) << endl;
+    for (const auto& call : action.calls) {
+        cModule *module = findModuleByPattern(call.first);
+        // The code runs as a method call of the module, so that it can send from it.
+        cMethodCallContextSwitcher contextSwitcher(module);
+        contextSwitcher.methodCall("protocol test action");
+        call.second(module);
+    }
+    for (const auto& path : action.nodeStops) {
+        LifecycleOperation::StringMap params;
+        auto operation = new ModuleStopOperation();
+        operation->initialize(findModuleByPattern(path), params);
+        initiateOperation(operation);
+    }
+    for (const auto& assertion : action.moduleAssertions) {
+        Step step;
+        step.pattern.assertModule(assertion.first.c_str(), assertion.second.c_str());
+        PacketEvent event;
+        event.time = simTime();
+        MatchContext context{event, captureStore};
+        std::string reason;
+        if (!step.pattern.assertionsHold(context, reason)) {
+            decide(false, "the action of step " + std::to_string(currentStep) + ": " + reason);
+            return;
+        }
+    }
+}
+
 void ProtocolTester::startGuard(size_t stepIndex)
 {
     Step& step = program->steps[stepIndex];
@@ -745,6 +827,9 @@ void ProtocolTester::offerToGuards(const PacketEvent& event)
         if (!patternMatches(step.pattern, event, guard.startTime))
             continue;
         guard.count++;
+        // A guard matches many events, and each one changes its captures: an aggregate
+        // capture in a guard is how a test adds up what a stream carries.
+        runCaptures(step.pattern, event);
         if (step.type == StepType::Never) {
             decide(false, "forbidden event occurred at t=" + event.time.str() + " for the guard of step "
                           + std::to_string(guard.stepIndex) + " [" + step.pattern.str() + "]");

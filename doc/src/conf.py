@@ -72,7 +72,6 @@ katex_prerender = False
 
 extlinks = {
     'wiki': ('https://en.wikipedia.org/wiki/%s', '%s'),
-    'docs': (cfg.docs_url('%s'), '%s'),
 }
 
 images_config = {
@@ -85,8 +84,8 @@ todo_include_todos = False
 html_theme = 'sphinx_immaterial'
 omnetpp_homepage = cfg.site_url('index')
 omnetpp_nav_nowrap = ['/api/', '/python-api/']
-# The sections that are short flat lists are navigated by the menus of their tabs alone.
-omnetpp_nav_dropdown = ['Download', 'Development', 'Contributing', 'People']
+inet_nav_blank = ['Download']
+omnetpp_privacy_url = cfg.site_url('Privacy')
 html_theme_options = {
     'icon': {
         'repo': 'fontawesome/brands/github',
@@ -124,12 +123,23 @@ html_theme_options = {
         },
     ],
     'analytics': {'provider': 'google', 'property': 'G-WPFKHJQDQW'},
+    # Google Analytics runs only after the reader accepts it; the footer reopens the dialog (omnetpp_immaterial).
+    'consent': {
+        'title': 'Cookie consent',
+        'description': 'With your consent, this site uses Google Analytics cookies to learn how it is used, which '
+                       'helps us improve it. You can change your choice at any time with <em>Cookie settings</em> '
+                       f'at the bottom of every page. See the <a href="{cfg.site_url("Privacy")}">privacy notice</a>.',
+        'actions': ['manage', 'reject', 'accept'],
+    },
     'version_dropdown': cfg.mode == 'version',
     'version_json': '../versions.json',
     'scope': '/',
 }
 if not cfg.fetch_fonts:
     html_theme_options['font'] = False
+# A reader of the showcases and tutorials sees which items have pages below them, and can expand them in place.
+if cfg.mode == 'shared':
+    html_theme_options['globaltoc_collapse'] = False
 
 if cfg.mode in ('version', 'shared'):
     rst_prolog = cfg.read_prolog()

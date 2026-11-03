@@ -114,6 +114,7 @@ const Protocol Protocol::ieee80211IrPhy("ieee80211irphy", "IEEE 802.11 IR PHY", 
 const Protocol Protocol::ieee80211Mac("ieee80211mac", "IEEE 802.11 MAC", Protocol::LinkLayer);
 const Protocol Protocol::ieee80211Mgmt("ieee80211mgmt", "IEEE 802.11 MGMT", Protocol::LinkLayer);
 const Protocol Protocol::ieee80211OfdmPhy("ieee80211ofdmphy", "IEEE 802.11 OFDM PHY", Protocol::PhysicalLayer);
+const Protocol Protocol::ieee80211Radiotap("ieee80211radiotap", "IEEE 802.11 Radiotap", Protocol::PhysicalLayer);
 const Protocol Protocol::ieee80211VhtPhy("ieee80211vhtphy", "IEEE 802.11 VHT PHY", Protocol::PhysicalLayer);
 const Protocol Protocol::ieee802154("ieee802154", "IEEE 802.15.4");
 const Protocol Protocol::ieee8021ae("ieee8021ae", "IEEE 802.1AE");
@@ -186,6 +187,13 @@ const Protocol Protocol::ieee8021rTag("ieee8021rtag", "IEEE 802.1R TAG");
 const Protocol Protocol::dhcp("dhcp", "DHCP");
 const Protocol Protocol::rtp("rtp", "RTP");
 const Protocol Protocol::rtcp("rtcp", "RTCP");
+// An Ethernet MAC frame without its FCS. The use case that needs it: in a 5G PDU session
+// of type Ethernet, the GTP-U tunnels between the base station and the UPF carry the
+// Ethernet frames without their FCS (3GPP TS 23.501, 5.6.10.2), so the frames inside the
+// tunnel are ethernetmacnofcs frames. An ethernetmac frame always has an FCS: a module
+// that removes the FCS of a frame changes its PacketProtocolTag to this protocol, and a
+// module that adds an FCS changes it back to ethernetmac.
+const Protocol Protocol::ethernetMacNoFcs("ethernetmacnofcs", "Ethernet MAC without FCS", Protocol::LinkLayer);
 
 // Additional wireless protocols
 const Protocol Protocol::lora("lora", "Lora"); //Lora Protocol
