@@ -130,9 +130,8 @@ void MrpRelay::handleLowerPacket(Packet *incomingPacket)
                 if (destinationAddress != MacAddress::CFM_CCM_MULTICAST_ADDRESS || getCcmLevel(incomingPacket) > 0) {
                     for (auto outgoingInterfaceId : outgoingInterfaceIds) {
                         auto outgoingInterface = interfaceTable->getInterfaceById(outgoingInterfaceId);
-                        if (interfaceInd != nullptr
-                                && outgoingInterfaceId == incomingInterfaceId
-                                && !isForwardingInterface(outgoingInterface))
+                        if (outgoingInterfaceId == incomingInterfaceId
+                                || !isForwardingInterface(outgoingInterface))
                             EV_DETAIL << "Ignoring outgoing interface because it is the same as incoming interface or currently not forwarding"
                                       << EV_FIELD(destinationAddress)
                                       << EV_FIELD(incomingInterface)
@@ -226,6 +225,7 @@ bool MrpRelay::isMrpMulticast(MacAddress DestinationAddress)
 void MrpRelay::handleUpperPacket(Packet *packet)
 {
     EV_INFO << "Processing upper packet" << EV_FIELD(packet) << EV_ENDL;
+    addVlanTagEncapsulationProtocols(packet);
     auto macAddressReq = packet->getTag<MacAddressReq>();
     auto destinationAddress = macAddressReq->getDestAddress();
     unsigned int vlanId = 0;

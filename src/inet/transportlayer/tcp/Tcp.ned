@@ -412,8 +412,8 @@ simple Tcp extends SimpleModule like ITcp
 
         // the module
         string checksumMode @enum("declared", "computed") = default("declared");
-        double stopOperationTimeout @unit(s) = default(2s);    // Timeout value for lifecycle stop operation
-        double stopOperationExtraTime @unit(s) = default(0s);    // Extra time after lifecycle stop operation finished
+        double stopOperationTimeout @unit(s) = default(2s);    // the stop of the node: the longest wait for the connections; each connection that its application left open gets the CLOSE call of RFC 9293 (a FIN), and the stage of TCP ends when each connection has its data and FIN acknowledged (FIN_WAIT_2, TIME_WAIT or CLOSED), or at this timeout; then it deletes the connections. While it waits, TCP ignores the commands of the applications and sends them nothing, because they are down already. 0s: the connections end at once, without a segment
+        double stopOperationExtraTime @unit(s) = default(0s);    // the stop of the node: the time after the wait for the connections during which the layers below TCP stay up, while TCP is down already; 0s or a negative value: no extra time
 
         // connection setup and header options
         volatile int initialSendSequenceNumber = default(-1); // the initial send sequence number (ISS) of each connection; volatile, so a distribution gives each connection its own value; -1: from the clock, one tick in 4 microseconds (RFC 9293 section 3.4.1)
@@ -421,7 +421,7 @@ simple Tcp extends SimpleModule like ITcp
         bool sendMssOption = default(true); // send the MSS option in the SYN and the SYN-ACK; false: leave it out, as some peers do (the other side then assumes the default send MSS of RFC 9293 MUST-15)
         bool alignOptions = default(true); // align each TCP option with NOP options before it, as before; false: no NOPs, and End of Option List bytes pad the option area (for peers that compare the exact option layout)
         bool windowScalingSupport = default(true); // Window Scale (RFC 7323) support (header option) (WS will be enabled for a connection if both endpoints support it)
-        int windowScalingFactor = default(-1); // Window Scaling Factor given as a shift count. Valid values are 0..14, and -1 for automatic selection: the smallest shift count that represents the largest window that the connection can offer, advertisedWindow, or with windowAutoTuning and a receive buffer that SO_RCVBUF does not lock, receiveBufferMax (Linux tcp_select_initial_window() represents tcp_rmem[2])
+        int windowScalingFactor = default(-1); // Window Scaling Factor given as a shift count. Valid values are 0..14, and -1 for automatic selection: the smallest shift count that represents the largest window that the connection can offer, advertisedWindow, or with windowAutoTuning and a receive buffer that SO_RCVBUF does not lock, receiveBufferMax (Linux tcp_select_initial_window() represents tcp_rmem[2]); an advertisedWindow above 65535 << the factor (with -1: << 14) stops the run with an error at the open
         bool timestampSupport @mutable = default(true); // Timestamps (RFC 7323) support (header option) (TS will be enabled for a connection if both endpoints support it). Each connection reads it at its open, so a run can change it as the host-wide sysctl net.ipv4.tcp_timestamps
         bool sackSupport = default(true); // Selective Acknowledgment (RFC 2018, 2883, 6675) support (header option): SACK is in use on a connection when both ends support it; an algorithm without SACK recovery (TcpTahoe, TcpVegas, TcpWestwood, TcpNoCongestionControl, DumbTcp) turns it off in both directions, so such a host offers no SACK-Permitted and sends no SACK blocks
         int synRetries = default(12); // the retransmissions of a SYN or of a SYN-ACK, after which the open fails (Linux net.ipv4.tcp_syn_retries, its default: 6; Linux has tcp_synack_retries for the SYN-ACK); they alone limit the setup, by count, where Linux limits it by the time of the doubled timeouts: with the defaults, an open fails after about 24 minutes, and RFC 9293 section 3.8.3 asks for at least 3 minutes (MUST-23)
@@ -432,7 +432,7 @@ simple Tcp extends SimpleModule like ITcp
         bool dropSynData = default(false); // the data of a SYN that Fast Open does not accept is dropped, so the SYN-ACK acknowledges only the SYN and the client sends the data again, as Linux (tcp_conn_request() keeps no data of such a SYN); false: the data waits in the receive queue until the handshake ends (RFC 9293 section 3.10.7.2)
 
         // receive window and buffer
-        int advertisedWindow = default(65535); // the receive window that this host offers, in bytes; receiveBufferSize, when set, limits it too; above 65535 it needs window scaling, and a SYN or a SYN-ACK offers at most 65535, because its window is not scaled (RFC 7323 section 2.2)
+        int advertisedWindow = default(65535); // the receive window that this host offers, in bytes; receiveBufferSize, when set, limits it too; above 65535 it needs window scaling, and a SYN or a SYN-ACK offers at most 65535, because its window is not scaled (RFC 7323 section 2.2); at most 65535 << windowScalingFactor bytes (with -1: 65535 << 14 = 1073725440), else an error at the open
         double receiveBufferSize @unit(B) = default(-1B); // the receive buffer, apart from the advertised window (Linux sk_rcvbuf): the unread data and the out-of-order data use it, and the offered window is the smaller of its free space and the advertised window less the unread data; -1B: the buffer is the advertised window, as before
         bool windowShrinkAllowed = default(false); // the offered window follows the free receive buffer and may move its right edge back, as Linux with tcp_shrink_window=1: the buffer is charged with the truesize of the skb of each segment, and the free buffer counts at the measured ratio of payload to truesize; the first offer is half the buffer. RFC 9293 says that a receiver SHOULD NOT shrink the window (SHLD-14)
         // Linux behaviors (no RFC)
@@ -446,14 +446,14 @@ simple Tcp extends SimpleModule like ITcp
 
         // acknowledgments
         bool delayedAcksEnabled = default(true); // Delayed ACK algorithm (RFC 1122) enabled/disabled
-        double delayedAckTimeout @unit(s) = default(200ms); // with delayedAcksEnabled, the longest delay of an ACK (RFC 9293 MUST-40: less than 0.5 s)
+        double delayedAckTimeout @unit(s) = default(200ms); // with delayedAcksEnabled, the longest delay of an ACK (RFC 9293 MUST-40: less than 0.5 s); 0 or more, 0s: no delay
         int delayedAckFrameCount = default(2); // with delayedAcksEnabled, the ACK goes at once when this number of full-sized segments waits for it, or when the unacknowledged data reach this number times RMSS, the MSS that this host announced (RFC 9293 SHLD-19: an ACK for at least each second full-sized segment or 2*RMSS bytes of new data); at least 1
         bool dsackEnabled = default(this.sackSupport); // report duplicate segments by D-SACK blocks (RFC 2883), when SACK is in use
         // Linux behaviors (no RFC)
         bool adaptiveDelayedAcks = default(false); // with delayedAcksEnabled, the delayed ACK of Linux: a quickack budget (ACKs at once at the start of a connection, after out-of-order data and after a long pause), an adaptive delay (ATO: from 40 ms, after the gaps between arrivals, at most the SRTT and 200 ms) in place of delayedAckTimeout, and a pingpong mode, which delays the ACKs of interactive traffic; false: the delayed ACK of RFC 9293 section 3.8.6.3 (delayedAckTimeout, delayedAckFrameCount)
 
         // sending data
-        bool nagleEnabled = default(true); // Nagle's algorithm (RFC 896) enabled/disabled
+        bool nagleEnabled = default(true); // Nagle's algorithm (RFC 896) enabled/disabled; TcpSocket::setNoDelay() (TCP_NODELAY) sets it for one connection
         bool pushLastBufferedSegment = default(true); // set PSH on the last buffered segment, after which no queued data waits (RFC 9293 section 3.9.1.2, MUST-61), because the SEND of INET has no PUSH flag; pushSegmentsOnWriteBoundary replaces this rule with that of Linux
         string zeroWindowProbe @enum("rfc","linux") = default("rfc"); // the probe of a zero window. "rfc": the first unacknowledged octet, as RFC 9293 section 3.8.6.1 says ("at least one octet of new data (if available), or retransmit"); "linux": a segment without data with SEG.SEQ = SND.UNA - 1, which the receiver answers with an ACK, as Linux (tcp_xmit_probe_skb())
         double maxPersistTimeout @unit(s) = default(60s); // the upper limit of the interval of the zero-window probes, which starts at the RTO and doubles at each probe (RFC 9293 SHLD-29, SHLD-30); it limits the first interval too; more than 0
@@ -510,8 +510,8 @@ simple Tcp extends SimpleModule like ITcp
 
         // keepalive
         bool keepAliveEnabled = default(false); // keepalive (RFC 9293 section 3.8.4): after keepAliveIdleTime without a received segment and without data in flight, send a probe without data (SEG.SEQ = SND.UNA - 1), again each keepAliveInterval, and abort the connection after keepAliveProbeCount probes without an answer; off by default (MUST-25); TcpSocket::setKeepAlive() turns it on or off for one connection (MUST-24)
-        double keepAliveIdleTime @unit(s) = default(7200s); // the idle time before the first keepalive probe (RFC 9293 MUST-28: at least two hours; Linux tcp_keepalive_time)
-        double keepAliveInterval @unit(s) = default(75s); // the time between two keepalive probes (Linux tcp_keepalive_intvl)
+        double keepAliveIdleTime @unit(s) = default(7200s); // the idle time before the first keepalive probe (RFC 9293 MUST-28: at least two hours; Linux tcp_keepalive_time); 0 or more
+        double keepAliveInterval @unit(s) = default(75s); // the time between two keepalive probes (Linux tcp_keepalive_intvl); 0 or more
         int keepAliveProbeCount = default(9); // the keepalive probes without an answer, after which the connection aborts (Linux tcp_keepalive_probes; RFC 9293 MUST-29: one probe without an answer is not a dead connection)
 
         // TCP Fast Open

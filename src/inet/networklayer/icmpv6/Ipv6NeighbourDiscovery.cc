@@ -938,11 +938,15 @@ void Ipv6NeighbourDiscovery::makeTentativeAddressPermanent(const Ipv6Address& te
 
     // Assign global scope addresses to routers. The Ipv6FlatNetworkConfigurator assigns
     // a 64 bit prefix to the routers but for Mipv6 operation, we need full 128bit global
-    // scope address for routers.
+    // scope address for routers. Ipv6NetworkConfigurator assigns the same address itself,
+    // so assign only an address the interface does not hold yet: assigning it a second time
+    // left the interface with two entries for the one address.
     if (rt6->isRouter() && !(ie->isLoopback())) {
-        for (int i = 0; i < ie->getProtocolData<Ipv6InterfaceData>()->getNumAdvPrefixes(); i++) {
-            Ipv6Address globalAddress = ie->getProtocolDataForUpdate<Ipv6InterfaceData>()->autoConfRouterGlobalScopeAddress(i);
-            ie->getProtocolDataForUpdate<Ipv6InterfaceData>()->assignAddress(globalAddress, false, 0, 0);
+        auto ipv6Data = ie->getProtocolDataForUpdate<Ipv6InterfaceData>();
+        for (int i = 0; i < ipv6Data->getNumAdvPrefixes(); i++) {
+            Ipv6Address globalAddress = ipv6Data->autoConfRouterGlobalScopeAddress(i);
+            if (!ipv6Data->hasAddress(globalAddress))
+                ipv6Data->assignAddress(globalAddress, false, 0, 0);
         }
     }
 
@@ -1069,6 +1073,10 @@ void Ipv6NeighbourDiscovery::startRouterDiscovery(NetworkInterface *ie)
     // RTR_SOLICITATION_INTERVAL seconds.  This is invoked after DAD completes
     // (from makeTentativeAddressPermanent) with a random initial delay, and on
     // link-layer (re)association when detectL2Movement is set.
+    // fetchRdEntry(), cancelRouterDiscovery() and processRdTimeout() find the
+    // entry by interface, so a second start restarts the process instead of
+    // adding a second entry for the same interface.
+    cancelRouterDiscovery(ie);
     RdEntry *rdEntry = new RdEntry();
     rdEntry->interfaceId = ie->getInterfaceId();
     rdEntry->numRSSent = 0;
@@ -1211,8 +1219,11 @@ void Ipv6NeighbourDiscovery::processRsPacket(Packet *packet, const Ipv6RouterSol
             scheduleAt(scheduledTime, msg);
             advIfEntry->nextScheduledRATime = scheduledTime;
         }
-        else
+        else {
+            EV_DETAIL << "A multicast RA is already scheduled at " << advIfEntry->nextScheduledRATime
+                      << "; it will serve this solicitation\n";
             delete msg;
+        }
     }
     else {
         EV_INFO << "This interface is a host, discarding RA message\n";
@@ -1727,6 +1738,17 @@ void Ipv6NeighbourDiscovery::sendSolicitedRa(cMessage *msg)
     Ipv6Address destAddr = Ipv6Address("FF02::1");
     EV_DETAIL << "Testing condition!\n";
     createAndSendRaPacket(destAddr, ie);
+
+    /*When this advertisement was scheduled it became the next multicast Router
+      Advertisement to be sent, so nextScheduledRATime was set to its send time
+      (RFC 4861 Section 6.2.6). It has now been sent, and the next multicast
+      advertisement is the pending periodic one again. Point nextScheduledRATime back
+      at it; left in the past, it would make every later solicitation compare against
+      an advertisement that has already gone out, and be ignored for as long as no
+      periodic advertisement is sent.*/
+    if (AdvIfEntry *advIfEntry = fetchAdvIfEntry(ie))
+        advIfEntry->nextScheduledRATime = advIfEntry->raTimeoutMsg->getArrivalTime();
+
     delete msg;
 }
 
@@ -2313,13 +2335,15 @@ void Ipv6NeighbourDiscovery::processNaForOtherNceStates(const Ipv6NeighbourAdver
             EV_INFO << "Solicited Flag is TRUE. Set NCE state to REACHABLE.\n";
             // the state of the entry MUST be set to REACHABLE.
             nce->reachabilityState = Ipv6NeighbourCache::REACHABLE;
+            // a solicited NA is a reachability confirmation in every state, so ReachableTime
+            // runs from now (RFC 4861 Section 7.3.3), not only after a NUD probe
+            nce->reachabilityExpires = simTime() + ie->getProtocolData<Ipv6InterfaceData>()->_getReachableTime();
             // We have to cancel the NUD self timer message if there is one.
 
             cMessage *msg = nce->nudTimeoutEvent;
             if (msg != nullptr) {
                 EV_INFO << "NUD in progress. Cancelling NUD Timer\n";
                 bubble("Reachability Confirmed via NUD.");
-                nce->reachabilityExpires = simTime() + ie->getProtocolData<Ipv6InterfaceData>()->_getReachableTime();
                 cancelAndDelete(msg);
                 nce->nudTimeoutEvent = nullptr;
             }

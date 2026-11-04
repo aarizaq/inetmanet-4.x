@@ -20,6 +20,8 @@ Define_Module(TcpSpoof);
 
 void TcpSpoof::initialize()
 {
+    if (par("destAddress").stdstringValue().empty())
+        throw cRuntimeError("destAddress must name a node or an address, but it is empty");
     simtime_t t = par("t");
     scheduleAt(t, new cMessage("timer"));
 }
@@ -53,6 +55,9 @@ void TcpSpoof::sendSpoofPacket()
 //    tcpseg->setAckNo(...);
     tcpseg->setSynBit(isSYN);
     tcpseg->setWindow(16384);
+    // a receiver checks the checksum by the mode of the header; as by default in Tcp, the
+    // checksum is declared correct
+    tcpseg->setChecksumMode(CHECKSUM_DECLARED_CORRECT);
     insertTransportProtocolHeader(packet, Protocol::tcp, tcpseg);
 
     sendToIP(packet, srcAddr, destAddr);
@@ -77,8 +82,10 @@ void TcpSpoof::sendToIP(Packet *pk, L3Address src, L3Address dest)
 
 unsigned long TcpSpoof::chooseInitialSeqNum()
 {
-    // choose an initial send sequence number in the same way as TCP does
-    return (unsigned long)SIMTIME_DBL(fmod(simTime() * 250000.0, 1.0 + (double)(unsigned)0xffffffffUL)) & 0xffffffffUL;
+    // the ISS of the clock as TcpConnection::selectInitialSeqNum() takes it: one tick in 4
+    // microseconds, modulo 2^32 (RFC 9293 section 3.4.1); the time is a double before the
+    // multiplication, because a simtime_t cannot hold the modulus
+    return (unsigned long)fmod(SIMTIME_DBL(simTime()) * 250000.0, 1.0 + (double)(unsigned)0xffffffffUL) & 0xffffffffUL;
 }
 
 } // namespace tcp

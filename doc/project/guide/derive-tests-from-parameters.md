@@ -2,13 +2,13 @@
 
 > **Kind:** procedure · **Status:** current · **Seal:** none · **Owns:** — · **Stands on:** [test-anatomy.md](../design/test-anatomy.md), [testing.md](../rule/testing.md), [derive-tests-from-a-standard.md](derive-tests-from-a-standard.md)
 
-How to turn the NED parameters of a module into tests: one test for each class of values of each parameter. The comment of a NED parameter is a promise to the user: it says what each value does. A value that no test sets can stop to work, or never work, and nobody sees it. For example, before this procedure ran on TCP, no test set `seqNo = -1` of `TcpSpoof`, and that value stops each run with an error of the simulation time (finding PF-13). The worked example is TCP: the catalog [parameters.md](../evidence/model/tcp/parameters.md) and the tests in [tests/protocol/tcp/parameter/](../../../tests/protocol/tcp/parameter/README.md), 330 tests for the 116 parameters of the modules of `transportlayer/tcp` and of `TcpSpoof`.
+How to turn the NED parameters of a module into tests: one test for each class of values of each parameter. The comment of a NED parameter is a promise to the user: it says what each value does. A value that no test sets can stop to work, or never work, and nobody sees it. For example, before this procedure ran on TCP, no test set `seqNo = -1` of `TcpSpoof`, and that value stopped each run with an error of the simulation time (finding PF-13). The worked example is TCP: the catalog [parameters.md](../evidence/model/tcp/parameters.md) and the tests in [tests/protocol/tcp/parameter/](../../../tests/protocol/tcp/parameter/README.md), 330 tests for the 116 parameters of the modules of `transportlayer/tcp` and of `TcpSpoof`.
 
 "Parameter test" names a derivation, as "standards test" does, and not a category of [test-anatomy.md](../design/test-anatomy.md). The tests of a protocol module use the protocol test library, so they stay in the `protocol` category under [TR-CAT-MATCH](../rule/testing.md#tr-cat-match). For a module that is not a protocol, the same procedure puts the tests in `tests/module/<subject>/parameter/`.
 
 ## Principle: the claim is the NED comment
 
-A test checks what the comment of its parameter says, for one class of values. When the code does something that the comment does not say, the test states the behavior from the code or from the standard that the code cites, and the catalog records a documentation gap: its source column says "code" and not "NED". For example, the comment of `Tcp.stopOperationTimeout` says only "Timeout value for lifecycle stop operation". The code deletes all connections at once and waits for nothing, so the timeout acts only when `stopOperationExtraTime` is longer. The classes follow the code, and the finding PF-10 records the gap.
+A test checks what the comment of its parameter says, for one class of values. When the code does something that the comment does not say, the test states the behavior from the code or from the standard that the code cites, and the catalog records a documentation gap: its source column says "code" and not "NED". For example, the comment of `Tcp.keepAliveProbeCount` names no special value, but with 0 the code aborts the connection at the idle time, without a probe. The class `zero` comes from the code, and its row says so.
 
 ## Principle: a test separates its class
 
@@ -20,7 +20,7 @@ The cross-class check runs each test again with the value of each other class of
 
 Keep a test that fails, and record the defect in the findings of the catalog. The pass that writes the tests changes no model code; a later plan repairs the findings. Whether a failure is declared expected follows [the class of a failure](derive-tests-from-a-standard.md#the-class-of-a-failure-and-when-to-declare-it-expected).
 
-A defect must not hide the verdicts of other classes. For example, `TcpSpoof` writes no checksum mode into its header, so the TCP of a receiver stops the run at the first spoofed segment (PF-11). If each spoof test waited for the answer of the receiver, all of them would fail for this one defect. The spoof tests therefore check the segment on the wire, and a tap rule drops it before the receiver. One facet, `isSYN:true-answer`, lets the segment through and fails for PF-11.
+A defect must not hide the verdicts of other classes. For example, `TcpSpoof` wrote no checksum mode into its header, so the TCP of a receiver stopped the run at the first spoofed segment (PF-11). A spoof test that waits for the answer of the receiver failed for this one defect. So the spoof tests checked the segment on the wire, and a tap rule dropped it before the receiver. Only the facet `isSYN:true-answer` let the segment through, and it failed until the repair of PF-11.
 
 ## The steps
 
@@ -61,7 +61,7 @@ Do these steps for each parameter, one group at a time, just before the tests of
 7. Choose one representative value for each class: the default when it is in the class, else a typical value, and a boundary value only when the code treats the boundary specially.
 8. Write the classes into the catalog with their source: "NED", or "code" with the function. A class with the source "code" and no NED statement is a documentation gap.
 
-A value that the code treats in a branch of its own is a class, also when the comment does not name it. For example, `OperationalMixin::startActiveOperationExtraTimeOrFinish()` has a branch for a negative extra time, and 28 other modules of INET have `-1s` as their default. So `Tcp.stopOperationExtraTime` has the class `negative-alias`, and its test found that a negative value stops the run (PF-9). A value that only reaches a check of another module, such as a negative delay that reaches the scheduler, is not a class: the catalog records it as a finding.
+A value that the code treats in a branch of its own is a class, also when the comment does not name it. For example, `OperationalMixin::startActiveOperationExtraTimeOrFinish()` has a branch for a negative extra time, and 28 other modules of INET have `-1s` as their default. So `Tcp.stopOperationExtraTime` has the class `negative-alias`, and its test found the defect PF-9: a negative value stopped the run. A value that only reaches a check of another module, such as a negative delay that reaches the scheduler, is not a class: the catalog records it as a finding.
 
 ### Step 3 — write the tests
 
