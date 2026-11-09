@@ -63,6 +63,7 @@ const Ptr<Chunk> BitCountChunk::peekUnchecked(PeekPredicate predicate, PeekConve
     if (converter == nullptr) {
         auto result = makeShared<BitCountChunk>(length < b(0) ? std::min(-length, chunkLength - iterator.getPosition()) : length, data);
         result->regionTags.copyTags(regionTags, iterator.getPosition(), b(0), result->getChunkLength());
+        result->copyFlags(*this);
         result->markImmutable();
         return result;
     }
@@ -100,17 +101,17 @@ bool BitCountChunk::containsSameData(const Chunk& other) const
 
 bool BitCountChunk::canInsertAtFront(const Ptr<const Chunk>& chunk) const
 {
-    return chunk->getChunkType() == CT_BITCOUNT;
+    return chunk->getChunkType() == CT_BITCOUNT && hasSameFlags(*chunk);
 }
 
 bool BitCountChunk::canInsertAtBack(const Ptr<const Chunk>& chunk) const
 {
-    return chunk->getChunkType() == CT_BITCOUNT;
+    return chunk->getChunkType() == CT_BITCOUNT && hasSameFlags(*chunk);
 }
 
 bool BitCountChunk::canInsertAt(const Ptr<const Chunk>& chunk, b offset) const
 {
-    return chunk->getChunkType() == CT_BITCOUNT;
+    return chunk->getChunkType() == CT_BITCOUNT && hasSameFlags(*chunk);
 }
 
 void BitCountChunk::doInsertAtFront(const Ptr<const Chunk>& chunk)

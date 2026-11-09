@@ -66,6 +66,7 @@ const Ptr<Chunk> BitsChunk::peekUnchecked(PeekPredicate predicate, PeekConverter
         b endOffset = iterator.getPosition() + (length < b(0) ? std::min(-length, chunkLength - iterator.getPosition()) : length);
         auto result = makeShared<BitsChunk>(std::vector<bool>(bits.begin() + startOffset.get<b>(), bits.begin() + endOffset.get<b>()));
         result->regionTags.copyTags(regionTags, iterator.getPosition(), b(0), result->getChunkLength());
+        result->copyFlags(*this);
         result->markImmutable();
         return result;
     }
@@ -107,17 +108,17 @@ bool BitsChunk::containsSameData(const Chunk& other) const
 
 bool BitsChunk::canInsertAtFront(const Ptr<const Chunk>& chunk) const
 {
-    return chunk->getChunkType() == CT_BITS;
+    return chunk->getChunkType() == CT_BITS && hasSameFlags(*chunk);
 }
 
 bool BitsChunk::canInsertAtBack(const Ptr<const Chunk>& chunk) const
 {
-    return chunk->getChunkType() == CT_BITS;
+    return chunk->getChunkType() == CT_BITS && hasSameFlags(*chunk);
 }
 
 bool BitsChunk::canInsertAt(const Ptr<const Chunk>& chunk, b offset) const
 {
-    return chunk->getChunkType() == CT_BITS;
+    return chunk->getChunkType() == CT_BITS && hasSameFlags(*chunk);
 }
 
 void BitsChunk::doInsertAtFront(const Ptr<const Chunk>& chunk)

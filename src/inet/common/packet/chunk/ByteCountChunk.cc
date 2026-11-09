@@ -66,6 +66,7 @@ const Ptr<Chunk> ByteCountChunk::peekUnchecked(PeekPredicate predicate, PeekConv
         if (iterator.getPosition().get<b>() % 8 == 0 && (length < b(0) || length.get() % 8 == 0)) {
             auto chunk = makeShared<ByteCountChunk>(length < b(0) ? std::min(-length, chunkLength - iterator.getPosition()) : length, data);
             chunk->regionTags.copyTags(regionTags, iterator.getPosition(), b(0), chunk->getChunkLength());
+            chunk->copyFlags(*this);
             chunk->markImmutable();
             return chunk;
         }
@@ -107,17 +108,17 @@ bool ByteCountChunk::containsSameData(const Chunk& other) const
 
 bool ByteCountChunk::canInsertAtFront(const Ptr<const Chunk>& chunk) const
 {
-    return chunk->getChunkType() == CT_BYTECOUNT && this->data == staticPtrCast<const ByteCountChunk>(chunk)->data;
+    return chunk->getChunkType() == CT_BYTECOUNT && this->data == staticPtrCast<const ByteCountChunk>(chunk)->data && hasSameFlags(*chunk);
 }
 
 bool ByteCountChunk::canInsertAtBack(const Ptr<const Chunk>& chunk) const
 {
-    return chunk->getChunkType() == CT_BYTECOUNT && this->data == staticPtrCast<const ByteCountChunk>(chunk)->data;
+    return chunk->getChunkType() == CT_BYTECOUNT && this->data == staticPtrCast<const ByteCountChunk>(chunk)->data && hasSameFlags(*chunk);
 }
 
 bool ByteCountChunk::canInsertAt(const Ptr<const Chunk>& chunk, b offset) const
 {
-    return chunk->getChunkType() == CT_BYTECOUNT && this->data == staticPtrCast<const ByteCountChunk>(chunk)->data;
+    return chunk->getChunkType() == CT_BYTECOUNT && this->data == staticPtrCast<const ByteCountChunk>(chunk)->data && hasSameFlags(*chunk);
 }
 
 void ByteCountChunk::doInsertAtFront(const Ptr<const Chunk>& chunk)

@@ -372,6 +372,49 @@ class INET_API Chunk : public cObject, public SharedBase<Chunk>, public IPrintab
     //@{
     virtual void handleChange();
 
+    /**
+     * Marks this mutable chunk incomplete, incorrect, or improperly represented
+     * if the provided chunk is. A part or a conversion of a chunk has the flags
+     * of that chunk, because a flag does not tell which part has the problem.
+     */
+    void copyFlags(const Chunk& chunk) {
+        if (chunk.isIncomplete())
+            markIncomplete();
+        if (chunk.isIncorrect())
+            markIncorrect();
+        if (chunk.isImproperlyRepresented())
+            markImproperlyRepresented();
+    }
+
+    /**
+     * Returns the provided part of this chunk, or a copy of it that also has the
+     * own flags of this chunk. A slice or a sequence can have flags of its own
+     * beside the flags of the chunks that it holds, and each part that a peek or
+     * an insertion takes from it must keep them.
+     */
+    const Ptr<Chunk> copyOwnFlags(const Ptr<Chunk>& part) const;
+
+    /**
+     * Returns true if the provided chunk is incomplete, incorrect, and improperly
+     * represented exactly where this chunk is. Chunks with different flags do
+     * not merge, because the merged chunk would lose a flag or give it to the
+     * data of the other chunk.
+     */
+    bool hasSameFlags(const Chunk& chunk) const {
+        return isIncomplete() == chunk.isIncomplete() && isIncorrect() == chunk.isIncorrect() &&
+               isImproperlyRepresented() == chunk.isImproperlyRepresented();
+    }
+
+    /**
+     * Marks the provided conversion result incomplete or incorrect if the
+     * converted part of this chunk, which starts at the provided offset, is.
+     * These flags describe the data, so the result keeps them. The improper
+     * representation flag describes a representation, so the deserializer of
+     * the result decides it. A slice or a sequence result needs no mark,
+     * because it reports the flags of its content.
+     */
+    void copyConvertedFlags(const Ptr<Chunk>& result, b offset) const;
+
     virtual void doInsertAtFront(const Ptr<const Chunk>& chunk) { throw cRuntimeError("Invalid operation"); }
     virtual void doInsertAtBack(const Ptr<const Chunk>& chunk) { throw cRuntimeError("Invalid operation"); }
     virtual void doInsertAt(const Ptr<const Chunk>& chunk, b offset) { throw cRuntimeError("Invalid operation"); }
@@ -398,6 +441,7 @@ class INET_API Chunk : public cObject, public SharedBase<Chunk>, public IPrintab
         CHUNK_CHECK_USAGE(iterator.isForward() || length >= b(0), "chunk conversion using backward iterator with undefined length is invalid");
         auto offset = iterator.isForward() ? iterator.getPosition() : getChunkLength() - iterator.getPosition() - length;
         const auto& chunk = T::convertChunk(typeid(T), const_cast<Chunk *>(this)->shared_from_this(), offset, length, flags);
+        copyConvertedFlags(chunk, offset);
         chunk->markImmutable();
         return staticPtrCast<T>(chunk);
     }

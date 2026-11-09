@@ -369,6 +369,228 @@ static void testImproperlyRepresented()
     ASSERT(ipHeader2->isImproperlyRepresented());
 }
 
+static const Ptr<Chunk> makeFlaggedChunk(const Ptr<Chunk>& chunk)
+{
+    chunk->markIncomplete();
+    chunk->markIncorrect();
+    chunk->markImproperlyRepresented();
+    chunk->markImmutable();
+    return chunk;
+}
+
+static bool hasAllFlags(const Ptr<const Chunk>& chunk)
+{
+    return chunk->isIncomplete() && chunk->isIncorrect() && chunk->isImproperlyRepresented();
+}
+
+static bool hasNoFlags(const Ptr<const Chunk>& chunk)
+{
+    return chunk->isComplete() && chunk->isCorrect() && chunk->isProperlyRepresented();
+}
+
+static void testIncorrectPart()
+{
+    int allowFlags = Chunk::PF_ALLOW_INCOMPLETE | Chunk::PF_ALLOW_INCORRECT | Chunk::PF_ALLOW_IMPROPERLY_REPRESENTED;
+    // 1. a front, middle, and back part of a flagged raw chunk has the flags of the chunk
+    std::vector<Ptr<const Chunk>> rawChunks = {
+        makeFlaggedChunk(makeShared<BitCountChunk>(b(80))),
+        makeFlaggedChunk(makeShared<BitsChunk>(std::vector<bool>(80, true))),
+        makeFlaggedChunk(makeShared<ByteCountChunk>(B(10))),
+        makeFlaggedChunk(makeShared<BytesChunk>(makeVector(10)))
+    };
+    for (const auto& rawChunk : rawChunks) {
+        for (b offset : {b(0), b(24), b(56)}) {
+            const auto& part = rawChunk->peek(offset, b(24), allowFlags);
+            ASSERT(part->getChunkType() == rawChunk->getChunkType());
+            ASSERT(hasAllFlags(part));
+        }
+    }
+    // 2. a part of a clean raw chunk stays clean
+    ASSERT(hasNoFlags(makeImmutableBytesChunk(makeVector(10))->peek(B(2), B(4))));
+    ASSERT(hasNoFlags(makeImmutableByteCountChunk(B(10))->peek(B(2), B(4))));
+    // 3. an erasure inside a flagged chunk keeps the flags of both remaining parts
+    auto bytesChunk1 = makeShared<BytesChunk>(makeVector(10));
+    bytesChunk1->markIncorrect();
+    bytesChunk1->markImmutable();
+    Packet packet1;
+    packet1.insertAtBack(makeImmutableByteCountChunk(B(10)));
+    packet1.insertAtBack(bytesChunk1);
+    packet1.eraseAt(B(12), B(2));
+    ASSERT(packet1.getTotalLength() == B(18));
+    ASSERT(packet1.peekAt(B(0), B(10))->isCorrect());
+    ASSERT(packet1.peekAt(B(10), B(2), Chunk::PF_ALLOW_INCORRECT)->isIncorrect());
+    ASSERT(packet1.peekAt(B(12), B(6), Chunk::PF_ALLOW_INCORRECT)->isIncorrect());
+    // 4. a sequence that inserts a slice of a sequence keeps the flags of the parts
+    auto sequenceChunk1 = makeShared<SequenceChunk>();
+    sequenceChunk1->insertAtBack(makeImmutableByteCountChunk(B(5)));
+    sequenceChunk1->insertAtBack(bytesChunk1);
+    sequenceChunk1->markImmutable();
+    auto sliceChunk1 = makeShared<SliceChunk>(sequenceChunk1, B(3), B(6));
+    sliceChunk1->markImmutable();
+    auto sequenceChunk2 = makeShared<SequenceChunk>();
+    sequenceChunk2->insertAtBack(sliceChunk1);
+    sequenceChunk2->markImmutable();
+    ASSERT(sequenceChunk2->getChunkLength() == B(6));
+    ASSERT(sequenceChunk2->peek(B(0), B(2))->isCorrect());
+    ASSERT(sequenceChunk2->peek(B(2), B(4), Chunk::PF_ALLOW_INCORRECT)->isIncorrect());
+    // 5. a queue pops a part of a flagged chunk
+    ChunkQueue queue1;
+    queue1.push(bytesChunk1);
+    ASSERT(queue1.pop(B(4), Chunk::PF_ALLOW_INCORRECT)->isIncorrect());
+    ASSERT(queue1.pop(B(6), Chunk::PF_ALLOW_INCORRECT)->isIncorrect());
+    // 6. a buffer replaces the middle of a flagged chunk and keeps the flags of the remaining parts
+    ChunkBuffer buffer1;
+    buffer1.replace(B(0), bytesChunk1);
+    buffer1.replace(B(4), makeImmutableByteCountChunk(B(2)));
+    ASSERT(buffer1.getNumRegions() == 1);
+    const auto& data1 = buffer1.getRegionData(0);
+    ASSERT(data1->peek(B(0), B(4), Chunk::PF_ALLOW_INCORRECT)->isIncorrect());
+    ASSERT(data1->peek(B(4), B(2))->isCorrect());
+    ASSERT(data1->peek(B(6), B(4), Chunk::PF_ALLOW_INCORRECT)->isIncorrect());
+    // 7. a reorder buffer gives a part of a flagged chunk
+    ReorderBuffer buffer2(B(0));
+    buffer2.replace(B(0), bytesChunk1);
+    ASSERT(buffer2.popAvailableData(B(4))->isIncorrect());
+}
+
+static void testIncorrectConversion()
+{
+    int allowFlags = Chunk::PF_ALLOW_INCOMPLETE | Chunk::PF_ALLOW_INCORRECT | Chunk::PF_ALLOW_IMPROPERLY_REPRESENTED;
+    // 1. a typed header from flagged bytes has the flags of the bytes
+    auto bytesChunk1 = staticPtrCast<BytesChunk>(makeImmutableApplicationHeader(42)->peek<BytesChunk>(B(0), B(10))->dupShared());
+    bytesChunk1->markIncorrect();
+    bytesChunk1->markImmutable();
+    const auto& applicationHeader1 = bytesChunk1->peek<ApplicationHeader>(B(0), B(10), Chunk::PF_ALLOW_INCORRECT);
+    ASSERT(applicationHeader1->isIncorrect());
+    ASSERT(applicationHeader1->getSomeData() == 42);
+    // 2. bytes and bits from a flagged typed header are incomplete and incorrect as the header is
+    auto applicationHeader2 = makeShared<ApplicationHeader>();
+    applicationHeader2->setSomeData(42);
+    makeFlaggedChunk(applicationHeader2);
+    for (const auto& converted : {staticPtrCast<const Chunk>(applicationHeader2->peek<BytesChunk>(B(0), B(10), allowFlags)),
+                                  staticPtrCast<const Chunk>(applicationHeader2->peek<BitsChunk>(b(0), b(80), allowFlags))})
+        ASSERT(converted->isIncomplete() && converted->isIncorrect());
+    // 3. the improper representation of a header does not pass to its bytes, because they are its original bytes
+    auto applicationHeader3 = makeShared<ApplicationHeader>();
+    applicationHeader3->setSomeData(42);
+    applicationHeader3->markImproperlyRepresented();
+    applicationHeader3->markImmutable();
+    ASSERT(hasNoFlags(applicationHeader3->peek<BytesChunk>(B(0), B(10), allowFlags)));
+    // 4. a conversion of a range of a sequence has the flags of the elements that the range covers
+    auto bytesChunk2 = makeShared<BytesChunk>(makeVector(10));
+    bytesChunk2->markIncorrect();
+    bytesChunk2->markImmutable();
+    auto sequenceChunk1 = makeShared<SequenceChunk>();
+    sequenceChunk1->insertAtBack(makeImmutableByteCountChunk(B(10)));
+    sequenceChunk1->insertAtBack(bytesChunk2);
+    sequenceChunk1->markImmutable();
+    ASSERT(sequenceChunk1->peek<BytesChunk>(B(0), B(8))->isCorrect());
+    ASSERT(sequenceChunk1->peek<BytesChunk>(B(5), B(10), Chunk::PF_ALLOW_INCORRECT)->isIncorrect());
+    ASSERT(sequenceChunk1->peek<BytesChunk>(B(12), B(6), Chunk::PF_ALLOW_INCORRECT)->isIncorrect());
+    // 5. a conversion of clean content stays clean
+    auto sequenceChunk2 = makeShared<SequenceChunk>();
+    sequenceChunk2->insertAtBack(makeImmutableByteCountChunk(B(10)));
+    sequenceChunk2->insertAtBack(makeImmutableApplicationHeader(42));
+    sequenceChunk2->markImmutable();
+    ASSERT(hasNoFlags(sequenceChunk2->peek<BytesChunk>(B(5), B(10))));
+}
+
+static void testIncorrectMerge()
+{
+    // 1. a correct and an incorrect chunk of the same raw type stay separate in a packet
+    std::vector<std::pair<Ptr<const Chunk>, Ptr<Chunk>>> pairs = {
+        { makeShared<BitCountChunk>(b(80)), makeShared<BitCountChunk>(b(80)) },
+        { makeShared<BitsChunk>(std::vector<bool>(80, true)), makeShared<BitsChunk>(std::vector<bool>(80, true)) },
+        { makeShared<ByteCountChunk>(B(10)), makeShared<ByteCountChunk>(B(10)) },
+        { makeShared<BytesChunk>(makeVector(10)), makeShared<BytesChunk>(makeVector(10)) }
+    };
+    for (auto& pair : pairs) {
+        constPtrCast<Chunk>(pair.first)->markImmutable();
+        pair.second->markIncorrect();
+        pair.second->markImmutable();
+        Packet packet1;
+        packet1.insertAtBack(pair.first);
+        packet1.insertAtBack(pair.second);
+        ASSERT(packet1.hasBitError());
+        ASSERT(packet1.peekAt(b(0), b(80))->isCorrect());
+        ASSERT(packet1.peekAt(b(80), b(80), Chunk::PF_ALLOW_INCORRECT)->isIncorrect());
+        // 2. two chunks with equal flags still merge
+        Packet packet2;
+        packet2.insertAtBack(pair.first);
+        packet2.insertAtBack(pair.first);
+        ASSERT(packet2.peekAll()->getChunkType() == pair.first->getChunkType());
+    }
+    // 3. a queue and a buffer keep a correct and an incorrect chunk separate
+    auto bytesChunk1 = makeShared<BytesChunk>(makeVector(10));
+    bytesChunk1->markIncorrect();
+    bytesChunk1->markImmutable();
+    ChunkQueue queue1;
+    queue1.push(makeImmutableBytesChunk(makeVector(10)));
+    queue1.push(bytesChunk1);
+    ASSERT(queue1.pop(B(10))->isCorrect());
+    ASSERT(queue1.pop(B(10), Chunk::PF_ALLOW_INCORRECT)->isIncorrect());
+    ChunkBuffer buffer1;
+    buffer1.replace(B(0), makeImmutableBytesChunk(makeVector(10)));
+    buffer1.replace(B(10), bytesChunk1);
+    ASSERT(buffer1.getNumRegions() == 1);
+    ASSERT(buffer1.getRegionData(0)->peek(B(0), B(10))->isCorrect());
+    ASSERT(buffer1.getRegionData(0)->peek(B(10), B(10), Chunk::PF_ALLOW_INCORRECT)->isIncorrect());
+    // 4. two adjacent slices of one source with different flags stay separate
+    const auto& source = makeImmutableApplicationHeader(42);
+    auto sliceChunk1 = makeShared<SliceChunk>(source, B(0), B(5));
+    sliceChunk1->markImmutable();
+    auto sliceChunk2 = makeShared<SliceChunk>(source, B(5), B(5));
+    sliceChunk2->markIncorrect();
+    sliceChunk2->markImmutable();
+    auto sequenceChunk1 = makeShared<SequenceChunk>();
+    sequenceChunk1->insertAtBack(sliceChunk1);
+    sequenceChunk1->insertAtBack(sliceChunk2);
+    ASSERT(sequenceChunk1->getChunks().size() == 2);
+}
+
+static void testIncorrectContainer()
+{
+    int allowFlags = Chunk::PF_ALLOW_INCOMPLETE | Chunk::PF_ALLOW_INCORRECT | Chunk::PF_ALLOW_IMPROPERLY_REPRESENTED;
+    // 1. a flagged sequence gives its flags to each part
+    auto sequenceChunk1 = makeShared<SequenceChunk>();
+    sequenceChunk1->insertAtBack(makeImmutableByteCountChunk(B(10)));
+    sequenceChunk1->insertAtBack(makeImmutableApplicationHeader(42));
+    makeFlaggedChunk(sequenceChunk1);
+    ASSERT(hasAllFlags(sequenceChunk1));
+    ASSERT(hasAllFlags(sequenceChunk1->peek(B(0), B(10), allowFlags)));
+    ASSERT(hasAllFlags(sequenceChunk1->peek(B(10), B(10), allowFlags)));
+    ASSERT(hasAllFlags(sequenceChunk1->peek(B(2), B(4), allowFlags)));
+    // 2. a sequence that inserts a flagged sequence keeps the flags of its parts
+    auto sequenceChunk2 = makeShared<SequenceChunk>();
+    sequenceChunk2->insertAtBack(makeImmutableBytesChunk(makeVector(10)));
+    sequenceChunk2->insertAtBack(sequenceChunk1);
+    sequenceChunk2->markImmutable();
+    ASSERT(sequenceChunk2->peek(B(0), B(10))->isCorrect());
+    ASSERT(hasAllFlags(sequenceChunk2->peek(B(10), B(10), allowFlags)));
+    ASSERT(hasAllFlags(sequenceChunk2->peek(B(20), B(10), allowFlags)));
+    // 3. a flagged slice gives its flags to its parts and to its simplification
+    auto sliceChunk1 = makeShared<SliceChunk>(makeImmutableByteCountChunk(B(10)), B(0), B(10));
+    makeFlaggedChunk(sliceChunk1);
+    ASSERT(hasAllFlags(sliceChunk1->simplify()));
+    ASSERT(hasAllFlags(sliceChunk1->peek(B(2), B(4), allowFlags)));
+    // 4. a sequence that inserts a flagged slice of a clean sequence keeps the flags of the parts
+    auto sequenceChunk3 = makeShared<SequenceChunk>();
+    sequenceChunk3->insertAtBack(makeImmutableByteCountChunk(B(10)));
+    sequenceChunk3->insertAtBack(makeImmutableApplicationHeader(42));
+    sequenceChunk3->markImmutable();
+    auto sliceChunk2 = makeShared<SliceChunk>(sequenceChunk3, B(5), B(10));
+    sliceChunk2->markIncorrect();
+    sliceChunk2->markImmutable();
+    auto sequenceChunk4 = makeShared<SequenceChunk>();
+    sequenceChunk4->insertAtBack(sliceChunk2);
+    sequenceChunk4->markImmutable();
+    ASSERT(sequenceChunk4->peek(B(0), B(5), Chunk::PF_ALLOW_INCORRECT)->isIncorrect());
+    ASSERT(sequenceChunk4->peek(B(5), B(5), Chunk::PF_ALLOW_INCORRECT)->isIncorrect());
+    // 5. a clean sequence and a clean slice keep clean parts
+    ASSERT(hasNoFlags(sequenceChunk3->peek(B(2), B(4))));
+    ASSERT(hasNoFlags(makeShared<SliceChunk>(sequenceChunk3, B(0), B(20))->simplify()));
+}
+
 static void testEmpty()
 {
     // 1. peeking an empty packet is an error
@@ -2154,6 +2376,10 @@ void UnitTest::initialize()
     testIncorrect();
     testProperlyRepresented();
     testImproperlyRepresented();
+    testIncorrectPart();
+    testIncorrectConversion();
+    testIncorrectMerge();
+    testIncorrectContainer();
     testEmpty();
     testHeader();
     testTrailer();

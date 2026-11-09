@@ -87,7 +87,7 @@ const Ptr<Chunk> SliceChunk::peekUnchecked(PeekPredicate predicate, PeekConverte
         // 2.1 peeking the whole part returns the sliced chunk
         if (offset == b(0) && chunkLength == chunk->getChunkLength()) {
             if (predicate == nullptr || predicate(chunk))
-                return chunk;
+                return copyOwnFlags(chunk);
         }
         // 2.2 peeking the whole part returns this chunk
         auto result = const_cast<SliceChunk *>(this)->shared_from_this();
@@ -95,7 +95,7 @@ const Ptr<Chunk> SliceChunk::peekUnchecked(PeekPredicate predicate, PeekConverte
             return result;
     }
     // 3. peeking anything else returns what peeking the sliced chunk returns
-    return chunk->peekUnchecked(predicate, converter, ForwardIterator(iterator.getPosition() + offset, -1), length < b(0) ? -std::min(-length, chunkLength - offset) : length, flags);
+    return copyOwnFlags(chunk->peekUnchecked(predicate, converter, ForwardIterator(iterator.getPosition() + offset, -1), length < b(0) ? -std::min(-length, chunkLength - offset) : length, flags));
 }
 
 const Ptr<Chunk> SliceChunk::convertChunk(const std::type_info& typeInfo, const Ptr<Chunk>& chunk, b offset, b length, int flags)
@@ -126,7 +126,7 @@ bool SliceChunk::canInsertAtFront(const Ptr<const Chunk>& chunk) const
 {
     if (chunk->getChunkType() == CT_SLICE) {
         const auto& otherSliceChunk = staticPtrCast<const SliceChunk>(chunk);
-        return this->chunk == otherSliceChunk->chunk && offset == otherSliceChunk->offset + otherSliceChunk->length;
+        return this->chunk == otherSliceChunk->chunk && offset == otherSliceChunk->offset + otherSliceChunk->length && hasSameFlags(*chunk);
     }
     else
         return false;
@@ -136,7 +136,7 @@ bool SliceChunk::canInsertAtBack(const Ptr<const Chunk>& chunk) const
 {
     if (chunk->getChunkType() == CT_SLICE) {
         const auto& otherSliceChunk = staticPtrCast<const SliceChunk>(chunk);
-        return this->chunk == otherSliceChunk->chunk && offset + length == otherSliceChunk->offset;
+        return this->chunk == otherSliceChunk->chunk && offset + length == otherSliceChunk->offset && hasSameFlags(*chunk);
     }
     else
         return false;
