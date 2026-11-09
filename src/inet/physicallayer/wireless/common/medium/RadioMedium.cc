@@ -525,6 +525,24 @@ void RadioMedium::addTransmission(const IRadio *transmitterRadio, const ITransmi
             communicationCache->setCachedArrival(receiverRadio, transmission, arrival);
             communicationCache->setCachedInterval(receiverRadio, transmission, interval);
             communicationCache->setCachedListening(receiverRadio, transmission, listening);
+            // the new transmission interferes with the receptions that it overlaps: a later query computes
+            // their interference, noise, and SNIR again, and their decisions made so far stay
+            // the interval tree of the radio gives only the receptions that the new arrival overlaps
+            auto ongoingTransmissions = communicationCache->computeInterferingTransmissions(receiverRadio, arrival->getStartTime(), arrival->getEndTime());
+            for (auto ongoingTransmission : *ongoingTransmissions) {
+                if (ongoingTransmission == transmission || communicationCache->getCachedInterference(receiverRadio, ongoingTransmission) == nullptr)
+                    continue;
+                const IArrival *ongoingArrival = communicationCache->getCachedArrival(receiverRadio, ongoingTransmission);
+                if (arrival->getStartTime() < ongoingArrival->getEndTime() && ongoingArrival->getStartTime() < arrival->getEndTime()) {
+                    delete communicationCache->getCachedSNIR(receiverRadio, ongoingTransmission);
+                    communicationCache->removeCachedSNIR(receiverRadio, ongoingTransmission);
+                    delete communicationCache->getCachedNoise(receiverRadio, ongoingTransmission);
+                    communicationCache->removeCachedNoise(receiverRadio, ongoingTransmission);
+                    delete communicationCache->getCachedInterference(receiverRadio, ongoingTransmission);
+                    communicationCache->removeCachedInterference(receiverRadio, ongoingTransmission);
+                }
+            }
+            delete ongoingTransmissions;
         }
     });
     communicationCache->setCachedInterferenceEndTime(transmission, maxArrivalEndTime + mediumLimitCache->getMaxTransmissionDuration());
@@ -710,14 +728,9 @@ bool RadioMedium::isReceptionAttempted(const IRadio *receiver, const ITransmissi
 
 bool RadioMedium::isReceptionSuccessful(const IRadio *receiver, const ITransmission *transmission, IRadioSignal::SignalPart part) const
 {
-    const IReception *reception = getReception(receiver, transmission);
+    // the cached decision keeps the random draws of the receiver: a later query of the same part draws no number
     const IListening *listening = getListening(receiver, transmission);
-    // TODO why compute?
-    const IInterference *interference = computeInterference(receiver, listening, transmission);
-    const ISnir *snir = getSNIR(receiver, transmission);
-    bool isReceptionSuccessful = receiver->getReceiver()->computeIsReceptionSuccessful(listening, reception, part, interference, snir);
-    delete interference;
-    return isReceptionSuccessful;
+    return getReceptionDecision(receiver, listening, transmission, part)->isReceptionSuccessful();
 }
 
 void RadioMedium::sendToAllRadios(IRadio *transmitter, const IWirelessSignal *signal)
