@@ -72,6 +72,28 @@ class CheckClassificationTest(unittest.TestCase):
         self.assertEqual(result.stdout.count("VIOLATION:"), 1, result.stdout)
         self.assertIn("has no Change: line", result.stdout)
 
+    def test_the_chart_obligation_is_a_known_value(self):
+        self.write("src/inet/a/A.cc", "int a = 1;\n")
+        self.git("add", ".")
+        self.git("commit", "-q", "-m", "change: one value\n\nThe value changes.\n\nChange: src | behavior.change | statistical chart")
+        result = self.check()
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertNotIn("VIOLATION:", result.stdout)
+
+    def test_a_pin_move_below_the_behavior_level_is_no_violation_in_this_gate(self):
+        # the baseline gate (check-baselines.sh) has the pin check CR-OBL-INERT
+        self.write("inet.opp", 'SimulationProject(name="inet", test_parameters={"statistical": {"baseline": '
+                   '{"repository": "inet-framework/statistics", "ref": "%s", "folder": "statistics"}}})\n' % ("a" * 40))
+        self.git("add", ".")
+        self.git("commit", "-q", "-m", "build: add: the first pin\n\nThe file changes.\n\nChange: build | behavior.add | -")
+        self.write("inet.opp", 'SimulationProject(name="inet", test_parameters={"statistical": {"baseline": '
+                   '{"repository": "inet-framework/statistics", "ref": "%s", "folder": "statistics"}}})\n' % ("b" * 40))
+        self.git("add", ".")
+        self.git("commit", "-q", "-m", "build: refactor: the project file\n\nThe file changes.\n\nChange: build | refactor | -")
+        result = self.check()
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertNotIn("VIOLATION:", result.stdout)
+
     def commit_without_trailer(self, author_date):
         self.write("src/inet/a/A.cc", "int a = 1;\n")
         self.git("add", ".")
