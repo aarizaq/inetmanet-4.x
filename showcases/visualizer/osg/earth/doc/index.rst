@@ -17,7 +17,7 @@ demonstrating various features of the visualization.
 .. note:: This showcase requires OMNeT++ built with OSG and osgEarth enabled. Currently, this is only possible on Windows.
 
 | Verified with INET version: ``4.6``
-| Source files location: `inet/showcases/visualizer/earth <https://github.com/inet-framework/inet/tree/master/showcases/visualizer/earth>`__
+| Source files location: `inet/showcases/visualizer/osg/earth <https://github.com/inet-framework/inet/tree/master/showcases/visualizer/osg/earth>`__
 
 About the Visualizer
 --------------------
@@ -40,7 +40,7 @@ following network:
    :width: 20%
    :align: center
 
-The network contains an :ned:`IntegratedCanvasVisualizer` and an
+The network contains an :ned:`IntegratedVisualizer` and an
 :ned:`OsgGeographicCoordinateSystem` module. The configuration from
 :download:`omnetpp.ini <../omnetpp.ini>` is the following:
 
@@ -50,7 +50,7 @@ The network contains an :ned:`IntegratedCanvasVisualizer` and an
    :language: ini
 
 By default, the type of the scene visualizer module in
-:ned:`IntegratedCanvasVisualizer` is ``SceneOsgVisualizer``. Inserting the map
+``IntegratedOsgVisualizer`` is ``SceneOsgVisualizer``. Inserting the map
 requires the ``SceneOsgEarthVisualizer`` module, thus, the default OSG
 scene visualizer is replaced. The ``SceneOsgEarthVisualizer``
 provides the same functionality as ``SceneOsgVisualizer`` and adds
@@ -98,7 +98,7 @@ are visible.
 
 The scene's 3D view should look like the following when the simulation is run.
 The map is displayed on the 3D scene. Since there are no nodes or
-objects in the network, the size of the scene is zero and the screen
+objects in the network, the size of the scene is zero and the scene
 floor is not visible.
 
 .. figure:: media/defaultmap.png
