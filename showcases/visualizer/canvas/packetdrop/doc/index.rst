@@ -13,7 +13,7 @@ packet drops resulting from issues such as retransmission in wireless networks
 and overflowing queues in bottleneck routers.
 
 | Verified with INET version: ``4.6``
-| Source files location: `inet/showcases/visualizer/packetdrop <https://github.com/inet-framework/inet/tree/master/showcases/visualizer/packetdrop>`__
+| Source files location: `inet/showcases/visualizer/canvas/packetdrop <https://github.com/inet-framework/inet/tree/master/showcases/visualizer/canvas/packetdrop>`__
 
 About the visualizer
 --------------------
@@ -71,7 +71,7 @@ Queue overflow
 
 In this section, we present an example demonstrating packet drops due
 to queue overflow. This simulation can be run by choosing the
-``QueueFull`` configuration from the ini file. The network contains a
+``QueueOverflow`` configuration from the ini file. The network contains a
 bottleneck link where packets will be dropped due to an overflowing
 queue:
 

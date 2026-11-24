@@ -14,7 +14,7 @@ This showcase features five different simulation models, each designed to
 demonstrate different capabilities of the data link activity visualizer.
 
 | Verified with INET version: ``4.6``
-| Source files location: `inet/showcases/visualizer/datalinkactivity <https://github.com/inet-framework/inet/tree/master/showcases/visualizer/datalinkactivity>`__
+| Source files location: `inet/showcases/visualizer/canvas/datalinkactivity <https://github.com/inet-framework/inet/tree/master/showcases/visualizer/canvas/datalinkactivity>`__
 
 About the Visualizer
 --------------------
@@ -195,10 +195,12 @@ The network consists of three :ned:`AdhocHost` nodes: ``person1``, ``person2``,
 and ``videoServer``. ``VideoServer`` will be streaming a video to
 ``person1``. ``Person2`` will be inactive in this example.
 
-The type of the visualizer module is :ned:`IntegratedMultiVisualizer`.
+The type of the visualizer module is :ned:`IntegratedMultiCanvasVisualizer`.
 Multi-visualizers are compound visualizer modules containing submodule
 vectors of visualizer simple modules. By default, the multi-visualizers
-contain one submodule of each visualizer simple module. The number of
+contain one submodule of each visualizer simple module, except for the
+geographic visualizers (map, sky view, and horizon), which are not
+included unless requested. The number of
 submodules can be specified with parameters for each visualizer
 submodule.
 

@@ -14,7 +14,7 @@ The showcase contains four simulation models, each demonstrating different
 features of the network path activity visualizer.
 
 | Verified with INET version: ``4.6``
-| Source files location: `inet/showcases/visualizer/networkpathactivity <https://github.com/inet-framework/inet/tree/master/showcases/visualizer/networkpathactivity>`__
+| Source files location: `inet/showcases/visualizer/canvas/networkpathactivity <https://github.com/inet-framework/inet/tree/master/showcases/visualizer/canvas/networkpathactivity>`__
 
 About the Visualizer
 --------------------
@@ -242,14 +242,13 @@ visualization follows the routing changes in a complex network.
 At the beginning of the video, ping traffic is routed through
 ``router1``. After five seconds, small cogwheels appear above
 ``router1``, then cogwheels change to a red cross, indicating that
-``router1`` has gone offline. Routers immediately update their routing
-tables by using the RIP routing protocol. In the next few seconds, the
-traffic between the sources and the destinations travels via
-``router3``.
+``router1`` has gone offline. In the next few seconds, the ping
+requests get only as far as ``router0`` and do not reach the
+destinations, so no network path is displayed.
 
 After a while, ``router1`` turns on again (the red cross disappears),
-but this does not affect the ping traffic which still goes via
-``router3``. In the 15th second, we can see that ``router3`` goes
+and the ping traffic goes via ``router1`` again. At 14 seconds, the
+traffic switches to ``router3``. In the 15th second, we can see that ``router3`` goes
 offline. Routing tables are updated by using RIP, and as a result of
 this, ping traffic flows through ``router1`` again. At the end of the
 video, ``router3`` turns on, but it does not have an effect on the

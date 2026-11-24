@@ -8,26 +8,37 @@ PR-SPLIT-BASELINE for a baseline in another repository.
                            a pin moves only forward, over at most one commit that changes results;
                            the pinned commit is in the baseline repository
   TR-BASELINE-PROVENANCE   the baseline commit, which is the commit that changes results, has its
-                           record: the computed "Moved results:" block, an analysis, and the
-                           trailers INET-Subject (or INET-Commit) and Attribution
+                           record: the computed "Baseline changes:" list with a reason on each
+                           line, and the trailers INET-Subject (or INET-Commit) and Attribution
   TR-BASELINE-PARENT       each changed result file differs in a value
   TR-BASELINE-ATTRIBUTION  the form of the attribution holds: the size of the cause commit or of
                            the reduction, a reduction that applies, files that only come or only go
   PR-SPLIT-BASELINE        the pin moves in the commit that causes the move
   CR-OBL-BASELINE          the Change: trailer of the cause commit names the baseline that moves
   CR-OBL-INERT             a commit below the behavior level moves no pin over a result
+  PR-REQ-BASELINES         the description of the pull request names each step that changes a
+                           baseline, with a summary of its baseline changes
+
+The same rules hold for the fingerprints in tests/fingerprint/store.json of the INET tree. The INET
+commit that changes the store holds the "Baseline changes:" list of its fingerprint changes, with a
+reason on each line. When it changes fingerprint values, the code that moves them is small: the
+commit itself, or a reduction patch in its message after a line "Reduction:", with the trailer
+"Attribution: forward" or "Attribution: reverse". A commit that only adds, removes or renames runs
+or ingredient sets, or that changes no source line, has no size limit.
 
 A result is a .sca file of the statistics repository, or an image of the media repository that a
 chart of an analysis file of the INET tree exports. A commit of a baseline repository that changes
 no result, such as documentation media, needs no record, and a pin can move over it.
 
 The gate reads git objects only. It never runs content of the series, so the pull-request
-workflow can run it on untrusted content. Whether an analysis is true, and whether a reduction
-gives the results that it claims, needs a run and a reviewer; this gate cannot say.
+workflow can run it on untrusted content. Whether a reason is true, and whether a reduction gives
+the results that it claims, needs a run and a reviewer; this gate cannot say.
 
 Usage, from the INET repository root:
   check-baselines.sh BASE..HEAD
   check-baselines.sh BASE..HEAD --baseline-repository statistical=statistics --baseline-repository chart=media
+  check-baselines.sh BASE..HEAD --description-file FILE    also check the description of the pull request
+  check-baselines.sh BASE..HEAD --pr NUMBER                the same, with the description from GitHub
 
 Without --baseline-repository, the gate gets the baseline commits from the repository that inet.opp
 names at BASE. With it, the gate reads a local clone; that run does not prove that a commit is in
@@ -44,12 +55,16 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import baseline_summary  # noqa: E402
+import fingerprint_moves  # noqa: E402
 from baseline_pins import PinError, git, is_full_hash, read_baselines  # noqa: E402
 
 FAIL_LINES = 100
 NOTE_LINES = 30
-ANALYSIS_WORDS = 20
 FORMS = ("commit", "forward", "reverse", "first-record", "removal", "environment")
+FINGERPRINT_FORMS = ("commit", "forward", "reverse")
+STORE = "tests/fingerprint/store.json"
+REDUCTION_HEADING = "Reduction:"
+SECTION = "baseline changes"
 REDUCTION_FORMS = ("forward", "reverse")
 # a path whose content can change a result: model source, simulations and the Python of the project
 SOURCE_PATH = re.compile(r"^(src|examples|showcases|tutorials|tests/networks|python)/")
@@ -200,7 +215,8 @@ def patch_applies(text, tree):
         env = dict(os.environ, GIT_INDEX_FILE=os.path.join(folder, "index"))
         if subprocess.run(["git", "read-tree", tree], env=env, capture_output=True).returncode != 0:
             return False
-        return subprocess.run(["git", "apply", "--cached", "--check", patch], env=env, capture_output=True).returncode == 0
+        # --recount: a patch in a commit message can lose an empty line at its end
+        return subprocess.run(["git", "apply", "--cached", "--check", "--recount", patch], env=env, capture_output=True).returncode == 0
 
 
 def change_fields(commit):
@@ -215,20 +231,190 @@ def obligations_of(commit):
     return fields[2].split() if len(fields) >= 3 else None
 
 
-def analysis_words(message, trailer_lines=()):
-    """The number of words of the prose of a baseline commit message: the body without the block
-    of the moved results and without the lines of the trailer block."""
-    words = 0
-    in_block = False
-    trailer_lines = {line.strip() for line in trailer_lines}
-    for line in message.splitlines()[1:]:
-        if line.strip() == baseline_summary.HEADING:
-            in_block = True
-        elif not line.strip():
-            in_block = False
-        elif not in_block and line.strip() not in trailer_lines:
-            words += len(line.split())
-    return words
+def check_list(report, where, message, expected):
+    """TR-BASELINE-PROVENANCE: the message holds the computed "Baseline changes:" list, with a reason on each line."""
+    problems = baseline_summary.check_block(message, expected)
+    for problem in problems:
+        report.flag(f"{where} has {problem}" if problem.startswith(("no '", "a '")) else f"{where}: {problem}")
+    if problems and any(problem.startswith(("no '", "a '")) for problem in problems):
+        print(f"      the list is (write the reason of each line after the dash):")
+        print("\n".join("        " + line for line in [baseline_summary.HEADING] + [f"  {line}{baseline_summary.SEPARATOR}" for line in expected]))
+    changed = sum(1 for line in expected if " changed" in line.split("(")[0])
+    if changed > 1:
+        report.note(f"{where} has {changed} lines of changed entries: do their reasons name one cause? If not, the commit holds more than one change (PR-SPLIT-ONE-CHANGE)")
+
+
+def message_of(commit):
+    return git("log", "-1", "--format=%B", commit).stdout
+
+
+def trailers_of(commit):
+    """{key: [values]} and the lines of the trailer block of an INET commit."""
+    out = git("log", "-1", "--format=%(trailers:only,unfold)", commit).stdout
+    trailers, lines = {}, [line for line in out.splitlines() if line.strip()]
+    for line in lines:
+        key, separator, value = line.partition(":")
+        if separator:
+            trailers.setdefault(key.strip(), []).append(value.strip())
+    return trailers, lines
+
+
+def reduction_in_message(message, trailer_lines):
+    """The patch after the line "Reduction:" of a commit message, up to its trailers, or None."""
+    lines = message.splitlines()
+    starts = [index for index, line in enumerate(lines) if line.strip() == REDUCTION_HEADING]
+    if not starts:
+        return None
+    end, trailers = len(lines), {line.strip() for line in trailer_lines}
+    while end > starts[0] + 1 and (not lines[end - 1].strip() or lines[end - 1].strip() in trailers):
+        end -= 1
+    text = "\n".join(lines[starts[0] + 1:end])
+    return text + "\n" if text.strip() else None
+
+
+def store_at(commit):
+    out = git("show", f"{commit}:{STORE}", check=False)
+    return fingerprint_moves.parse(out.stdout if out.returncode == 0 else "")
+
+
+def fingerprint_changes(commit):
+    """[(kind, line)] of the fingerprint changes of a commit, against its first parent."""
+    parent = git("rev-parse", "--verify", "--quiet", f"{commit}^", check=False).stdout.strip()
+    if parent and git("diff", "--quiet", parent, commit, "--", STORE, check=False).returncode == 0:
+        return []
+    return fingerprint_moves.categories(store_at(parent) if parent else {}, store_at(commit))
+
+
+def same_patch(a, b):
+    return [line.rstrip() for line in a.strip().splitlines()] == [line.rstrip() for line in b.strip().splitlines()]
+
+
+def check_fingerprint_attribution(report, commit, pinned):
+    """TR-BASELINE-ATTRIBUTION for a commit that changes fingerprint values. pinned is [(form,
+    reduction text)] of the baseline commits that the same commit pins: one cause has one attribution."""
+    where = f"{short(commit)} fingerprints"
+    parent = git("rev-parse", f"{commit}^").stdout.strip()
+    lines = source_lines(commit)
+    trailers, trailer_lines = trailers_of(commit)
+    values = trailers.get("Attribution", [])
+    reduction = reduction_in_message(message_of(commit), trailer_lines)
+    pinned_forms = {form for form, _ in pinned if form in FINGERPRINT_FORMS}
+    if len(values) > 1:
+        report.flag(f"{where} has {len(values)} Attribution trailers; one cause has one attribution")
+        return
+    if values:
+        fields = values[0].split()
+        if len(fields) != 1 or fields[0] not in FINGERPRINT_FORMS:
+            report.flag(f"{where} has the Attribution '{values[0]}'; for fingerprints the forms are commit, forward and reverse, with the patch after a line '{REDUCTION_HEADING}'")
+            return
+        form = fields[0]
+        if pinned_forms - {form}:
+            report.flag(f"{where} has the Attribution {form}, and its baseline commits have {', '.join(sorted(pinned_forms))}; one cause has one attribution")
+    else:
+        form = pinned_forms.pop() if len(pinned_forms) == 1 else "commit"
+    if form in REDUCTION_FORMS:
+        pinned_texts = [text for pinned_form, text in pinned if pinned_form == form and text]
+        if reduction is None and pinned_texts:
+            reduction = pinned_texts[0]
+        elif reduction is not None and any(not same_patch(reduction, text) for text in pinned_texts):
+            report.flag(f"{where} has a reduction in its message that differs from the reduction file of its baseline commits; one cause has one reduction")
+    if lines == 0:
+        return  # a tool or version change: the reasons of the list name it
+    if form == "commit":
+        if reduction is not None:
+            report.flag(f"{where} has a '{REDUCTION_HEADING}' patch and no Attribution forward or reverse")
+        elif lines > FAIL_LINES:
+            report.flag(f"{where}: {short(commit)} changes {lines} source lines, above {FAIL_LINES}, and moves fingerprint values; make the commit that moves them small, or give a forward or reverse reduction after a line '{REDUCTION_HEADING}'")
+        elif lines > NOTE_LINES:
+            report.note(f"{where}: {short(commit)} changes {lines} source lines, above {NOTE_LINES}, and moves fingerprint values: can a smaller change move the same fingerprints?")
+        return
+    if reduction is None:
+        report.flag(f"{where} has the Attribution {form} and no patch after a line '{REDUCTION_HEADING}'")
+        return
+    size = patch_lines(reduction)
+    if size > FAIL_LINES:
+        report.flag(f"{where} has a reduction of {size} changed lines, above {FAIL_LINES}")
+    elif size > NOTE_LINES:
+        report.note(f"{where} has a reduction of {size} changed lines, above {NOTE_LINES}: can a smaller change move the same fingerprints?")
+    tree, name = (parent, "the parent of the commit") if form == "forward" else (commit, "the commit")
+    if not patch_applies(reduction, tree):
+        report.flag(f"{where} has a {form} reduction that does not apply to {name}, {short(tree)}")
+
+
+def check_fingerprints(report, commits, records):
+    """TR-BASELINE-PROVENANCE, TR-BASELINE-ATTRIBUTION and CR-OBL-BASELINE for the fingerprint store.
+    Returns {commit: [(kind, line)]} of the commits that change fingerprint entries."""
+    report.section("TR-BASELINE-PROVENANCE and TR-BASELINE-ATTRIBUTION: the fingerprint changes of each commit")
+    pinned = {}
+    for commit, _, _, _, form, reduction_text, _, _ in records:
+        pinned.setdefault(commit, []).append((form, reduction_text))
+    steps = {}
+    for commit in commits:
+        changes = fingerprint_changes(commit)
+        if not changes:
+            continue
+        steps[commit] = changes
+        check_list(report, f"{short(commit)} fingerprints", message_of(commit), [line for _, line in changes])
+        obligations = obligations_of(commit)
+        if obligations is not None and "?" not in obligations and "fingerprint" not in obligations:
+            report.flag(f"{short(commit)} changes the fingerprint store, and its Change: trailer does not name 'fingerprint' (CR-OBL-BASELINE)")
+        if any(kind == "changed" for kind, _ in changes):
+            check_fingerprint_attribution(report, commit, pinned.get(commit, []))
+    print(f"  {len(steps)} commit(s) change fingerprint entries")
+    report.end_section()
+    return steps
+
+
+def description_section(description):
+    """The text of the section "Baseline changes" of a description, or None. The section ends at the
+    next Markdown heading. An HTML comment, such as the text of the template, is not part of it."""
+    lines = re.sub(r"<!--.*?-->", "", description, flags=re.S).splitlines()
+    for index, line in enumerate(lines):
+        if line.strip().lstrip("#").strip().strip("*").strip().rstrip(":").strip().lower() == SECTION:
+            end = index + 1
+            while end < len(lines) and not lines[end].lstrip().startswith("#"):
+                end += 1
+            return "\n".join(lines[index + 1:end])
+    return None
+
+
+def check_description(report, description, steps):
+    """PR-REQ-BASELINES: the description names each step, with a summary of its baseline changes."""
+    report.section("PR-REQ-BASELINES: the description summarizes the baseline changes of each step")
+    if not steps:
+        print("  no commit changes a baseline")
+    elif description is None:
+        report.note("no description given; the summary of the baseline changes in the pull request is not checked")
+    else:
+        section = description_section(description)
+        if section is None:
+            report.flag(f"the description has no section 'Baseline changes', and {len(steps)} commit(s) change baselines; name each one with a summary of its baseline changes")
+        else:
+            subjects = [subject_of(step) for step in steps]
+            for subject in subjects:
+                start = section.find(subject)
+                if start < 0:
+                    report.flag(f"the section 'Baseline changes' of the description does not name the commit '{subject}'")
+                    continue
+                rest = section[start + len(subject):]
+                ends = [rest.find(other) for other in subjects if other != subject and rest.find(other) >= 0]
+                summary = rest[:min(ends)] if ends else rest
+                if not summary.strip(" \t\n:-—*`.,;()"):
+                    report.flag(f"the section 'Baseline changes' of the description names the commit '{subject}' with no summary")
+    report.end_section()
+
+
+def read_description(args):
+    """The description of the pull request, from a file or from GitHub, or None."""
+    if args.description_file:
+        with open(args.description_file, encoding="utf-8") as f:
+            return f.read()
+    if args.pr:
+        out = subprocess.run(["gh", "pr", "view", str(args.pr), "--json", "body", "--jq", ".body"], capture_output=True, text=True)
+        if out.returncode != 0:
+            raise RuntimeError(f"cannot read the description of #{args.pr}:\n{out.stderr.strip()}")
+        return out.stdout
+    return None
 
 
 def check_pins(report, commits, base, baselines):
@@ -306,23 +492,10 @@ def check_record(report, repository, kind, commit, parent, old, new, is_result):
         if path != reduction_path or status != "A":
             report.flag(f"{where} changes {path}; a baseline commit adds only the reduction that its Attribution names to the folder {baseline_summary.ATTRIBUTION_FOLDER}")
 
-    # the summary and the analysis
+    # the list of the changes, with a reason on each line
     repository.fetch_contents(old, new)
     moved = baseline_summary.analyze(repository.folder, old, new, is_result)
-    expected = baseline_summary.block(moved)
-    found = baseline_summary.find_block(message)
-    if found is None:
-        report.flag(f"{where} has no '{baseline_summary.HEADING}' block; the block is:")
-        print("\n".join("      " + line for line in expected))
-    elif [line.strip() for line in found] != [line.strip() for line in expected]:
-        report.flag(f"{where} has a '{baseline_summary.HEADING}' block that is not the computed block; the block is:")
-        print("\n".join("      " + line for line in expected))
-    groups = baseline_summary.count_groups(moved)
-    if groups > 1:
-        report.note(f"{where} moves its tests in {groups} ways (the groups of the block), one explanation each? If the ways have different causes, the INET commit holds more than one change (PR-SPLIT-ONE-CHANGE)")
-    words = analysis_words(message, repository.trailer_lines(new))
-    if words < ANALYSIS_WORDS:
-        report.flag(f"{where} has no analysis: {words} words of prose; say why the change causes each group of the moved results")
+    check_list(report, where, message, baseline_summary.lines(moved))
 
     # only results that move
     for status, path, changed, added, removed in moved["tests"]:
@@ -377,6 +550,9 @@ def main(argv=None):
     parser.add_argument("range", metavar="BASE..HEAD")
     parser.add_argument("--baseline-repository", action="append", default=[], metavar="KIND=PATH",
                         help="read the baseline commits of a test kind from a local clone, or from another URL")
+    description = parser.add_mutually_exclusive_group()
+    description.add_argument("--description-file", help="a file that holds the description of the pull request")
+    description.add_argument("--pr", type=int, help="a pull request number, to read its description")
     args = parser.parse_args(argv)
     if ".." not in args.range or "..." in args.range or git("rev-parse", args.range, check=False).returncode != 0:
         print(f"error: '{args.range}' is not a valid commit range", file=sys.stderr)
@@ -462,6 +638,16 @@ def main(argv=None):
                     report.flag(f"{short(commit)} moves {len(entries)} pins, and their baseline commits do not have the same attribution; one cause has one attribution, with the same reduction file")
             report.end_section()
 
+            fingerprint_steps = check_fingerprints(report, commits, records)
+            steps = [commit for commit in commits if commit in fingerprint_steps or any(record[0] == commit for record in records)]
+            check_description(report, read_description(args), steps)
+
+            if fingerprint_steps:
+                print()
+                print("== the fingerprint changes (for the reviewer) ==")
+                for commit, changes in fingerprint_steps.items():
+                    print(f"  {short(commit)} {subject_of(commit)}")
+                    print("\n".join("    " + line for _, line in changes))
             if usable:
                 print()
                 print("== the baseline commits (the record, for the reviewer) ==")
@@ -477,7 +663,7 @@ def main(argv=None):
     if report.violations:
         print("FAIL: see doc/project/rule/testing.md (TR-BASELINE-*) and doc/project/guide/change-a-baseline.md.")
         return 1
-    print("PASS: the pins and the baseline records are clean. Whether an analysis is true, and whether a")
+    print("PASS: the pins and the baseline records are clean. Whether a reason is true, and whether a")
     print("      reduction gives the results that it claims, needs a run and a reviewer.")
     return 0
 

@@ -46,7 +46,7 @@ which are of the specified protocol type at the level of capture, but
 not the protocol type of encapsulated packets. The parameter takes
 protocol names registered in INET (see
 `/inet/src/inet/common/Protocol.cc <https://github.com/inet-framework/inet/blob/master/src/inet/common/Protocol.cc>`__)
-The parameter's default value is ``"ethernetmac ppp ieee80211mac"``.
+The parameter's default value is ``"ethernetmac ethernetmacnofcs ppp ieee80211mac"``.
 
 By default, the PCAP recorder module records L2 frames, but setting the
 :par:`moduleNamePatterns` to ``ipv4``, for example, lets one record L3
@@ -81,7 +81,7 @@ network:
 .. figure:: media/network2.png
    :width: 100%
 
-The network contains two ``adhocHost``\ s named ``host1`` and ``host2``,
+The network contains two :ned:`AdhocHost`\ s named ``host1`` and ``host2``,
 and two :ned:`StandardHost`\ s named ``ethHost1`` and ``ethHost2``. There
 are two :ned:`Router` modules (``router1`` and ``router2``), which are
 connected by PPP. Each wired host is connected to one of
@@ -137,8 +137,8 @@ class:
    :start-at: host2.numPcapRecorders
    :end-at: packetFilter
 
-The :par:`packetFilter` parameter's value ``*ArpPacket`` matches the
-``inet::ArpPacket`` class. There is an ARP request packet open in the
+The :par:`packetFilter` expression ``has(ArpPacket)`` matches packets that contain an
+``inet::ArpPacket`` chunk. There is an ARP request packet open in the
 packet inspector on the following image:
 
 .. figure:: media/arppacketclass.png
@@ -186,9 +186,9 @@ Here is the ini configuration:
    :start-at: router2.numPcapRecorders
    :end-at: totalLengthField
 
-In ``ethHost2``, we'll only record IPv4 frames, without network layer protocol information. The
+In ``ethHost2``, we'll only record IPv4 frames, without link layer protocol information. The
 :par:`dumpProtocols` parameter's default is
-``ethernetmac ppp ieee80211mac``, so it has to be set to ``ipv4``.
+``ethernetmac ethernetmacnofcs ppp ieee80211mac``, so it has to be set to ``ipv4``.
 
 .. literalinclude:: ../omnetpp.ini
    :language: ini
@@ -282,12 +282,12 @@ UDP data packet, in ``host1``'s wlan interface (sent from ``host1`` to
 .. figure:: media/wifi5.png
    :width: 100%
 
-The following screenshot shows ``ethHost1.pcap`` opened with TCPDump:
+The following screenshot shows ``ethHost1.eth.pcap`` opened with TCPDump:
 
 .. figure:: media/tcpdump.png
    :width: 100%
 
-TCP data packet, in ``ethHost2``, recorded at the IPv4 module (sent from
+TCP data packet, in ``ethHost2``, recorded at the IPv4 level (sent from
 ``ethHost1`` to ``ethHost2``):
 
 .. figure:: media/rawip.png
