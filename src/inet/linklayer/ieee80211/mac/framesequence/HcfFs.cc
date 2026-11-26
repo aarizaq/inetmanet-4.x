@@ -3,6 +3,8 @@
 //
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
+// Contributor: Miguel González-López (EDCA TXOP protection and Block Ack exchange sequencing)
+//
 
 #include "inet/linklayer/ieee80211/mac/framesequence/HcfFs.h"
 
@@ -65,6 +67,9 @@ bool HcfFs::hasMoreTxOps(RepeatingFs *frameSequence, FrameSequenceContext *conte
     auto qos = context->getQoSContext();
     bool bar = qos->ackPolicy->isBlockAckReqNeeded(frames, qos->txopProcedure, qos->blockAckAgreementHandler);
     qos->preparedData.reset();
+    if (!bar && frameSequence->getCount() != 0 && qos->txopProcedure->getLimit() == 0 &&
+        context->isFragmentContinuation(frames->peekFrameToTransmit(), context->getNumSteps()))
+        return true;
     if (!bar && qos->prepareData) {
         auto preparation = qos->prepareData(context);
         if (preparation == DataPreparationResult::READY)

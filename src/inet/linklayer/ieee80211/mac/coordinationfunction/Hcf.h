@@ -3,6 +3,8 @@
 //
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
+// Contributor: Miguel González-López (Block Ack, TXOP protection, and QoS data lifetime interfaces)
+//
 
 
 #ifndef __INET_HCF_H
@@ -53,6 +55,7 @@ class INET_API Hcf : public ICoordinationFunction, public IFrameSequenceHandler:
 {
   private:
     BlockAckVariant blockAckVariant = BlockAckVariant::BASIC;
+    simtime_t zeroLimitFragmentRoundTripTime;
     bool validateBlockAckRequest(Packet *packet, const Ptr<const Ieee80211BlockAckReq>& bar) const;
 
   public:
@@ -143,6 +146,7 @@ class INET_API Hcf : public ICoordinationFunction, public IFrameSequenceHandler:
     FrameSequenceContext *buildContext(AccessCategory ac);
     static simtime_t encodeDuration(simtime_t duration, bool holder);
     simtime_t computeImmediateResponseDuration(Packet *packet, const Ptr<const Ieee80211DataOrMgmtHeader>& header);
+    simtime_t computeBlockAckExchangeDuration(Packet *packet, const Ptr<const Ieee80211BlockAckReq>& header, simtime_t ppduDuration);
     DataPreparationResult prepareDataTransmission(FrameSequenceContext *context);
     bool validatePreparedData(const PreparedDataTransmission& prepared, simtime_t start) const;
     simtime_t computePreparedDataCost(const PreparedDataTransmission& prepared, bool protect) const;
@@ -151,10 +155,13 @@ class INET_API Hcf : public ICoordinationFunction, public IFrameSequenceHandler:
     bool isInitialDataException(const FrameSequenceContext *context, const PreparedDataTransmission& prepared) const;
     simtime_t forecastSingleProtectionSuccessor(Packet *packet, const Ptr<const Ieee80211DataOrMgmtHeader>& header,
             TxopProcedure *txop, InProgressFrames *frames, simtime_t completionTime);
+    std::pair<simtime_t, simtime_t> estimateSingleProtectionExchange(Packet *candidate, TxopProcedure *txop,
+            OriginatorBlockAckAgreement *agreement);
     static simtime_t computeMultipleProtectionDuration(simtime_t limit, simtime_t remaining,
             simtime_t reservation, simtime_t ppduDuration, simtime_t exchangeDuration, bool reservationEstablished);
     simtime_t estimateZeroLimitExchange(Packet *packet, const Ptr<const Ieee80211MacHeader>& header,
             TxopProcedure *txop, simtime_t ppduDuration);
+    simtime_t forecastZeroLimitFragments(const Packet *packet, simtime_t completionTime, simtime_t budget, bool wholeBurst);
     virtual bool hasFrameToTransmit();
     virtual bool hasFrameToTransmit(AccessCategory ac);
     bool hasEligibleFrameToTransmit(AccessCategory ac) const;

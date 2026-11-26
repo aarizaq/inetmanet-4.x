@@ -28,6 +28,15 @@ void TcpTahoe::initializeAlgorithm()
     state->ssthresh = conn->getTcpMain()->par("initialSsthresh");
 }
 
+void TcpTahoe::established(bool active)
+{
+    TcpAlgorithmBase::established(active);
+
+    // RFC 6582 section 3.2, step 1, starts recover at the ISS; it starts one below, as
+    // in Rfc6582Recovery, so that a loss of the first data segment gets a fast retransmit
+    state->recover = state->iss - 1;
+}
+
 void TcpTahoe::processRexmitTimer(TcpEventCode& event)
 {
     TcpAlgorithmBase::processRexmitTimer(event);
@@ -35,7 +44,12 @@ void TcpTahoe::processRexmitTimer(TcpEventCode& event)
     if (event == TCP_E_ABORT)
         return;
 
-    resetToSlowStart();
+    // RFC 6582 section 3.2, "Retransmit timeouts": "record the highest sequence number
+    // transmitted in the variable recover", so that the duplicates of the go-back start no
+    // fast retransmit (section 6)
+    state->recover = state->snd_max - 1;
+    // RFC 5681 equation (4), with the outstanding data as FlightSize
+    resetToSlowStart(state->snd_max - state->snd_una);
 }
 
 void TcpTahoe::receivedAckForUnackedData(uint32_t firstSeqAcked)
@@ -97,14 +111,25 @@ void TcpTahoe::receivedDuplicateAck()
     // Tahoe has no fast recovery: the third duplicate ACK starts the same
     // slow start from the first unacknowledged segment as a timeout does
     if (state->dupacks == state->dupthresh) {
+        // RFC 6582 section 6: the go-back sends again segments that the receiver can
+        // have, and their duplicates must start no second fast retransmit. As in
+        // Rfc6582Recovery, the third duplicate ACK starts a fast retransmit only when the
+        // cumulative ACK "covers more than recover" (section 3.2, step 2).
+        if (!seqGreater(state->snd_una - 1, state->recover)) {
+            EV_DETAIL << "Tahoe on dupAcks == DUPTHRESH(=" << state->dupthresh << "): the cumulative ACK does not cover more than recover=" << state->recover << ", no Fast Retransmit\n";
+            return;
+        }
+        state->recover = state->snd_max - 1;
         EV_DETAIL << "Tahoe on dupAcks == DUPTHRESH(=" << state->dupthresh << ": perform Fast Retransmit, and enter Slow Start:\n";
-        resetToSlowStart();
+        resetToSlowStart(conn->getFlightSize());
     }
 }
 
-void TcpTahoe::resetToSlowStart()
+void TcpTahoe::resetToSlowStart(uint32_t flightSize)
 {
-    state->ssthresh = std::max(state->snd_cwnd / 2, 2 * state->snd_mss);
+    // RFC 5681 equation (4): "ssthresh = max (FlightSize / 2, 2*SMSS)"; section 3.1 warns
+    // against cwnd, which can grow beyond the window of the receiver
+    state->ssthresh = std::max(flightSize / 2, 2 * state->snd_mss);
     conn->emit(ssthreshSignal, state->ssthresh);
     state->snd_cwnd = state->snd_mss;
     conn->emit(cwndSignal, state->snd_cwnd);

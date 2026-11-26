@@ -39,7 +39,7 @@ class INET_API InProgressFrames : public SimpleModule
 
     void ensureHasFrameToTransmit();
     bool hasEligibleFrameToTransmit();
-    bool isEligibleToTransmit(Packet *packet);
+    bool isEligibleToTransmit(Packet *packet, simtime_t time = simTime());
 
   public:
     virtual ~InProgressFrames();
@@ -56,13 +56,18 @@ class INET_API InProgressFrames : public SimpleModule
     void adoptPreparedFrame(Packet *packet);
     virtual Packet *getFrameToTransmit();
     virtual Packet *peekFrameToTransmit();
+    // A null exclusion selects the ordinary candidate.
+    virtual Packet *peekFrameToTransmitExcluding(const Packet *excludedFrame) final;
+    // Select a borrowed in-progress candidate in transmission order at the supplied time.
+    virtual Packet *peekInProgressFrameToTransmitExcluding(const Packet *excludedFrame, simtime_t time);
     SequenceNumberCyclic getCandidateSequenceNumber(Packet *packet) const;
     virtual Packet *getPendingFrameFor(Packet *frame, bool extract = true);
     virtual void dropFrame(Packet *packet);
     virtual void dropFrames(std::set<std::pair<MacAddress, std::pair<Tid, SequenceControlField>>> seqAndFragNums);
 
     virtual bool hasInProgressFrames() { ensureHasFrameToTransmit(); return hasEligibleFrameToTransmit(); }
-    virtual std::vector<Packet *> getOutstandingFrames();
+    bool isExpired(const Packet *packet, simtime_t time) const;
+    virtual std::vector<Packet *> getOutstandingFrames(simtime_t time = simTime());
 
     virtual void clearDroppedFrames();
 };

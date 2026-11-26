@@ -3,6 +3,8 @@
 //
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
+// Contributor: Miguel González-López (Block Ack action dispatch and reordered QoS data delivery)
+//
 
 
 #include "inet/linklayer/ieee80211/mac/recipient/RecipientQosMacDataService.h"
@@ -57,32 +59,36 @@ std::vector<Packet *> RecipientQosMacDataService::dataFrameReceived(Packet *data
 {
     Enter_Method("dataFrameReceived");
     take(dataPacket);
-    // IEEE Std 802.11-2024, 10.25.1: these agreements apply to QoS DATA, which carries a TID.
-    if (blockAckAgreementHandler && dataHeader->getType() == ST_DATA_WITH_QOS) {
-        auto agreement = blockAckAgreementHandler->getAgreement(dataHeader->getTid(), dataHeader->getTransmitterAddress());
-        if (agreement) {
-            agreement->recordReceived(dataHeader);
-            if (agreement->getVariant() == BlockAckVariant::COMPRESSED)
-                agreement->getBlockAckRecord()->compressedFrameReceived(dataHeader);
+    // IEEE Std 802.11-2024, Table 10-5: group QoS DATA uses a different sequence space from unicast QoS DATA.
+    auto agreement = blockAckAgreementHandler && dataHeader->getType() == ST_DATA_WITH_QOS &&
+        !dataHeader->getReceiverAddress().isMulticast() ?
+        blockAckAgreementHandler->getAgreement(dataHeader->getTid(), dataHeader->getTransmitterAddress()) : nullptr;
+    bool hadCompressedReceipt = false;
+    if (agreement) {
+        agreement->recordReceived(dataHeader);
+        if (agreement->getVariant() == BlockAckVariant::COMPRESSED) {
+            auto record = agreement->getBlockAckRecord();
+            // A first arrival can still be inside the receipt window after reordering skipped its sequence.
+            hadCompressedReceipt = dataHeader->getRetry() && record->hasCompleteReceipt(dataHeader->getSequenceNumber());
+            record->compressedFrameReceived(dataHeader);
         }
     }
     // TODO A-MPDU Deaggregation, MPDU Header+FCS Validation, Address1 Filtering, Duplicate Removal, MPDU Decryption
-    if (duplicateRemoval && duplicateRemoval->isDuplicate(dataHeader)) {
-        EV_WARN << "Dropping duplicate packet " << *dataPacket << ".\n";
+    auto reportDuplicate = [this](Packet *packet) {
+        EV_WARN << "Dropping duplicate packet " << *packet << ".\n";
         PacketDropDetails details;
         details.setReason(DUPLICATE_DETECTED);
-        emit(packetDroppedSignal, dataPacket, &details);
+        emit(packetDroppedSignal, packet, &details);
+    };
+    // IEEE Std 802.11-2024, Table 10-6, RC9/RR4: the receive window handles duplicates under an agreement.
+    if (!agreement && duplicateRemoval && duplicateRemoval->isDuplicate(dataHeader)) {
+        reportDuplicate(dataPacket);
         delete dataPacket;
         return std::vector<Packet *>();
     }
     BlockAckReordering::ReleasedFrames frames = {{dataHeader->getSequenceNumber().get(), {dataPacket}}};
-    if (blockAckReordering && blockAckAgreementHandler && dataHeader->getType() == ST_DATA_WITH_QOS) {
-        Tid tid = dataHeader->getTid();
-        MacAddress originatorAddr = dataHeader->getTransmitterAddress();
-        RecipientBlockAckAgreement *agreement = blockAckAgreementHandler->getAgreement(tid, originatorAddr);
-        if (agreement)
-            frames = blockAckReordering->processReceivedQoSFrame(agreement, dataPacket, dataHeader, interframe);
-    }
+    if (blockAckReordering && agreement)
+        frames = blockAckReordering->processReceivedQoSFrame(agreement, dataPacket, dataHeader, interframe, hadCompressedReceipt, reportDuplicate);
     std::vector<Packet *> defragmentedFrames;
     if (basicReassembly) { // FIXME defragmentation
         for (auto it : frames) {

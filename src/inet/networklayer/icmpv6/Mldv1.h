@@ -8,6 +8,7 @@
 #define __INET_MLDV1_H
 
 #include <map>
+#include <set>
 
 #include "inet/common/ModuleRefByPar.h"
 #include "inet/common/SimpleModule.h"
@@ -96,6 +97,7 @@ class INET_API Mldv1 : public OperationalBase, public cListener
         Mldv1 *owner;
         GroupToRouterDataMap groups;
         cMessage *mldQueryTimer;    // periodic General Query timer
+        bool waitsForLinkLocalAddress = false; // the querier starts when the interface has a tested link-local address
 
         RouterInterfaceData(Mldv1 *owner);
         virtual ~RouterInterfaceData();
@@ -157,6 +159,10 @@ class INET_API Mldv1 : public OperationalBase, public cListener
     virtual bool isModuleStopStage(int stage) const override { return stage == ModuleStopOperation::STAGE_NETWORK_LAYER; }
     virtual void handleStartOperation(LifecycleOperation *operation) override {}
     virtual void handleStopOperation(LifecycleOperation *operation) override;
+    // the interfaces that sent a Report or a Done from the unspecified address, before their
+    // link-local address was valid; each reports its groups again once it is
+    std::set<int> interfacesReportedFromUnspecifiedAddress;
+    virtual void sendReports(NetworkInterface *ie);
     virtual void handleCrashOperation(LifecycleOperation *operation) override;
 
     virtual ~Mldv1();

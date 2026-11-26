@@ -3,6 +3,8 @@
 //
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
+// Contributor: Miguel González-López (frame preview and adoption of prepared frames)
+//
 
 
 #include "inet/linklayer/ieee80211/mac/queue/InProgressFrames.h"
@@ -62,9 +64,9 @@ bool InProgressFrames::containsFrame(const Packet *packet) const
     return std::find(inProgressFrames.begin(), inProgressFrames.end(), packet) != inProgressFrames.end();
 }
 
-bool InProgressFrames::isEligibleToTransmit(Packet *packet)
+bool InProgressFrames::isEligibleToTransmit(Packet *packet, simtime_t time)
 {
-    return (!lifetimeHandler || !lifetimeHandler->isExpired(packet)) &&
+    return !isExpired(packet, time) &&
         (!transmissionEligible || transmissionEligible(packet)) &&
         ackHandler->isEligibleToTransmit(packet->peekAtFront<Ieee80211DataOrMgmtHeader>());
 }
@@ -100,20 +102,28 @@ void InProgressFrames::adoptPreparedFrame(Packet *packet)
 Packet *InProgressFrames::getFrameToTransmit()
 {
     ensureHasFrameToTransmit();
-    for (auto frame : inProgressFrames) {
-        if (isEligibleToTransmit(frame))
-            return frame;
-    }
-    return nullptr;
+    return peekInProgressFrameToTransmitExcluding(nullptr, simTime());
 }
 
 Packet *InProgressFrames::peekFrameToTransmit()
 {
+    return peekFrameToTransmitExcluding(nullptr);
+}
+
+Packet *InProgressFrames::peekFrameToTransmitExcluding(const Packet *excludedFrame)
+{
+    if (auto frame = peekInProgressFrameToTransmitExcluding(excludedFrame, simTime()))
+        return frame;
+    return check_and_cast<IOriginatorQosMacDataService *>(dataService)->peekEligibleFrame(pendingQueue);
+}
+
+Packet *InProgressFrames::peekInProgressFrameToTransmitExcluding(const Packet *excludedFrame, simtime_t time)
+{
     for (auto frame : inProgressFrames) {
-        if (isEligibleToTransmit(frame))
+        if (frame != excludedFrame && isEligibleToTransmit(frame, time))
             return frame;
     }
-    return check_and_cast<IOriginatorQosMacDataService *>(dataService)->peekEligibleFrame(pendingQueue);
+    return nullptr;
 }
 
 SequenceNumberCyclic InProgressFrames::getCandidateSequenceNumber(Packet *packet) const
@@ -130,15 +140,12 @@ Packet *InProgressFrames::getPendingFrameFor(Packet *frame, bool extract)
     if (dynamicPtrCast<const Ieee80211RtsFrame>(frame->peekAtFront<Ieee80211MacHeader>()))
         return frameToTransmit;
     else {
-        for (auto frame : inProgressFrames) {
-            if (isEligibleToTransmit(frame) && frameToTransmit != frame)
-                return frame;
-        }
+        if (auto next = peekInProgressFrameToTransmitExcluding(frameToTransmit, simTime()))
+            return next;
         if (!extract)
             return check_and_cast<IOriginatorQosMacDataService *>(dataService)->peekEligibleFrame(pendingQueue);
         auto frames = dataService->extractFramesToTransmit(pendingQueue);
         if (frames) {
-            auto firstFrame = (*frames)[0];
             for (auto frame : *frames) {
                 take(frame);
                 ackHandler->frameGotInProgress(frame->peekAtFront<Ieee80211DataOrMgmtHeader>());
@@ -149,7 +156,7 @@ Packet *InProgressFrames::getPendingFrameFor(Packet *frame, bool extract)
             delete frames;
             // FIXME If the next Txop sequence were a BlockAckReqBlockAckFs then this would return
             // a wrong pending frame.
-            return firstFrame;
+            return peekInProgressFrameToTransmitExcluding(frameToTransmit, simTime());
         }
         else
             return nullptr;
@@ -185,11 +192,16 @@ void InProgressFrames::dropFrames(std::set<std::pair<MacAddress, std::pair<Tid, 
     }
 }
 
-std::vector<Packet *> InProgressFrames::getOutstandingFrames()
+bool InProgressFrames::isExpired(const Packet *packet, simtime_t time) const
+{
+    return lifetimeHandler && lifetimeHandler->isExpired(packet, time);
+}
+
+std::vector<Packet *> InProgressFrames::getOutstandingFrames(simtime_t time)
 {
     std::vector<Packet *> outstandingFrames;
     for (auto frame : inProgressFrames) {
-        if ((!lifetimeHandler || !lifetimeHandler->isExpired(frame)) &&
+        if (!isExpired(frame, time) &&
             ackHandler->isOutstandingFrame(frame->peekAtFront<Ieee80211DataOrMgmtHeader>()))
             outstandingFrames.push_back(frame);
     }

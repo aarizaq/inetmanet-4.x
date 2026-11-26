@@ -36,8 +36,11 @@ class INET_API TcpTahoe : public TcpAlgorithmBase
 
     virtual void initializeAlgorithm() override;
 
-    /** Halves ssthresh from cwnd and restarts slow start from the first unacknowledged segment */
-    virtual void resetToSlowStart();
+    /** Sets ssthresh from the FlightSize (RFC 5681 equation (4)) and restarts slow start from the first unacknowledged segment */
+    virtual void resetToSlowStart(uint32_t flightSize);
+
+    /** Starts recover of RFC 6582 below the first data octet */
+    virtual void established(bool active) override;
 
     /** Redefine what should happen on retransmission */
     virtual void processRexmitTimer(TcpEventCode& event) override;

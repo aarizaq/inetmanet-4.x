@@ -198,8 +198,8 @@ Ipv6InterfaceData::Ipv6InterfaceData()
     /*******************Setting host/node/router variables*********************/
     nodeVars.dupAddrDetectTransmits = IPv6_DEFAULT_DUPADDRDETECTTRANSMITS;
 
-    hostVars.linkMTU = IPv6_MIN_MTU;
-    hostVars.curHopLimit = IPv6_DEFAULT_ADVCURHOPLIMIT; // value specified in RFC 1700-can't find it
+    hostVars.linkMTU = 0; // the MTU of the link type, that is of the interface, until an advertisement gives one
+    hostVars.curHopLimit = IPv6_DEFAULT_CURHOPLIMIT;
     hostVars.baseReachableTime = IPv6_REACHABLE_TIME;
     hostVars.reachableTime = generateReachableTime(_getMinRandomFactor(),
                 _getMaxRandomFactor(), getBaseReachableTime());
@@ -211,7 +211,7 @@ Ipv6InterfaceData::Ipv6InterfaceData()
     rtrVars.advManagedFlag = false;
     rtrVars.advOtherConfigFlag = false;
 
-    rtrVars.advLinkMTU = IPv6_MIN_MTU;
+    rtrVars.advLinkMTU = 0; // no MTU option (RFC 4861 section 6.2.1)
     rtrVars.advReachableTime = IPv6_DEFAULT_ADV_REACHABLE_TIME;
     rtrVars.advRetransTimer = IPv6_DEFAULT_ADV_RETRANS_TIMER;
     rtrVars.advCurHopLimit = IPv6_DEFAULT_ADVCURHOPLIMIT;
@@ -307,6 +307,9 @@ void Ipv6InterfaceData::assignAddress(const Ipv6Address& addr, bool tentative,
     choosePreferredAddress();
     changed1(F_IP_ADDRESS);
 
+    // before Duplicate Address Detection sends its solicitation
+    updateSolicitedNodeGroup(addr, true);
+
     cModule *m = ownerp ? dynamic_cast<cModule *>(ownerp->getInterfaceTable()) : nullptr;
     if (m) {
         Ipv6AddressInfo info(ownerp, addr);
@@ -367,6 +370,12 @@ Ipv6InterfaceData::AddressType Ipv6InterfaceData::getAddressType(const Ipv6Addre
     return getAddressType(findAddress(addr));
 }
 
+simtime_t Ipv6InterfaceData::getAddressExpiryTime(int i) const
+{
+    ASSERT(i >= 0 && i < (int)addresses.size());
+    return addresses[i].expiryTime;
+}
+
 bool Ipv6InterfaceData::hasAddress(const Ipv6Address& addr) const
 {
     return findAddress(addr) != -1;
@@ -381,6 +390,22 @@ bool Ipv6InterfaceData::matchesSolicitedNodeMulticastAddress(const Ipv6Address& 
     return false;
 }
 
+void Ipv6InterfaceData::updateSolicitedNodeGroup(const Ipv6Address& addr, bool assigned)
+{
+    if (ownerp == nullptr || !ownerp->isMulticast() || addr.isMulticast() || addr.isUnspecified() || addr.isLoopback())
+        return;
+    // one membership for all addresses that map to the same group
+    Ipv6Address group = addr.formSolicitedNodeMulticastAddress();
+    int count = 0;
+    for (const auto& elem : addresses)
+        if (elem.address.formSolicitedNodeMulticastAddress() == group)
+            count++;
+    if (assigned && count == 1)
+        joinMulticastGroup(group);
+    else if (!assigned && count == 0)
+        leaveMulticastGroup(group);
+}
+
 bool Ipv6InterfaceData::isTentativeAddress(const Ipv6Address& addr) const
 {
     int k = findAddress(addr);
@@ -393,6 +418,8 @@ void Ipv6InterfaceData::permanentlyAssign(const Ipv6Address& addr)
     ASSERT(k != -1);
     addresses[k].tentative = false;
     choosePreferredAddress();
+    // the address is valid now: listeners such as MLD, which needs a valid link-local address, learn it
+    changed1(F_IP_ADDRESS);
 }
 
 void Ipv6InterfaceData::tentativelyAssign(int i)
@@ -400,6 +427,7 @@ void Ipv6InterfaceData::tentativelyAssign(int i)
     ASSERT(i >= 0 && i < (int)addresses.size());
     addresses[i].tentative = true;
     choosePreferredAddress();
+    changed1(F_IP_ADDRESS);
 }
 
 
@@ -419,6 +447,7 @@ void Ipv6InterfaceData::removeAddress(const Ipv6Address& address)
     addresses.erase(addresses.begin() + k);
     choosePreferredAddress();
     changed1(F_IP_ADDRESS);
+    updateSolicitedNodeGroup(address, false);
 
     cModule *m = ownerp ? dynamic_cast<cModule *>(ownerp->getInterfaceTable()) : nullptr;
     if (m) {
@@ -448,15 +477,19 @@ void Ipv6InterfaceData::choosePreferredAddress()
     // remove expired addresses (expiryTime == 0 means infinite lifetime)
     simtime_t now = simTime();
     bool changed = false;
+    std::vector<Ipv6Address> expiredAddresses;
     for (auto it = addresses.begin(); it != addresses.end(); ) {
         if (it->expiryTime != SIMTIME_ZERO && it->expiryTime <= now) {
             EV_INFO << "Address " << it->address << " has expired, removing\n";
+            expiredAddresses.push_back(it->address);
             it = addresses.erase(it);
             changed = true;
         }
         else
             ++it;
     }
+    for (const auto& address : expiredAddresses)
+        updateSolicitedNodeGroup(address, false);
 
     if (addresses.empty()) {
         preferredAddr = Ipv6Address();
@@ -833,6 +866,7 @@ Ipv6Address Ipv6InterfaceData::removeAddress(Ipv6InterfaceData::AddressType type
     changed1(F_IP_ADDRESS);
 
     if (!addr.isUnspecified()) {
+        updateSolicitedNodeGroup(addr, false);
         cModule *m = ownerp ? dynamic_cast<cModule *>(ownerp->getInterfaceTable()) : nullptr;
         if (m) {
             Ipv6AddressInfo info(ownerp, addr);

@@ -3,6 +3,8 @@
 //
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
+// Contributor: Miguel González-López (receive-window ordering and Block Ack Request handling)
+//
 
 
 #include "inet/linklayer/ieee80211/mac/blockackreordering/BlockAckReordering.h"
@@ -52,6 +54,11 @@ void BlockAckReordering::clearPeer(MacAddress peer)
 
 BlockAckReordering::ReleasedFrames BlockAckReordering::processReceivedQoSFrame(RecipientBlockAckAgreement *agreement, Packet *dataPacket, const Ptr<const Ieee80211DataHeader>& dataHeader, bool interframe)
 {
+    return processReceivedQoSFrame(agreement, dataPacket, dataHeader, interframe, false, {});
+}
+
+BlockAckReordering::ReleasedFrames BlockAckReordering::processReceivedQoSFrame(RecipientBlockAckAgreement *agreement, Packet *dataPacket, const Ptr<const Ieee80211DataHeader>& dataHeader, bool interframe, bool hadCompressedReceipt, const std::function<void(Packet *)>& onDuplicate)
+{
     ReceiveBuffer *receiveBuffer = createReceiveBufferIfNecessary(agreement);
     auto sequenceNumber = dataHeader->getSequenceNumber();
     auto windowStart = receiveBuffer->getNextExpectedSequenceNumber();
@@ -60,6 +67,13 @@ BlockAckReordering::ReleasedFrames BlockAckReordering::processReceivedQoSFrame(R
     // IEEE Std 802.11-2024, 10.25.6.6.2.1(b,c): advance for newer DATA beyond the window; discard older DATA.
     // The shared reorder service also retains Basic fragment reassembly as an INET compatibility choice.
     if (!(windowStart <= sequenceNumber)) {
+        if (onDuplicate && dataHeader->getRetry()) {
+            auto record = agreement->getBlockAckRecord();
+            bool received = agreement->getVariant() == BlockAckVariant::BASIC ?
+                record->hasBasicReceipt(sequenceNumber, dataHeader->getFragmentNumber()) : hadCompressedReceipt;
+            if (received)
+                onDuplicate(dataPacket);
+        }
         delete dataPacket;
         return releasedFrames;
     }
@@ -70,9 +84,13 @@ BlockAckReordering::ReleasedFrames BlockAckReordering::processReceivedQoSFrame(R
     // This allows the recipient to delete the Block Ack if the originator does not switch
     // back to using Block Ack.
     if (receiveBuffer->insertFrame(dataPacket, dataHeader)) {
-        if (dataHeader->getAckPolicy() == BLOCK_ACK && agreement->getVariant() == BlockAckVariant::BASIC)
-            agreement->blockAckPolicyFrameReceived(dataHeader);
         auto record = agreement->getBlockAckRecord();
+        if (agreement->getVariant() == BlockAckVariant::BASIC) {
+            if (dataHeader->getAckPolicy() == BLOCK_ACK)
+                agreement->blockAckPolicyFrameReceived(dataHeader);
+            else if (dataHeader->getAckPolicy() == NORMAL_ACK)
+                record->normalAckPolicyFrameReceived(dataHeader);
+        }
         // IEEE Std 802.11-2024, 10.25.6.6.2.1(a)(2)(v) and 10.25.6.6.1: release the complete prefix in order.
         if (agreement->getVariant() == BlockAckVariant::COMPRESSED && insideWindow && windowStart < sequenceNumber &&
             interframe && record->hasCompleteReceipt(record->getWindowStart() - 1)) {
@@ -84,8 +102,17 @@ BlockAckReordering::ReleasedFrames BlockAckReordering::processReceivedQoSFrame(R
         releaseReceiveBuffer(agreement, receiveBuffer, consecutiveFrames);
         releasedFrames.insert(releasedFrames.end(), consecutiveFrames.begin(), consecutiveFrames.end());
     }
-    else
+    else {
+        if (onDuplicate && dataHeader->getRetry()) {
+            const auto& buffer = receiveBuffer->getBuffer();
+            auto entry = buffer.find(sequenceNumber.get());
+            if (entry != buffer.end() && std::any_of(entry->second.begin(), entry->second.end(), [&](Packet *fragment) {
+                    return fragment->peekAtFront<Ieee80211DataHeader>()->getFragmentNumber() == dataHeader->getFragmentNumber();
+                }))
+                onDuplicate(dataPacket);
+        }
         delete dataPacket;
+    }
     return releasedFrames;
 }
 
@@ -128,6 +155,10 @@ BlockAckReordering::ReleasedFrames BlockAckReordering::advanceReceiveBuffer(Reci
     releaseReceiveBuffer(agreement, receiveBuffer, releasedFrames);
     receiveBuffer->dropFramesUntil(startingSequenceNumber);
     receiveBuffer->setNextExpectedSequenceNumber(startingSequenceNumber);
+    // IEEE Std 802.11e-2005, 9.10.3: retire Basic receipts before the new window
+    // even when advancing the window releases no complete MSDU.
+    if (agreement->getVariant() == BlockAckVariant::BASIC)
+        agreement->getBlockAckRecord()->removeAckStates(startingSequenceNumber);
     return releasedFrames;
 }
 

@@ -3,6 +3,8 @@
 //
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
+// Contributor: Miguel González-López (Block Ack context and frame-sequence completion interfaces)
+//
 
 
 #ifndef __INET_FRAMESEQUENCECONTEXT_H
@@ -112,6 +114,8 @@ class INET_API FrameSequenceContext : public cObject
     virtual InProgressFrames *getInProgressFrames() const { return inProgressFrames; }
     // A reversible preview replaces destructive extraction only for the scoped QoS path.
     Packet *getDataFrameToTransmit() const;
+    static bool isNextFragment(const Packet *previous, const Packet *candidate);
+    bool isFragmentContinuation(const Packet *candidate, int numCompletedSteps) const;
     virtual IRtsProcedure *getRtsProcedure() const { return rtsProcedure; }
     virtual IRtsPolicy *getRtsPolicy() const { return rtsPolicy; }
 

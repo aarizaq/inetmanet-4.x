@@ -21,10 +21,19 @@ the baseline commit. So the baselines of master hold the values of the open defe
 its own explanation.
 
 The list has 51 entries. Seven are repaired: BD-0, BD-1, BD-2, BD-22 and BD-45 by commits of the catch-up, and BD-42
-and BD-50 by `858477687b` and `dd73c4376b` after it. This plan holds the 44 open entries. The list itself is a file of
+and BD-50 by `858477687b` and `dd73c4376b` after it. This plan holds the 44 open entries. On 2026-11-25 the review of
+change R2 of [baseline-catch-up-defect-repairs.md](baseline-catch-up-defect-repairs.md) against the RFC found two
+more faults, and the maintainer added them as BD-51 and BD-52 ("yes to all of your questions"), so the list has 53
+entries. The list itself is a file of
 the job copy of the catch-up (`evidence/defects.json`), outside git, so this plan gives the complete facts of each
 entry. The evidence of each step (logs, experiments, row differences) is in `evidence/steps/step-NNN/` of that job
 copy. The baseline commit of each step in `statistics` and `media` gives the explanation of the step.
+
+A check of master `d8a58564ee` on 2026-11-24 found BD-40 repaired before this list was written, BD-28 repaired, and
+the IEEE 802.11 part of BD-33 repaired. An entry that the check changed has a line "State (2026-11-24)". So 42 entries
+are open. The plan [baseline-catch-up-defect-repairs.md](baseline-catch-up-defect-repairs.md) repairs 27 of them: the
+entries outside IEEE 802.11 that are new since v4.7.0 or easy. Later commits of that day address BD-29 and BD-30
+(`bdd73c5a60`) and BD-31 (`ad34cc37dc`); their subsections of §3 describe them.
 
 Each entry was found and checked at the commit that it names. The entries that say "master" were checked at
 `bc39ec7571` or earlier. The commits from `bc39ec7571` to `b436a63418` change no source file of an entry: they change
@@ -115,6 +124,171 @@ bands and the unmapped standard-channel rejection of `"5 GHz"` unchanged.
 - Write [Arithmetic 5 GHz band centers](../../tests/protocol/wifi/5ghz-band-centers.md) beside the protocol test
   with the executed before/after comparison and reproducible commands.
 
+### Basic Block Ack bitmap, BD-29 and BD-30
+
+The maintainer approved implementation of this repair on 2026-11-23.
+
+Commit `BD-29/30`, “ieee80211: fix: false acknowledgments in the Basic Block Ack bitmap”.
+Adapt the receipt boundary from `5eb3f31938` for current Basic agreements. Seed the boundary from ADDBA and
+advance it when Basic receipt history is retired, including receive-window advances that release no complete
+MSDU. The bitmap uses cyclic ordering for old positions and exact sequence and fragment receipts otherwise.
+See IEEE Std 802.11e-2005, 9.10.3.
+
+- Add [Ieee80211BlockAckRecord_1.test](../../tests/unit/Ieee80211BlockAckRecord_1.test) for an empty record,
+  a missing sequence across wrap, fragment-specific receipts, and retirement. Current master returns true
+  for an in-range position in the empty record and can mistake the hole at 4094 for an old position.
+- Add [WifiBasicBlockAckMissingData.test](../../tests/protocol/wifi/common/WifiBasicBlockAckMissingData.test).
+  A station negotiates a Basic agreement with the AP, loses its first Block Ack policy DATA at the AP,
+  and requests feedback after one MPDU. Check the AP's actual bitmap and the station's retry of the
+  original sequence and TID. The empty record on the parent falsely acknowledges the missing DATA.
+  Repeat with an out-of-window group frame in place of the missing unicast. Its sequence must leave the
+  individual agreement untouched, so the bitmap still leaves the missing bit clear and the sender retries.
+  Repeat with a group frame bearing the same sequence and fragment as the missing unicast. Check that the
+  reply to the first received unicast retry sets the receipt bit.
+- Extend [Ieee80211BlockAckReordering_1.test](../../tests/module/Ieee80211BlockAckReordering_1.test)
+  with cases 11–17. In cases 11–13, drive successive BARs, one BAR exactly half a cycle past the last delivered receipt,
+  and DATA beyond the receive window. Keep a live sequence partially received and check its positive and
+  missing fragment bits in the Basic response. Check that a stale BAR leaves the current window intact.
+  In case 14, receive fragment 0 at sequence 4095 and use three forward BARs to advance the window through
+  a full cycle without new DATA. Check that the old receipt no longer sets fragment 0's bit when 4095 is reused.
+  In cases 15–16, deliver a broadcast from the same peer and TID as an active Basic or Compressed agreement.
+  The broadcast must reach ordinary delivery and leave the individual window and its receipts intact.
+  Follow a broadcast with a matching first unicast retry and then a duplicate of that retry. Deliver the
+  first retry once with either agreement and without an agreement (case 17).
+- Build INET in debug mode and select these files with the unit and Wi-Fi protocol runners. Check the
+  existing Compressed record and exchange tests as controls. The air-interface test covers an empty
+  receiver record. The unit test covers sequence wrap and receipt retirement.
+- Write [Basic Block Ack receipt reporting](../../tests/protocol/wifi/basic-blockack-receipts.md) beside
+  the protocol test. Record the exact parent and repaired runs and their outcomes.
+
+### Block Ack duplicate-drop reporting
+
+The maintainer approved the six failing run-0 statistical baseline refreshes on 2026-11-24.
+
+Commit `BA-REPORT`, “ieee80211: fix: report duplicate retries from the Block Ack receive window”.
+Implement IEEE Std 802.11-2024, Table 10-6, RC9/RR4. The receive window handles duplicate
+filtering under an agreement and the recipient reports confirmed retry drops. Extend
+`Ieee80211BlockAckReordering_1` cases 15 and 16 to check the signal for both buffered and
+previously delivered duplicates. Reuse the matching-sequence over-the-air test and the
+[reviewer evidence](../../tests/protocol/wifi/basic-blockack-receipts.md).
+Extend case 17 to leave a matching unicast entry in the ordinary cache before accepting
+a Basic agreement. The first in-window retry must be delivered and emit no duplicate drop.
+
+### Basic Normal Ack retry reporting
+
+Commit `BA-BASIC-NORMAL-ACK`, “ieee80211: fix: count Normal Ack retries under Basic Block Ack”.
+Depends on `BA-REPORT`. The Basic receipt record and reordering service retain evidence
+of received Normal Ack fragments while keeping their bitmap bits clear. In the parent
+the delivered sequence 100 leaves no receipt at the duplicate check, so its retry
+is discarded without a signal.
+
+- Add case 18 to [Ieee80211BlockAckReordering_1](../../tests/module/Ieee80211BlockAckReordering_1.test).
+  An unseen fragment emits no duplicate signal. A repeat of the delivered Normal Ack fragment
+  emits one. The Basic bitmap bit remains clear.
+- Verify the approved release-mode `MixedTraffic` run-0 result. The receiver counts
+  the retry of `Large-12`, raising the duplicate count from 12 to 13. The five other
+  focused statistical comparisons retain their expectations.
+- Build `MODE=debug` for the module fixture and `MODE=release` for the statistical comparisons. Run from the INET worktree root with the [module and statistical commands and filters](../../tests/protocol/wifi/basic-blockack-normal-ack-retries.md#verification).
+- Record case 18 and the baseline comparison in [Basic Normal Ack retry reporting](../../tests/protocol/wifi/basic-blockack-normal-ack-retries.md).
+
+### Compressed duplicate reporting after a reorder gap
+
+Commit `BA-COMPRESSED-PRIOR-RECEIPT`, “ieee80211: fix: classify late Compressed retries using prior receipts”.
+Follows `BA-BASIC-NORMAL-ACK` in the series and uses the duplicate callback from `BA-REPORT`.
+The recipient service reads the Compressed receipt before updating it and passes that result
+to `BlockAckReordering::processReceivedQoSFrame`. The declaration specifies the required order.
+In the parent, a first-seen retry of sequence 101 can create the receipt that marks itself as a duplicate.
+
+- Add case 19 to [Ieee80211BlockAckReordering_1](../../tests/module/Ieee80211BlockAckReordering_1.test).
+  After reordering skips 101, the first arrival sets the Compressed bit and emits no duplicate
+  signal. The next retry emits one signal.
+- Run the six focused release statistical comparisons against the Basic follow-up's pin.
+  Each is expected to match its reference.
+- Build `MODE=debug` for the module fixture and `MODE=release` for the statistical comparisons. Run from the INET worktree root with the [module and statistical commands and filters](../../tests/protocol/wifi/compressed-blockack-retry-receipts.md#verification).
+- Record case 19 and the baseline comparison in [Compressed retries after a reorder gap](../../tests/protocol/wifi/compressed-blockack-retry-receipts.md).
+
+### LAN mobility random stream, BD-31
+
+The maintainer approved implementation and the scoped baseline refresh on 2026-11-23.
+
+Commit `BD-31`, “examples: fix: isolate lan80211 mobility from Wi-Fi backoff”.
+Give the moving hosts RNG 1 in all three `lan80211` INI files. Wi-Fi backoff continues to draw from RNG 0.
+Re-record the run-0 fingerprints and statistics for `TwoHosts`, `Streaming1` and `Ping1` in the same change.
+
+- Automate the paired 100 s FTP `TwoHosts` run in
+  [Lan80211MobilityIndependence_1.test](../../tests/module/Lan80211MobilityIndependence_1.test).
+  At seed 0, vary TCP window scaling and check that both hosts keep their waypoint coordinates and change times
+  even though the sink receives different amounts of data. The original runs diverge at 68.74 s. The fixed
+  runs agree on all 101 logged waypoints.
+- Check the run-0 baselines for the three configurations against the original and refreshed expectations. Use
+  `tplx`, `~tND` and `~tNl` for fingerprints and release mode for statistics. Smoke-test `NHosts`, `Streaming2` and
+  `Ping2` with four hosts.
+
+### Group-frame Duration/ID, BD-25
+
+The maintainer requested implementation on 2026-11-23.
+
+Commit `BD-25`, “ieee80211: fix: stop reserving a successor for single-protection group frames”.
+Apply IEEE Std 802.11-2024, 9.2.5.2 a) 9), to HCF's one-frame group sequence. Follow the
+existing Block Ack-disabled forecast and omit the successor in the Block Ack-enabled path.
+Keep the Duration/ID equation in single protection.
+
+- Add [WifiSingleProtectionGroupDuration.test](../../tests/protocol/wifi/common/WifiSingleProtectionGroupDuration.test).
+  Send group DATA with an already extracted successor, a positive TXOP limit, and single
+  protection. Observe the transmitted headers and verify that each group frame ends its TXOP
+  with zero Duration/ID. Use the model's fragmentation path to make the successor available.
+  The legacy forecast can reserve it even though the group sequence ends. Run without Block
+  Ack and with the Basic and Compressed profiles as separate cases.
+- Run the same fixture before and after the fix with the debug Wi-Fi protocol runner and
+  rerun `Ieee80211SingleProtectionGroup_1` as a control for the protection equation.
+  Record the comparison in [Group-frame Duration/ID](../../tests/protocol/wifi/single-protection-group-duration.md).
+
+### Basic Block Ack TXOP admission, BD-27
+
+Commit `BD-27`, “ieee80211: fix: bound Basic Block Ack TXOP continuations”.
+Use the group-frame reservation fix from PR #1481 as the parent. HCF checks the selected unicast
+exchange before transmission, including RTS/CTS and any immediate ACK. Apply the strict TXNAV
+comparison in IEEE Std 802.11-2024, 10.23.2.8, and count the leading SIFS against the nonzero TXOP
+limit in 10.23.2.9. Keep the protected DATA rate selected before RTS through the CTS step.
+
+- Add [WifiBasicTxopAdmission.test](../../tests/protocol/wifi/common/WifiBasicTxopAdmission.test).
+  Use associated non-HT stations and queued UDP traffic to exercise Basic DATA in the production
+  MAC. Check multiple protection with and without RTS, and use already extracted unicast fragments
+  to exercise single protection. Check a tight TXOP deadline and a reservation too short for RTS/CTS
+  plus DATA. Verify that fitting continuations can proceed and that deferred airtime does not
+  prevent subsequent Basic DATA and feedback.
+- Run the same fixture before and after the fix with a debug library and the Wi-Fi protocol runner
+  filtered to `WifiBasicTxopAdmission.test`. The fixture covers continuations with positive
+  limits at fixed rates and observes Block Ack feedback as evidence of progress.
+  Record the results and controls in [Basic Block Ack TXOP admission](../../tests/protocol/wifi/basic-txop-admission.md).
+
+### Basic Block Ack feedback scheduling, BD-43
+
+Build on the Basic continuation admission from PR #1483.
+
+1. “ieee80211: add: forecast Basic Block Ack requests before DATA transmission” adds the
+   read-only query with the active TXOP and shares the existing ACK policy's selection rules.
+   Extend [Ieee80211BlockAckScheduling_1.test](../../tests/unit/Ieee80211BlockAckScheduling_1.test)
+   with one below-threshold case with an in-window successor and one with an empty queue
+   after the current DATA. Check the forecast against live selection after transmission and
+   verify that forecasting leaves the queue and ACK state intact. Verify that the ordinary
+   and exclusion-aware peeks share a custom queue's ordering. Run the focused debug unit test
+   and compare the selected run-0 release fingerprints against PR #1483.
+2. “ieee80211: fix: reserve TXOP airtime for a due Basic Block Ack request” calls the forecast
+   before HCF sends Basic DATA under single protection. Reserve the full feedback interval in
+   the DATA Duration/ID if it fits the deadline. Check the actual request and reply against the
+   live reservation and TXOP before submission. Add
+   [WifiBasicBarReservation.test](../../tests/protocol/wifi/common/WifiBasicBarReservation.test)
+   and compare a fitting request with one that must contend again. Verify the SIFS gap, grant
+   identity, advertised duration and matching Basic bitmap in debug and release. Install a
+   test ACK policy that checks the active TXOP and its remaining time when HCF calls the
+   forecast for the observed DATA.
+
+Compare the affected QoS and fragmentation configurations with matched seeds, using BARs that
+open a grant and BARs that follow DATA to explain the change in contention. Keep agreement
+retention a separate change. Record the test, workload and fingerprint comparisons in
+[Basic Block Ack feedback scheduling](../../tests/protocol/wifi/basic-bar-reservation.md).
+
 ## 4. The entries
 
 Each entry gives the place, the fault with its basis, the baselines that hold values of the fault, a proposed repair
@@ -146,6 +320,7 @@ and a proposed check. "Step N" is the step of the catch-up that found the entry.
 
 #### BD-5: `updateWndInfo()` lost its comment
 
+- **State (2026-11-24):** repaired by `519e772c16` (change R1 of [baseline-catch-up-defect-repairs.md](baseline-catch-up-defect-repairs.md)), on master on 2026-11-24.
 - **Place:** [TcpConnection.h](../../src/inet/transportlayer/tcp/TcpConnection.h), `getFlightSize()` and
   `updateWndInfo()`. From `b2313324ef` (step 8).
 - **Fault:** the new comment of `getFlightSize()` is below the comment of `updateWndInfo()`. The documentation tool
@@ -181,6 +356,7 @@ and a proposed check. "Step N" is the step of the catch-up that found the entry.
 
 #### BD-8: `TcpTahoe` takes ssthresh from cwnd, not from FlightSize
 
+- **State (2026-11-26):** repaired by `9facdcab8b` (change R5 of [baseline-catch-up-defect-repairs.md](baseline-catch-up-defect-repairs.md)), on master on 2026-11-26, with the protocol test `Rfc5681TahoeThresholdFlightSize.test` and the reviewer document `tests/protocol/tcp/tahoe-threshold-flight-size.md`. It moves the fingerprints of `examples/inet/tcpclientserver` `inet-tahoe` runs 1 to 6, and four ssthresh statistics of `inet-tahoe` run 0 (`statistics` `0f47b1d8b9`).
 - **Place:** [TcpTahoe.cc](../../src/inet/transportlayer/tcp/flavours/TcpTahoe.cc) (line 107 at `bc39ec7571`). From
   `b1b214c002` (step 11).
 - **Fault:** `TcpTahoe` sets ssthresh to max(cwnd/2, 2*SMSS) at the third duplicate ACK and at a timeout. RFC 5681
@@ -230,6 +406,7 @@ and a proposed check. "Step N" is the step of the catch-up that found the entry.
 
 #### BD-13: `TcpReno.h` keeps the comment of a removed function
 
+- **State (2026-11-24):** repaired by `519e772c16` (change R1 of [baseline-catch-up-defect-repairs.md](baseline-catch-up-defect-repairs.md)), on master on 2026-11-24.
 - **Place:** [TcpReno.h](../../src/inet/transportlayer/tcp/flavours/TcpReno.h). From `985edc2057` (step 15).
 - **Fault:** the commit removes `TcpReno::isInFastRecovery()` but keeps its comment. The comment is now above
   `public:` and describes a function that does not exist.
@@ -257,6 +434,7 @@ and a proposed check. "Step N" is the step of the catch-up that found the entry.
 
 #### BD-15: the ACK of the SYN-ACK grows cwnd on the passive side
 
+- **State (2026-11-24):** open on master `d8a58564ee`. A pure ACK of the SYN-ACK does not reach the algorithm (`TcpConnectionRcvSegment.cc:1858` skips it in SYN_RCVD), so the fault occurs only when the ACK of the SYN-ACK carries data (`:750-756`). Change R11 of [baseline-catch-up-defect-repairs.md](baseline-catch-up-defect-repairs.md) repairs it.
 - **Place:** `TcpClassicAlgorithmBase::established()` and `receivedAckForUnackedData()`. From `a653d3bfbc` (step 17);
   the form with one MSS is older than G.
 - **Fault:** `established()` sets cwnd to the initial window. Then the same ACK reaches `receivedAckForUnackedData()`
@@ -269,6 +447,7 @@ and a proposed check. "Step N" is the step of the catch-up that found the entry.
 
 #### BD-16: a wrong comment in `Rfc5681CongestionControl::congestionAvoidance()`
 
+- **State (2026-11-24):** repaired by `519e772c16` (change R1 of [baseline-catch-up-defect-repairs.md](baseline-catch-up-defect-repairs.md)), on master on 2026-11-24.
 - **Place:** [Rfc5681CongestionControl.cc](../../src/inet/transportlayer/tcp/flavours/Rfc5681CongestionControl.cc).
   From `80357d0e09`; found at step 19.
 - **Fault:** the comment "cwnd is floored at 2*SMSS everywhere it is reduced" is wrong. A timeout sets cwnd to 1 MSS
@@ -292,6 +471,7 @@ and a proposed check. "Step N" is the step of the catch-up that found the entry.
 
 #### BD-18: slow start of `~Tcp` has the limit of Linux `tcp_is_cwnd_limited()`
 
+- **State (2026-11-24):** open on master `d8a58564ee`. The limit is also in `TcpCubic.cc:165`. Change R15 of [baseline-catch-up-defect-repairs.md](baseline-catch-up-defect-repairs.md) repairs it.
 - **Place:** the slow start of the classic flavours. From `f7ff78102b` (step 18).
 - **Fault:** the slow start of `~Tcp` grows cwnd only while cwnd is below twice the peak of the segments in flight of
   the current window, as Linux `tcp_is_cwnd_limited()` does, always. `Tcp.ned` says that the defaults of `~Tcp` have
@@ -323,6 +503,7 @@ and a proposed check. "Step N" is the step of the catch-up that found the entry.
 
 #### BD-21: held data waits for ever, because the override timer does not expire while segments arrive
 
+- **State (2026-11-25):** repaired by `54234c9502` (change R2 of [baseline-catch-up-defect-repairs.md](baseline-catch-up-defect-repairs.md)), on master on 2026-11-25, with the protocol tests and the reviewer document `tests/protocol/tcp/sws-override-timer.md`. No stored fingerprint or statistic moves.
 - **Place:** `processWindowUpdate()` (from `40b842fc88`) and the persist timer. Shown by `6148d90738` (step 30).
 - **Fault:** RFC 9293 section 3.8.6.2.1, rule (4), gives the sender SWS avoidance an override timeout. The persist
   timer is the override timer while the window is open. But `processWindowUpdate()` treats each segment with
@@ -338,6 +519,8 @@ and a proposed check. "Step N" is the step of the catch-up that found the entry.
 
 #### BD-23: the override timeout is one RTO, so at least 1 s
 
+- **State (2026-11-25):** repaired by `8411e13607` and `4f05735a09` (change R2 of [baseline-catch-up-defect-repairs.md](baseline-catch-up-defect-repairs.md)), on master on 2026-11-25: the override timeout of `~Tcp` is the RTO held in 0.1 s to 1.0 s, and the parameter `swsOverrideAfterRto` keeps the RTO in `~LinuxTcp`. No stored fingerprint or statistic moves.
+- **State (2026-11-24):** open on master `d8a58564ee`. The first interval is at least `minRexmitTimeout`: 1 s in `~Tcp` and 200 ms in `~LinuxTcp`. Change R2 of [baseline-catch-up-defect-repairs.md](baseline-catch-up-defect-repairs.md) repairs it with BD-21.
 - **Place:** `startPersistTimer()`. From `6148d90738` (step 30).
 - **Fault:** RFC 9293 section 3.8.6.2.1: "The override timeout should be in the range 0.1 - 1.0 seconds." The persist
   timer starts at the RTO, and `minRexmitTimeout` is 1 s, so the override comes after 1 s or more. The RFC also
@@ -386,6 +569,7 @@ and a proposed check. "Step N" is the step of the catch-up that found the entry.
 
 #### BD-39: `TcpTahoe` and `TcpWestwood` start a second fast retransmit in the same window
 
+- **State (2026-11-26):** repaired by `8a687bf056` (change R5 of [baseline-catch-up-defect-repairs.md](baseline-catch-up-defect-repairs.md)), on master on 2026-11-26, with the protocol tests `Rfc6582TahoeOneFastRetransmitPerWindow.test` and `Rfc6582WestwoodOneFastRetransmitPerWindow.test` and the reviewer document `tests/protocol/tcp/one-fast-retransmit-per-window.md`. It moves the fingerprints of `examples/inet/tcpclientserver` `inet-tahoe` and `inet-westwood` runs 0, 2, 3, 5 and 6, and the statistics of both (`statistics` `bbd9999454`): `inet-tahoe` run 0 does 5 fast retransmits in place of 163, and `inet-westwood` run 0 gets 2 timeouts in place of 1. The numbers of `inet-westwood` above come from before `7beeb0dc88`.
 - **Place:** `TcpTahoe::receivedDuplicateAck()` and `TcpWestwood::receivedDuplicateAck()`. Older than G; shown by
   `07722bc21b` (step 59).
 - **Fault:** the two flavours have no guard against a second fast retransmit in the same window. A third duplicate
@@ -402,6 +586,7 @@ and a proposed check. "Step N" is the step of the catch-up that found the entry.
 
 #### BD-40: `TcpWestwood` never measures the RTT, so its threshold never moves
 
+- **State (2026-11-24):** **closed.** `7beeb0dc88` (2026-11-04, "tcp: fix: TcpWestwood takes an RTT sample from each ACK of new data") repairs it, with the tests `TcpAlgorithmClassWestwood.test` and `TcpAlgorithmClassWestwoodRto.test` and the reviewer document `tests/protocol/tcp/westwood-rtt-sample.md`. That commit is older than `bc39ec7571`, so the entry was already repaired when this list was written.
 - **Place:** `TcpWestwood::receivedAckForUnackedData()`
   ([TcpWestwood.cc](../../src/inet/transportlayer/tcp/flavours/TcpWestwood.cc)). Older than G; shown by `db81577ca0`
   (step 64).
@@ -419,6 +604,45 @@ and a proposed check. "Step N" is the step of the catch-up that found the entry.
 - **Check:** the ssthresh vector of `inet-westwood` has samples, and after a loss the threshold equals the estimated
   bandwidth times the smallest RTT.
 
+#### BD-51: data that TCP_CORK holds below the window waits as long as the cork stays set
+
+- **State (2026-11-25):** open. Added by the maintainer on 2026-11-25. Not in the scope of
+  [baseline-catch-up-defect-repairs.md](baseline-catch-up-defect-repairs.md) until a revision of that plan takes it.
+- **Place:** `TcpAlgorithmBase::sendData()` and the cork timer
+  ([TcpAlgorithmBase.cc](../../src/inet/transportlayer/tcp/flavours/TcpAlgorithmBase.cc)). From `6db7d1a459`
+  (2026-10-13, "tcp: add: TCP_CORK and MSG_MORE, with the cork timer"), new since v4.7.0. Found by the review of R2
+  against the RFC, not by a step of the catch-up.
+- **Fault:** a partial segment that TCP_CORK holds, with a window below one segment, is also held by the sender SWS
+  avoidance. The persist timer starts only when the cork timer does not run, so the override of RFC 9293 section
+  3.8.6.2.1, rule (4), never starts. The expiry of the cork timer does not bypass the SWS hold, and the cork timer
+  starts again. So the data waits as long as the cork stays set and the window does not grow. Linux
+  `tcp_write_wakeup()` ignores the cork. Found in the code; not run.
+- **Baselines:** none known.
+- **Repair:** the expiry of the override sends the held data also under the cork, as Linux does. Decide the form at
+  gate A.
+- **Check:** a protocol test: the application sets TCP_CORK and writes less than one segment, and the peer advertises
+  a window below one segment with no change. The data leaves at the expiry of the override timer.
+
+#### BD-52: a retransmission timer that runs with nothing in flight delays the override timer
+
+- **State (2026-11-25):** open. Added by the maintainer on 2026-11-25. Not in the scope of
+  [baseline-catch-up-defect-repairs.md](baseline-catch-up-defect-repairs.md) until a revision of that plan takes it.
+- **Place:** `TcpAlgorithmBase::sendData()`, the condition that starts the persist timer, and
+  `TcpAlgorithmBase::processTimer()` ([TcpAlgorithmBase.cc](../../src/inet/transportlayer/tcp/flavours/TcpAlgorithmBase.cc)).
+  From `e01c747832` (2026-10-09, "tcp: fix: no retransmission at a timeout with nothing in flight") and `6148d90738`
+  (2026-10-13, "tcp: fix: the sender avoids the silly window syndrome (RFC 9293 MUST-38)"), new since v4.7.0. Found by
+  the review of R2 against the RFC.
+- **Fault:** after an ECN-Echo at a congestion window of one segment, RFC 3168 section 6.1.2 resets the retransmission
+  timer also with nothing in flight. The persist timer starts only when the retransmission timer does not run. So data
+  that the sender SWS avoidance holds in that time gets no override timer until the retransmission timer expires, and
+  it can wait one RTO more than rule (4) of RFC 9293 section 3.8.6.2.1 permits. Found in the code; not run. BD-7
+  (change R8) changes the same case of RFC 3168.
+- **Baselines:** none known.
+- **Repair:** start the override timer also while the retransmission timer runs with nothing in flight, or let the
+  expiry of that timer send the held data. Decide it with BD-7.
+- **Check:** a protocol test: an ECN-Echo at a cwnd of one MSS, then a write that the SWS avoidance holds. The held
+  data leaves at the expiry of the override timer.
+
 ### 4.2 IEEE 802.11
 
 #### BD-12: the text of the QoS showcase gives the delays of an old run
@@ -429,24 +653,33 @@ and a proposed check. "Step N" is the step of the catch-up that found the entry.
   The run gave 1312 ms and 414 ms before `fb7aeea94a`, and 750 ms and 233 ms after it. The description of the delay
   and jitter charts and the jitter table come from the same run. The commit updated the charts but not the text.
 - **Baselines:** none (text).
-- **Repair:** write the values of the current run. Do it after the 802.11 repairs of this plan, because they move the
-  values again.
-- **Check:** each value of the text equals the scalar of the run.
+- **Repair:** prior commits on `master` (`fa5de30a6d`, `42dbb75bfb`, `28f1dc534c`) updated the end-to-end delay
+  table (`112, 112, 112, 115 ms` non-QoS; `698, 256, 1.5, 0.8 ms` QoS), background delay fluctuation onset
+  (`1.6 s`), throughput chart y-axis (`7 Mbps`), and post-6 s throughput text (`increases sharply`). Commit
+  `BD-12` (“showcases: fix: match the QoS jitter table and text to the current runs”) repairs the remaining stale
+  jitter table (mean absolute instantaneous packet delay variation: `0.77, 0.68, 1.6, 5.9 ms` non-QoS and
+  `6.7, 1.1, 0.75, 0.45 ms` QoS) and jitter prose (non-QoS voice spacing, post-6 s queue-drain negative
+  delay variation, and the `-0.3 ms` background A-MSDU band in the zoomed plot).
+- **Check:** verified against release runs of `NonQos` and `Qos` (`run 0`) on `master` `e74ac35bbf` (identical in
+  code and baselines to `36cac8abf2`, PR #1489): all compared scalar and vector-summary metrics match the
+  `statistics` pin `0efeed37319c` (`2,049` `NonQos`, `4,888` `Qos`, `0` diffs) and all 8 exported 150 DPI
+  `Qos.anf` charts match the `media` pin `838086b3f96d` pixel for pixel (`0` differing pixels; no baselines move).
 
 #### BD-25: the Duration/ID of a group frame can reserve a successor that does not come
 
 - **Place:** the Duration/ID of a group frame that is not the final fragment. From the commit message of `c493ce2aa9`
   (step 35).
-- **Fault:** the Duration/ID still includes the legacy estimate of a successor (the pending frame and its ACK). The
-  commit message of `c493ce2aa9` says: "With Block Ack support on, that legacy estimate can still reserve an unused
-  successor." Then other stations defer for a frame that does not come. Not checked by experiment; the code of the
-  group branch is unchanged on master.
+- **Fault:** with Block Ack support enabled, the legacy Duration/ID calculation can include an already extracted
+  successor even when the group frame ends the TXOP. The regression reproduces a 96 µs reservation for a frame
+  that transmits in a later TXOP.
 - **Baselines:** none.
-- **Repair:** first find the clause of IEEE Std 802.11-2024 for this case. Then remove the estimate when the model
-  does not send that successor.
-- **Check:** with Block Ack support on, the Duration/ID of a group frame covers only the frames that follow.
+- **Repair:** apply IEEE Std 802.11-2024, 9.2.5.2 a) 9), by omitting the successor from the single-protection
+  estimate when HCF ends the TXOP after the group frame.
+- **Check:** the two group MPDUs each advertise zero Duration/ID in their own TXOPs with Block Ack disabled
+  and with Basic or Compressed support enabled.
+  [Regression evidence](../../tests/protocol/wifi/single-protection-group-duration.md).
 
-#### BD-26: a TXOP limit of 0 permits one frame exchange, also for the fragments of one MSDU
+#### BD-26: a zero-limit TXOP loses the rest of a fragment burst
 
 - **Place:** [HcfFs.cc](../../src/inet/linklayer/ieee80211/mac/framesequence/HcfFs.cc) `hasMoreTxOps()`, and
   [Hcf.cc](../../src/inet/linklayer/ieee80211/mac/coordinationfunction/Hcf.cc) `transmitFrame()` and
@@ -456,9 +689,117 @@ and a proposed check. "Step N" is the step of the catch-up that found the entry.
   each later step at `txop->getLimit() == 0`. IEEE Std 802.11-2024 10.23.2.9 a) 1) permits "One or more SU PPDUs
   carrying fragments of a single MSDU or MMPDU" in such a TXOP, with the required acknowledgments. So each fragment of
   one MSDU needs a new channel access. Found in the code; not run.
-- **Baselines:** none known. A repair moves the HCF runs with fragmentation (`showcases/wireless/fragmentation`).
-- **Repair:** at a limit of 0, admit the next fragment of the same MSDU in the TXOP.
-- **Check:** in AC_BE with the default limit, the fragments of one MSDU follow each other at SIFS.
+- **Baselines:** the zero-limit repair changes the three default fingerprints and the statistical
+  baseline in run 0 of `showcases/wireless/blockack / Fragmentation` and
+  `examples/wireless/mactest / MacEdca`. The first uses AC_BE. In MacEdca, the fragmented
+  FTP traffic uses AC_BK. The HCF fragmentation showcase uses port 4000 mapped to AC_VI.
+  Its Basic Block Ack packet-size and SNIR charts move when HCF starts checking the lifetime
+  of outgoing DATA in the Basic BAR forecast.
+- **Preparation BD-26-IDENTITY**, “ieee80211: add: identify and forecast a fragment continuation”.
+  Add the shared fragment match, accepted-ACK query and HCF airtime forecast before enabling continuation. The
+  [identity unit test](../../tests/unit/Ieee80211FragmentContinuation_1.test) checks the immediate successor
+  and rejects different receiver, TID, sequence, allocation, skipped fragment, finished MSDU and A-MSDU cases.
+  The preparation leaves transmission behavior unchanged.
+- **Commit BD-26**, “ieee80211: fix: continue fragment bursts in zero-limit TXOPs”. Use the accepted
+  ACK and preceding transmit step to match the eligible in-progress successor in HCF selection and
+  submission. Compare the receiver, type, sequence number, fragment number, and, for DATA, TID and local
+  sequence allocation. A single-protection fragment advertises the next exchange. Multiple protection
+  budgets the eligible fragment burst when it establishes its reservation. HCF rechecks TXNAV at submission.
+- **Protocol tests:** Add [N_TxopFragments.test](../../tests/protocol/wifi/11n/N_TxopFragments.test)
+  and [N_TxopFragmentRetry.test](../../tests/protocol/wifi/11n/N_TxopFragmentRetry.test), adapting the
+  fixtures from `98cc0c7f99`. After infrastructure association, a sender queues two AC_BE MSDUs.
+  Check SIFS between the ACK and the next fragment, Duration/ID through the final ACK, and fresh
+  contention for the second MSDU. In the loss fixture, suppress one addressed ACK and check that the
+  same fragment retries in a fresh grant, then the next fragment follows the successful retry at SIFS.
+  The parent splits the fragments across grants. The tests cover Normal Ack at zero TXOP limit and
+  exercise protection modes with fixed rates. The multiple-protection cases also use a 1 µs
+  propagation delay to check ACK coverage with a 2 µs round-trip allowance and fresh contention
+  when the allowance is zero.
+- **Reviewer document:** [zero-txop-fragment-continuation.md](../../tests/protocol/wifi/zero-txop-fragment-continuation.md).
+  Run `opp_run_protocol_tests --load . -p inet -m <mode> --no-build
+  -w '^tests/protocol/wifi$' -f 'N_TxopFragment(s|Retry)\.test$'` on the release parent build
+  and the debug and release builds of the repair.
+
+- **Commit BD-26-BASIC-BAR-EXPIRY**, “ieee80211: fix: exclude expiring DATA from the Basic BAR forecast”.
+  Following BD-26 and the BD-43 BAR forecast, make HCF pass the scheduled DATA completion time
+  to the originator QoS ACK policy. Filter outstanding DATA and the transmitting frame at that time
+  before deciding whether a BAR is due. In run 2 of
+  [WifiBasicBarReservation](../../tests/protocol/wifi/common/WifiBasicBarReservation.test),
+  the 920 µs lifetime ends during transmission. The parent advertises 128 µs for a BAR and reply
+  that HCF skips. Require zero Duration/ID and no matching BAR. Keep the live-DATA controls.
+  Run the fixture in debug and release and compare the Basic packet-size and SNIR charts.
+  The [reviewer notes](../../tests/protocol/wifi/basic-bar-reservation.md) cover the exchange.
+
+- **Commit BD-26-BASIC-SUCCESSOR-EXPIRY**, “ieee80211: fix: skip single-protection reservations for expiring successors”.
+  This follows BD-26-BASIC-BAR-EXPIRY. In
+  [Hcf::transmitFrame()](../../src/inet/linklayer/ieee80211/mac/coordinationfunction/Hcf.cc),
+  the fallback still reserves 140 µs for the queued sibling of a Basic Block Ack fragment that expires
+  during its PPDU. The sibling shares that deadline and HCF discards it before it can transmit.
+  Check the already in-progress candidate at DATA completion plus SIFS before advertising the
+  following exchange under IEEE Std 802.11-2024 §9.2.5.2(a)(9).
+  The Basic series in the fragmentation showcase moves in the packet-size and SNIR charts.
+  In the 6,000-byte run, the first changed frame advertises zero Duration/ID after the check.
+  Extend [WifiBasicBarReservation.test](../../tests/protocol/wifi/common/WifiBasicBarReservation.test).
+  In run 3, establish a Basic Block Ack agreement, fragment at 850 bytes, and give voice DATA a
+  1,300 µs lifetime. Assert that fragment 0 starts live and expires during its PPDU. The parent
+  fails the zero-Duration/ID assertion. The repair advertises zero, discards fragment 1, and sends
+  no BAR for that sequence. Run 4 keeps the sibling live and checks coverage of SIFS plus DATA and
+  same-grant continuation with RTS deferred and a BAR threshold of two.
+  Record the cases in [basic-bar-reservation.md](../../tests/protocol/wifi/basic-bar-reservation.md#fragment-successor-lifetime).
+  Use seed 0 with `opp_run_protocol_tests --load . -p inet -m <mode> --no-build
+  -w '^tests/protocol/wifi$' -f 'WifiBasicBarReservation\.test$'` on the release parent
+  and on the repair in debug and release. The assertions observe originator behavior.
+- **Preparation BD-26-BASIC-RETRY-LOOKUP**, “ieee80211: refactor: expose timed in-progress DATA selection”.
+  Extract the ordered lookup in [InProgressFrames](../../src/inet/linklayer/ieee80211/mac/queue/InProgressFrames.cc).
+  Route peeking, live extraction and successor selection through one overridable in-progress
+  ordering operation. Use the current simulation time for the ordinary peek and retain its pending-queue fallback.
+  Check order, exclusion, ACK eligibility, and the exact expiry boundary in
+  [Ieee80211BlockAckScheduling_1.test](../../tests/unit/Ieee80211BlockAckScheduling_1.test) with
+  `opp_run_unit_tests --load . -p inet -m debug --no-build -f 'Ieee80211BlockAckScheduling_1\.test$'`.
+  The default queue retains storage order. Custom queues implement their retry ordering once
+  for forecasts and actual transmissions.
+- **Commit BD-26-FRAGMENT-BATCH-ORDER**, “ieee80211: fix: honor queue ordering after fragment batch extraction”.
+  When successor selection extracts several fragments, register the full batch and ask the queue
+  which eligible fragment comes next. In `Ieee80211BlockAckScheduling_1`, a queue that prefers
+  fragment 1 must return it both immediately after extraction and at live transmission selection.
+- **Commit BD-26-BASIC-RETRY-SUCCESSOR**, “ieee80211: fix: reserve the next live Basic Block Ack retry”.
+  This uses BD-26-BASIC-RETRY-LOOKUP and extends BD-26-BASIC-SUCCESSOR-EXPIRY. A missed Basic Block Ack leaves retries from two
+  MSDUs in progress. During the first retry PPDU, the first MSDU's sibling expires, while a later
+  retry stays live. The parent clears the reservation and the later retry contends again.
+  Have HCF and [InProgressFrames](../../src/inet/linklayer/ieee80211/mac/queue/InProgressFrames.cc)
+  forecast the first in-progress successor eligible at DATA completion. Reserve airtime only
+  if that candidate still has lifetime at its earliest start after SIFS and the full exchange
+  fits the TXOP. Include RTS/CTS and the immediate response when required. Check the complete
+  exchange against the encoded single-protection field and the strict TXNAV admission rule.
+  The Basic series in the SNIR chart moves. In its 0.07 mW run, a fitting replacement starts
+  at SIFS in the original grant, 600 µs before the previous run starts that retry.
+  Add [WifiBasicBarRetrySuccessor.test](../../tests/protocol/wifi/common/WifiBasicBarRetrySuccessor.test).
+  Establish a real Basic Block Ack agreement and lose a reply covering two MSDUs. With no BAR due
+  after the expiring retry, assert that the first retry advertises airtime for a live later
+  sequence and that this sequence follows after SIFS in the original retry's grant.
+  Repeat with a custom voice queue that prefers the second MSDU's shorter fragment 1.
+  Require the opening Duration/ID to equal SIFS plus the airtime of the actual selected retry.
+  Repeat with a 300 µs grant and a 2,710 µs lifetime. The live replacement needs
+  160 µs including SIFS, while only 150 µs remain. Check zero Duration/ID at the sibling drop.
+  The previous activation without the deadline check advertised 160 µs in this case.
+  Retain the expired-sibling and live-sibling controls from BD-26-BASIC-SUCCESSOR-EXPIRY.
+  Record the cases in [basic-bar-reservation.md](../../tests/protocol/wifi/basic-bar-reservation.md).
+  Use seed 0 with `opp_run_protocol_tests --load . -p inet -m <mode> --no-build
+  -w '^tests/protocol/wifi$' -f '(WifiBasicBarRetrySuccessor|WifiBasicBarReservation)\.test$'`
+  on the release parent and on the repair in debug and release. The test observes originator
+  selection, reservation and retry timing.
+  In the same commit, extend [WifiBasicBarRetrySuccessor.test](../../tests/protocol/wifi/common/WifiBasicBarRetrySuccessor.test)
+  to check response airtime. Use the opening retry's PHY mode for SIFS.
+  In a 350 µs grant, have a fixture ACK policy choose Normal Ack for the identified replacement
+  after the lost Block Ack. Check that DATA and the two SIFS intervals fit, that the configured
+  immediate ACK pushes the exchange over the deadline, and that Duration/ID is zero.
+  In a 4 ms grant, have a fixture RTS policy protect the identified replacement. Check that
+  the complete exchange fits the TXOP and that the advertised reservation stays zero because
+  single protection cannot encode enough airtime to satisfy strict TXNAV admission. Check the
+  estimator's RTS, SIFS, CTS and DATA cost using 6 Mbps RTS and a 12 Mbps CTS override so the TXNAV
+  refusal does not mask a missing airtime component or an ignored CTS override. Run the existing
+  focused selector in debug and release. These are test cases for the existing estimator and do
+  not change production behavior.
 
 #### BD-27: with Basic Block Ack, HCF keeps the legacy admission of a further exchange
 
@@ -469,12 +810,15 @@ and a proposed check. "Step N" is the step of the catch-up that found the entry.
   this fault without Block Ack support. `ad59ba2ec1` admits prepared DATA with the complete cost of the exchange only
   for Compressed Block Ack: `Hcf::prepareDataTransmission()` answers LEGACY unless `blockAckVariant` is COMPRESSED.
   So Basic Block Ack keeps the fault (checked at `292582ba24` and at `bc39ec7571`).
-- **Baselines:** none known.
+- **Baselines:** five run-0 fingerprint cases change when a DATA continuation after an expired
+  reservation waits for a fresh grant. See the [fingerprint comparison](../../tests/protocol/wifi/basic-txop-admission.md#fingerprint-comparison).
 - **Repair:** the complete cost of the exchange for Basic Block Ack too.
-- **Check:** with Basic Block Ack, no exchange ends after the end of the TXOP.
+- **Check:** a Basic DATA continuation fits the remaining TXNAV and the TXOP deadline, including
+  protection and any immediate response. [Regression evidence](../../tests/protocol/wifi/basic-txop-admission.md).
 
 #### BD-28: the centers of the arithmetic band "5 GHz" are 2.5 MHz off the grid
 
+- **State (2026-11-24):** repaired by `d69fc0eaff` (2026-11-24).
 - **Place:** `Ieee80211CompliantBands::band5GHz` in
   [Ieee80211Band.cc](../../src/inet/physicallayer/wireless/ieee80211/mode/Ieee80211Band.cc). Older than G; found at
   step 38 (`51721609f8`).
@@ -542,6 +886,7 @@ and a proposed check. "Step N" is the step of the catch-up that found the entry.
 
 #### BD-33: the default `maxTransmissionDuration` of the radio medium is shorter than a full-size 802.11 frame at 1 Mbit/s
 
+- **State (2026-11-24):** the part of IEEE 802.11 is repaired by `0cb56f4a6f` (2026-11-24), which sets `mediumLimitCache.maxTransmissionDuration = default(35ms)` in `Ieee80211RadioMedium`. The generic default stays 10 ms, and `LMac`, `BMac` and `XMac` send at 19200 bps by default, so the rest stays open.
 - **Place:** [MediumLimitCache.ned](../../src/inet/physicallayer/wireless/common/medium/MediumLimitCache.ned), line 30
   (`default(10ms)`). Older than G; found at step 47 (`ceb825e500`).
 - **Fault:** a full-size 802.11 frame (about 1536 bytes with the headers) at DSSS 1 Mbit/s takes 12.3 ms, plus 192 µs
@@ -571,6 +916,7 @@ and a proposed check. "Step N" is the step of the catch-up that found the entry.
 
 #### BD-47: `DielectricObstacleLoss` ignores refraction, reflections inside the object and diffraction
 
+- **State (2026-11-24):** open on master `d8a58564ee`. Also, `computeObjectLoss()` takes no reflection at the second surface: that code is a comment with `// TODO this returns NaN because n1 > n2` (`DielectricObstacleLoss.cc:116-121`).
 - **Place:** `DielectricObstacleLoss::computeObjectLoss()`
   ([DielectricObstacleLoss.cc](../../src/inet/physicallayer/wireless/common/obstacleloss/DielectricObstacleLoss.cc)).
   Older than G; found at step 91.
@@ -597,6 +943,7 @@ and a proposed check. "Step N" is the step of the catch-up that found the entry.
 
 #### BD-49: copper and aluminium have NaN constants and wrong resistivities
 
+- **State (2026-11-26):** repaired by `b3757616e3` (change R4 of [baseline-catch-up-defect-repairs.md](baseline-catch-up-defect-repairs.md)), on master on 2026-11-26, with the unit tests `ObstacleLoss_DielectricCopper.test` and `ObstacleLoss_DielectricAluminium.test`. No stored fingerprint or statistic moves.
 - **Place:** [MaterialRegistry.cc](../../src/inet/environment/common/MaterialRegistry.cc). Older than G; found at
   step 91.
 - **Fault:** copper and aluminium have the relative permittivity and permeability NaN, and the resistivities 1.68 and
@@ -611,6 +958,7 @@ and a proposed check. "Step N" is the step of the catch-up that found the entry.
 
 #### BD-24: the queue length of the compound `REDQueue` of netperfmeter becomes negative
 
+- **State (2026-11-24):** open on master `d8a58564ee`. A code read finds the probable cause: the upper layer pushes through the gate `in`, which is connected to `red.in`, so `CompoundPacketQueueBase::pushPacket()` does not run and the compound emits no `packetPushStarted`, but the MAC pulls through the module, so the compound emits `packetPulled`. `queueLength` counts only the local signals of the compound (`CompoundPacketQueueBase.ned:33`). `RedDropperQueue` has the same connection. Change R12 of [baseline-catch-up-defect-repairs.md](baseline-catch-up-defect-repairs.md) checks the cause with a run and repairs it.
 - **Place:** [netperfmeter.ned](../../examples/inet/netperfmeter/netperfmeter.ned) (in --> red.in, red.out --> fifo.in,
   fifo.out --> out, with the base `CompoundPacketQueueBase`) and
   [CompoundPacketQueueBase.cc](../../src/inet/queueing/queue/CompoundPacketQueueBase.cc). Older than G; found in the
@@ -677,6 +1025,7 @@ and a proposed check. "Step N" is the step of the catch-up that found the entry.
 
 #### BD-44: `VlanReqMapper` sends priority-tagged frames on untagged ports
 
+- **State (2026-11-26):** repaired by `5ea3dcb616` and `2138b73fc5` (change R3 of [baseline-catch-up-defect-repairs.md](baseline-catch-up-defect-repairs.md)), on master on 2026-11-26, with the protocol test `Ieee8021qVlanReqMapperUntaggedNoPriorityTag.test` and the reviewer document `tests/protocol/vlan/vlan-req-mapper-untagged.md`. The four configurations no longer set `forwardPcp = false`. No stored fingerprint or statistic moves.
 - **Place:** [VlanReqMapper.cc](../../src/inet/linklayer/vlan/VlanReqMapper.cc) `processPacket()`, and
   [PacketDirectionReverser.ned](../../src/inet/linklayer/ethernet/common/PacketDirectionReverser.ned)
   (`forwardPcp = true` by default). From `4a63e09916` (2023-01-17, older than G); found at step 78 (`688c3d74f2`) from
